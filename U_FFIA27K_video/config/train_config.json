@@ -1,0 +1,31 @@
+{
+  "epochs": 250,
+  "batch_size": 256,
+  "learning_rate": 1e-4,
+  "ckpt_dir": "checkpoint/",
+  "monitor": "loss",
+  "early_stopping": true,
+  "patience": 40,
+  "delta": 0.0,
+  "cache_mode": "ram",
+  "model": {
+    "backbone": "MobileNetV2",
+    "pretrained": true
+  },
+  "dataset_splitter": {
+    "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",
+    "seed":42,
+    "test_sample_per_class": 700,
+    "save_results": true,
+    "include_video": true,
+    "split_strategy": "random_sample",
+    "evaluation_mode": "holdout",
+    "num_folds": 5,
+    "fold_index": null,
+    "cv_val_ratio": 0.2
+  },
+  "video_features": {
+    "image_size": 224,
+    "frame_policy": "end"
+  }
+}

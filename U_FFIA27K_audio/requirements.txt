@@ -1,0 +1,13 @@
+pydantic
+numpy
+torch
+torchaudio
+torchvision
+tqdm
+torchlibrosa
+scikit-learn
+scipy
+soundfile
+torchcodec
+matplotlib
+huggingface_hub

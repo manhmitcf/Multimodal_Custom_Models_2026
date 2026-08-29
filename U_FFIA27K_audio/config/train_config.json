@@ -1,0 +1,36 @@
+{
+  "epochs": 400,
+  "batch_size": 256,
+  "learning_rate": 1e-3,
+  "monitor": "accuracy",
+  "early_stopping": false,
+  "patience": 100,
+  "delta": 0.0,
+  "cache_audio": true,
+  "model": {
+    "backbone": "Cnn14MobileV2",
+    "pretrained": false
+  },
+  "dataset_splitter": {
+    "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",
+    "seed": 42,
+    "test_sample_per_class": 700,
+    "save_results": true,
+    "include_video": true,
+    "split_strategy": "random_sample",
+    "evaluation_mode": "cross_validation",
+    "num_folds": 5,
+    "fold_index": null,
+    "cv_val_ratio": 0.2
+  },
+  "audio_features": {
+    "sample_rate": 64000,
+    "window_size": 2048,
+    "hop_size": 1024,
+    "mel_bins": 128,
+    "time_drop_width": 64,
+    "time_stripes_num": 2,
+    "freq_drop_width": 8,
+    "freq_stripes_num": 2
+  }
+}

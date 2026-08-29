@@ -1,0 +1,13 @@
+torch
+torchvision
+opencv-python
+numpy
+pillow
+pydantic
+scikit-learn
+scipy
+tqdm
+matplotlib
+decord
+huggingface_hub
+timm

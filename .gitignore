@@ -1,0 +1,25 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# IDEs & OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Data & Models
+raw_dataset/
+U-FFIA/
+checkpoint/
+video_checkpoint/
+audio_checkpoint/
+*.pt
+*.pth
+*.log
