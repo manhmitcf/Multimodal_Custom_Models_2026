@@ -58,7 +58,8 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
         return DualStreamFishNet(
             classes_num=config.model.classes_num,
             embed_dim=embed_dim,
-            audio_frontend=frontend
+            audio_frontend=frontend,
+            n_segment=config.video_features.num_frames
         )
         
     return model_cls(

@@ -43,11 +43,11 @@ def test_dual_stream_fish_net():
     print(f"  >>> [PASS] Core Architecture meets ~4.6M target (Exact: {stats['core_total']:,}) strictly under 5.0M! (Margin: {(5_000_000 - stats['core_total'])/1e6:.3f} M)")
 
     # 3. Verify FishMotionKinematics Module
-    print("\n[2] MOTION KINEMATICS EXTRACTION VERIFICATION:")
+    print("\n[2] MOTION KINEMATICS EXTRACTION VERIFICATION (T=4 Frames):")
     kinematics_mod = model_core.motion_kinematics
-    dummy_rgb = torch.rand(2, 2, 3, 224, 224)
+    dummy_rgb = torch.rand(2, 4, 3, 224, 224)
     frames_6ch, k_vec = kinematics_mod(dummy_rgb)
-    assert frames_6ch.shape == (2, 2, 6, 224, 224), f"6-channel shape mismatch: {frames_6ch.shape}"
+    assert frames_6ch.shape == (2, 4, 6, 224, 224), f"6-channel shape mismatch: {frames_6ch.shape}"
     assert k_vec.shape == (2, 4), f"Kinematics vector shape mismatch: {k_vec.shape}"
     print(f"  - Generated 6-channel tensor: {list(frames_6ch.shape)} (RGB + Velocity_Mag + vx + vy)")
     print(f"  - Kinematics vector: a_foam={k_vec[0,0]:.4f}, da/dt={k_vec[0,1]:.4e}, v_mean={k_vec[0,2]:.4f}, phi_feed={k_vec[0,3]:.4f}")
@@ -59,7 +59,8 @@ def test_dual_stream_fish_net():
         classes_num=4,
         embed_dim=256,
         audio_frontend=audio_frontend,
-        use_convnext=True
+        use_convnext=True,
+        n_segment=4
     )
     model_full.train()
     stats_full = count_parameters(model_full)
@@ -71,10 +72,10 @@ def test_dual_stream_fish_net():
     print(f"  * Total Trainable Parameters       : {stats_full['total']:,} ({stats_full['total_million']:.3f} M)")
     assert stats_full['total'] < 5_000_000, "Trainable parameters exceed 5M!"
 
-    # 5. Forward Pass Tests with 128kHz Audio (256,000 samples for 2 seconds)
-    print("\n[4] FORWARD PASS & WEAK VS MEDIUM DISAMBIGUATION TESTS:")
+    # 5. Forward Pass Tests with 128kHz Audio (256,000 samples for 2 seconds) and 4 Frames
+    print("\n[4] FORWARD PASS & WEAK VS MEDIUM DISAMBIGUATION TESTS (T=4 Frames):")
     B = 2
-    T = 2
+    T = 4
     dummy_video_rgb = torch.randn(B, T, 3, 224, 224)
     dummy_audio_wav = torch.randn(B, 256000) # 2 seconds @ 128kHz
 
@@ -112,8 +113,8 @@ def test_dual_stream_fish_net():
 
     # 7. Measure FLOPs & Inference Latency
     print("\n[6] COMPUTATIONAL COMPLEXITY & LATENCY:")
-    flops_g = measure_flops(model_core, device="cpu")
-    print(f"  * Total FLOPs (Batch=1, 2 frames + Mel Spectrogram): {flops_g:.3f} GFLOPs")
+    flops_g = measure_flops(model_core, device="cpu", num_frames=4)
+    print(f"  * Total FLOPs (Batch=1, 4 frames + Mel Spectrogram): {flops_g:.3f} GFLOPs")
     assert flops_g < 6.0, f"FLOPs exceed 6.0 GFLOPs: {flops_g}"
     print(f"  >>> [PASS] FLOPs < 6.0 GFLOPs ({flops_g:.3f} GFLOPs - highly efficient for 4.6M ConvNeXt multimodal net)!")
 

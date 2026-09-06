@@ -29,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames: int = 2) -> np.ndarray:
+def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames: int = 4) -> np.ndarray:
     """Decode video frames into uint8 NumPy array [num_frames, image_size, image_size, 3] RGB."""
     try:
         from decord import VideoReader, cpu
@@ -99,8 +99,8 @@ class FishMultimodalDataLoader:
         prefetch_factor: Optional[int] = None,
         cache_mode: str = "ram",
         image_size: int = 224,
-        frame_policy: str = "end",
-        num_frames: int = 2,
+        frame_policy: str = "uniform",
+        num_frames: int = 4,
         sample_rate: int = 128000,
         splitter_config: Optional[SplitterConfig] = None,
     ) -> None:

@@ -128,7 +128,7 @@ class FishConvNeXtBackbone(nn.Module):
         embed_dim: int = 256,
         depths: Tuple[int, ...] = (2, 2, 4, 2),
         dims: Tuple[int, ...] = (48, 96, 192, 256),
-        n_segment: int = 2
+        n_segment: int = 4
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
@@ -249,7 +249,9 @@ class FishConvNeXtBackbone(nn.Module):
         f_video = pooled.mean(dim=1)
         f_spatial = self.spatial_proj(pooled[:, -1])
         if t >= 2:
-            f_motion = self.motion_proj(torch.abs(pooled[:, -1] - pooled[:, 0]))
+            consecutive_diff = torch.abs(pooled[:, 1:] - pooled[:, :-1]).mean(dim=1)
+            total_diff = torch.abs(pooled[:, -1] - pooled[:, 0])
+            f_motion = self.motion_proj(0.5 * (consecutive_diff + total_diff))
         else:
             f_motion = self.motion_proj(pooled[:, 0])
 

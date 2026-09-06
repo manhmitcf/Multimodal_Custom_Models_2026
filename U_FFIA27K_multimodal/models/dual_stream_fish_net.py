@@ -77,11 +77,13 @@ class DualStreamFishNet(nn.Module):
         classes_num: int = 4,
         embed_dim: int = 256,
         audio_frontend: Optional[nn.Module] = None,
-        use_convnext: bool = True
+        use_convnext: bool = True,
+        n_segment: int = 4
     ) -> None:
         super().__init__()
         self.classes_num = classes_num
         self.embed_dim = embed_dim
+        self.n_segment = n_segment
         self.model_name = "dual_stream_fish_net_v2"
         self.audio_frontend = audio_frontend
         self.use_convnext = use_convnext
@@ -94,13 +96,13 @@ class DualStreamFishNet(nn.Module):
             self.video_backbone = FishConvNeXtBackbone(
                 in_channels=6,
                 embed_dim=embed_dim,
-                n_segment=2
+                n_segment=n_segment
             )
         else:
             self.video_backbone = FishVideoBackbone(
                 in_channels=4,
                 embed_dim=embed_dim,
-                n_segment=2
+                n_segment=n_segment
             )
 
         # 3. Custom Audio Backbone (Log-Mel, Data-Driven Frequency Attention, 1D Rhythm)
@@ -158,7 +160,7 @@ class DualStreamFishNet(nn.Module):
         if video_input.dim() == 4:
             video_input = video_input.unsqueeze(1) # [B, 1, C, H, W]
             if video_input.size(1) == 1:
-                video_input = torch.cat([video_input, video_input], dim=1)
+                video_input = video_input.repeat(1, self.n_segment, 1, 1, 1)
 
         # 1. Preprocess Video & Extract Kinematics (Sủi bọt + Vận tốc + Hướng di chuyển)
         if video_input.size(2) == 3:
