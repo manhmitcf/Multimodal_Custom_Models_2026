@@ -132,7 +132,7 @@ class TrainConfig(BaseModel):
     early_stopping: bool = Field(default=True, description="Enable early stopping mechanism.")
     patience: int = Field(default=40, ge=1, description="Early stopping patience.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
-    dataloader_workers: int = Field(default=1, ge=0, description="Number of background worker processes for DataLoader.")
+    dataloader_workers: int = Field(default=4, ge=0, description="Number of background worker processes for DataLoader.")
     prefetch_factor: Optional[int] = Field(default=1, ge=1, description="Number of batches loaded in advance by each worker.")
     model: ModelConfig = Field(default_factory=ModelConfig, description="Model architecture parameters.")
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")

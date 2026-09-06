@@ -9,7 +9,7 @@
   "patience": 40,
   "delta": 0.0,
   "cache_mode": "ram",
-  "dataloader_workers": 1,
+  "dataloader_workers": 4,
   "prefetch_factor": 1,
   "model": {
     "backbone": "LiteFFIANet",
