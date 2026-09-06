@@ -108,7 +108,7 @@ class TrainConfig(BaseModel):
     """
     epochs: int = Field(default=100, description="Maximum training epochs.")
     batch_size: int = Field(default=40, description="Mini-batch size.")
-    learning_rate: float = Field(default=1e-3, description="Optimizer learning rate.")
+    learning_rate: float = Field(default=1e-4, description="Optimizer learning rate.")
     ckpt_dir: str = Field(default='checkpoint/', description="Directory to save checkpoints and CSV logs.")
     monitor: str = Field(default='accuracy', description="Metric to monitor for best model saving ('accuracy' or 'loss').")
     early_stopping: bool = Field(default=True, description="Enable/disable early stopping mechanism.")
