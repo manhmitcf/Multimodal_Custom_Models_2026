@@ -78,7 +78,12 @@ class MultimodalEvaluator(BaseEvaluator):
             )
 
             if 'target' in batch_data_dict:
-                self._append_to_dict(output_dict, 'target', batch_data_dict['target'])
+                tgt = batch_data_dict['target']
+                if hasattr(tgt, 'detach'):
+                    tgt = tgt.detach().cpu().numpy()
+                elif hasattr(tgt, 'numpy'):
+                    tgt = tgt.numpy()
+                self._append_to_dict(output_dict, 'target', tgt)
 
         for key in output_dict.keys():
             output_dict[key] = np.concatenate(output_dict[key], axis=0)

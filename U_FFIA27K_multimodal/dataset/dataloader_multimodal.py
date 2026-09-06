@@ -175,24 +175,72 @@ class FishMultimodalDataLoader:
         def __getitem__(self, idx: int) -> Dict[str, Any]:
             item = self.data_dict[idx]
             
-            # Format depends on split structure: [audio_path, target, video_path] or dict
+            # data_split.py generates [audio_path, video_path, label]
             if isinstance(item, (list, tuple)):
-                audio_path = item[0]
-                target = item[1]
-                video_path = item[2] if len(item) > 2 else ""
+                if len(item) == 3:
+                    audio_path = str(item[0])
+                    video_path = str(item[1])
+                    target = item[2]
+                elif len(item) == 2:
+                    p0 = str(item[0])
+                    target = item[1]
+                    if "_audio_" in p0 or p0.endswith(".wav"):
+                        audio_path = p0
+                        video_path = ""
+                    else:
+                        video_path = p0
+                        audio_path = ""
+                else:
+                    audio_path, video_path, target = "", "", 0
             elif isinstance(item, dict):
-                audio_path = item.get('audio_path', '')
-                video_path = item.get('video_path', '')
-                target = item.get('target', 0)
+                audio_path = str(item.get('audio_path', ''))
+                video_path = str(item.get('video_path', ''))
+                target = item.get('label', item.get('target', 0))
             else:
                 audio_path, video_path, target = "", "", 0
 
-            # Convert integer label to one-hot if needed
+            # Fallback path pairing if one is missing
+            if not audio_path and video_path:
+                cand = video_path.replace("/video/", "/audio/").replace("\\video\\", "\\audio\\").replace("_video_", "_audio_")
+                if cand.endswith(".mp4"):
+                    cand = cand[:-4] + ".wav"
+                if os.path.exists(cand):
+                    audio_path = cand
+            if not video_path and audio_path:
+                cand = audio_path.replace("/audio/", "/video/").replace("\\audio\\", "\\video\\").replace("_audio_", "_video_")
+                if cand.endswith(".wav"):
+                    cand = cand[:-4] + ".mp4"
+                if os.path.exists(cand):
+                    video_path = cand
+
+            # Convert target to one-hot encoding [4]
             if isinstance(target, (int, np.integer)):
                 target_onehot = np.zeros(4, dtype=np.float32)
-                target_onehot[int(target)] = 1.0
+                if 0 <= int(target) < 4:
+                    target_onehot[int(target)] = 1.0
+            elif isinstance(target, str):
+                target_str = target.strip().lower()
+                class_to_idx = {"none": 0, "strong": 1, "medium": 2, "weak": 3}
+                target_onehot = np.zeros(4, dtype=np.float32)
+                if target_str in class_to_idx:
+                    target_onehot[class_to_idx[target_str]] = 1.0
+                else:
+                    try:
+                        idx = int(target_str)
+                        if 0 <= idx < 4:
+                            target_onehot[idx] = 1.0
+                    except ValueError:
+                        pass
             else:
-                target_onehot = np.array(target, dtype=np.float32)
+                try:
+                    arr = np.array(target, dtype=np.float32)
+                    if arr.size == 4:
+                        target_onehot = arr.reshape(4)
+                    else:
+                        target_onehot = np.zeros(4, dtype=np.float32)
+                        target_onehot[int(arr.item())] = 1.0
+                except Exception:
+                    target_onehot = np.zeros(4, dtype=np.float32)
 
             video_tensor = self._decode_video_frames(video_path)
             audio_tensor = self._decode_audio_waveform(audio_path)
