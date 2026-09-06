@@ -29,6 +29,64 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames: int = 2) -> np.ndarray:
+    """Decode video frames into uint8 NumPy array [num_frames, image_size, image_size, 3] RGB."""
+    try:
+        from decord import VideoReader, cpu
+        vr = VideoReader(video_path, width=image_size, height=image_size, ctx=cpu(0))
+        total = len(vr)
+        if total > 0:
+            indices = [0, max(0, total - 1)] if num_frames == 2 else np.linspace(0, total - 1, num_frames).astype(int).tolist()
+            return vr.get_batch(indices).asnumpy()
+    except Exception:
+        pass
+
+    import cv2
+    frames = []
+    if video_path and os.path.exists(video_path):
+        cap = cv2.VideoCapture(video_path)
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total > 0:
+            indices = [0, max(0, total - 1)] if num_frames == 2 else np.linspace(0, total - 1, num_frames).astype(int).tolist()
+            for idx in indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if ret:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    if frame.shape[0] != image_size or frame.shape[1] != image_size:
+                        frame = cv2.resize(frame, (image_size, image_size), interpolation=cv2.INTER_LINEAR)
+                    frames.append(frame)
+        cap.release()
+
+    while len(frames) < num_frames:
+        frames.append(np.zeros((image_size, image_size, 3), dtype=np.uint8))
+
+    return np.stack(frames[:num_frames])
+
+
+def _decode_audio_waveform_raw(audio_path: str, sample_rate: int = 64000) -> np.ndarray:
+    """Load raw audio waveform into float32 NumPy array [sample_rate * 2]."""
+    target_len = sample_rate * 2
+    if audio_path and os.path.exists(audio_path):
+        try:
+            import torchaudio
+            waveform, sr = torchaudio.load(audio_path)
+            if sr != sample_rate:
+                resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=sample_rate)
+                waveform = resampler(waveform)
+            if waveform.ndim == 2 and waveform.size(0) > 1:
+                waveform = waveform.mean(dim=0, keepdim=True)
+            y = waveform.squeeze(0).to(torch.float32)
+            if y.numel() > target_len:
+                y = y[:target_len]
+            elif y.numel() < target_len:
+                y = torch.nn.functional.pad(y, (0, target_len - y.numel()))
+            return y.numpy()
+        except Exception:
+            pass
+    return np.zeros(target_len, dtype=np.float32)
+
+
 class FishMultimodalDataLoader:
     """
     Unified DataLoader Manager for Multimodal Fish Feeding Intensity Assessment.
@@ -119,6 +177,116 @@ class FishMultimodalDataLoader:
 
             transforms = VideoTransform.get_transforms(image_size=parent.image_size)
             self.transform = transforms[self.split]
+            self.ram_cache = None
+
+            if self.parent.cache_mode == "ram" and len(self.data_dict) > 0:
+                self._preload_to_ram()
+
+        def _preload_to_ram(self) -> None:
+            import concurrent.futures
+            try:
+                from tqdm import tqdm
+                has_tqdm = True
+            except ImportError:
+                has_tqdm = False
+
+            preload_threads = max(1, self.parent.dataloader_workers * 2 if self.parent.dataloader_workers > 0 else 4)
+            logger.info("==================================================")
+            logger.info(f"Starting Multimodal -> RAM preload for split '{self.split}' ({len(self.data_dict)} samples)...")
+            logger.info(f"Using ThreadPoolExecutor with {preload_threads} workers for RAM preload.")
+
+            def load_single_entry(idx_and_item):
+                idx, item = idx_and_item
+                if isinstance(item, (list, tuple)):
+                    if len(item) == 3:
+                        audio_p, video_p, tgt = str(item[0]), str(item[1]), item[2]
+                    elif len(item) == 2:
+                        p0, tgt = str(item[0]), item[1]
+                        if "_audio_" in p0 or p0.endswith(".wav"):
+                            audio_p, video_p = p0, ""
+                        else:
+                            audio_p, video_p = "", p0
+                    else:
+                        audio_p, video_p, tgt = "", "", 0
+                elif isinstance(item, dict):
+                    audio_p = str(item.get('audio_path', ''))
+                    video_p = str(item.get('video_path', ''))
+                    tgt = item.get('label', item.get('target', 0))
+                else:
+                    audio_p, video_p, tgt = "", "", 0
+
+                if not audio_p and video_p:
+                    cand = video_p.replace("/video/", "/audio/").replace("\\video\\", "\\audio\\").replace("_video_", "_audio_")
+                    if cand.endswith(".mp4"):
+                        cand = cand[:-4] + ".wav"
+                    if os.path.exists(cand):
+                        audio_p = cand
+                if not video_p and audio_p:
+                    cand = audio_p.replace("/audio/", "/video/").replace("\\audio\\", "\\video\\").replace("_audio_", "_video_")
+                    if cand.endswith(".wav"):
+                        cand = cand[:-4] + ".mp4"
+                    if os.path.exists(cand):
+                        video_p = cand
+
+                if isinstance(tgt, (int, np.integer)):
+                    tgt_onehot = np.zeros(4, dtype=np.float32)
+                    if 0 <= int(tgt) < 4:
+                        tgt_onehot[int(tgt)] = 1.0
+                elif isinstance(tgt, str):
+                    tgt_str = tgt.strip().lower()
+                    class_map = {"none": 0, "strong": 1, "medium": 2, "weak": 3}
+                    tgt_onehot = np.zeros(4, dtype=np.float32)
+                    if tgt_str in class_map:
+                        tgt_onehot[class_map[tgt_str]] = 1.0
+                else:
+                    try:
+                        arr = np.array(tgt, dtype=np.float32)
+                        tgt_onehot = arr.reshape(4) if arr.size == 4 else np.zeros(4, dtype=np.float32)
+                    except Exception:
+                        tgt_onehot = np.zeros(4, dtype=np.float32)
+
+                video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
+                audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
+                clip_name = os.path.basename(video_p or audio_p or f"sample_{idx}")
+
+                return idx, (video_raw, audio_raw, tgt_onehot, clip_name)
+
+            cache = [None] * len(self.data_dict)
+            total_bytes = 0
+            indexed_items = list(enumerate(self.data_dict))
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=preload_threads) as executor:
+                futures = {
+                    executor.submit(load_single_entry, item): item[0]
+                    for item in indexed_items
+                }
+                iterator = concurrent.futures.as_completed(futures)
+                if has_tqdm:
+                    pbar = tqdm(total=len(futures), desc=f"Preloading {self.split} to RAM")
+                    for future in iterator:
+                        idx = futures[future]
+                        try:
+                            result_idx, sample = future.result()
+                            cache[result_idx] = sample
+                            total_bytes += sample[0].nbytes + sample[1].nbytes
+                        except Exception as exc:
+                            logger.error(f"Error preloading sample {idx}: {exc}")
+                        pbar.update(1)
+                    pbar.close()
+                else:
+                    for future in iterator:
+                        idx = futures[future]
+                        try:
+                            result_idx, sample = future.result()
+                            cache[result_idx] = sample
+                            total_bytes += sample[0].nbytes + sample[1].nbytes
+                        except Exception as exc:
+                            logger.error(f"Error preloading sample {idx}: {exc}")
+
+            self.ram_cache = cache
+            cache_mb = total_bytes / (1024 ** 2)
+            logger.info(f"Successfully cached '{self.split}' split to RAM: {len(self.ram_cache)} samples ({cache_mb:.1f} MB)")
+            logger.info("==================================================")
 
         def __len__(self) -> int:
             return len(self.data_dict)
@@ -173,6 +341,18 @@ class FishMultimodalDataLoader:
             return torch.zeros(target_length, dtype=torch.float32)
 
         def __getitem__(self, idx: int) -> Dict[str, Any]:
+            if self.ram_cache is not None and self.ram_cache[idx] is not None:
+                video_raw, audio_raw, target_onehot, clip_name = self.ram_cache[idx]
+                frames = [self.transform(frame) for frame in video_raw]
+                video_tensor = torch.stack(frames[:self.parent.num_frames])
+                audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
+                return {
+                    'clip_name': clip_name,
+                    'video_form': video_tensor,
+                    'audio_form': audio_tensor,
+                    'target': target_onehot
+                }
+
             item = self.data_dict[idx]
             
             # data_split.py generates [audio_path, video_path, label]
@@ -265,3 +445,7 @@ class FishMultimodalDataLoader:
             loader_kwargs['prefetch_factor'] = self.prefetch_factor
 
         return DataLoader(dataset, **loader_kwargs)
+
+    def get_dataloader(self, split: str, shuffle: bool = False) -> DataLoader:
+        return self.get_data_loader(split, shuffle=shuffle)
+
