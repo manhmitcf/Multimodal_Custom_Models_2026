@@ -75,7 +75,7 @@ class MultimodalTrainer:
 
         # Early stopping setup
         self.early_stopping = EarlyStopping(
-            patience=getattr(self.config, "patience", 40),
+            patience=getattr(self.config, "patience", 80),
             delta=getattr(self.config, "delta", 0.0),
             verbose=True
         )

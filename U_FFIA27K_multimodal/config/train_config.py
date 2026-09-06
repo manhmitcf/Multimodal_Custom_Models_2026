@@ -132,7 +132,7 @@ class TrainConfig(BaseModel):
     ckpt_dir: str = Field(default="checkpoint/", description="Directory path to save checkpoints.")
     monitor: Literal["loss", "accuracy"] = Field(default="loss", description="Metric to monitor for early stopping and best checkpoint.")
     early_stopping: bool = Field(default=True, description="Enable early stopping mechanism.")
-    patience: int = Field(default=40, ge=1, description="Early stopping patience.")
+    patience: int = Field(default=80, ge=1, description="Early stopping patience.")
     delta: float = Field(default=0.0, ge=0.0, description="Minimum change threshold in monitored metric.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
     dataloader_workers: int = Field(default=5, ge=0, description="Number of background worker processes for DataLoader.")
