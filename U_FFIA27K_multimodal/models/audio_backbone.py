@@ -157,20 +157,21 @@ class FishAudioBackbone(nn.Module):
         * f_frequency: Pure frequency spectral feature [B, embed_dim]
         * f_rhythm: Temporal rhythm feature [B, embed_dim]
         * f_seq: Temporal sequence feature [B, T', embed_dim]
-    - Parameter Budget: ~1.28M params (< 1.5M).
+    - Parameter Budget: ~0.77M params.
     """
-    def __init__(self, in_channels: int = 1, embed_dim: int = 128) -> None:
+    def __init__(self, in_channels: int = 1, embed_dim: int = 256) -> None:
         super().__init__()
         self.embed_dim = embed_dim
 
-        # Frequency attention block directly at input
+        # Frequency attention block directly at input (physics-grounded prior)
         self.freq_attention = FrequencyAttentionBlock(n_mels=128, reduction=4)
 
-        # 4 Stages of Depthwise Inverted Residuals (~1.1M params)
+        # 5 Stages of Depthwise Inverted Residuals (~0.75M params)
         self.block1 = DepthwiseAudioBlock(in_channels, 32, expansion=2)
         self.block2 = DepthwiseAudioBlock(32, 64, expansion=2)
-        self.block3 = DepthwiseAudioBlock(64, 112, expansion=3)
-        self.block4 = DepthwiseAudioBlock(112, 160, expansion=3)
+        self.block3 = DepthwiseAudioBlock(64, 128, expansion=3)
+        self.block4 = DepthwiseAudioBlock(128, 192, expansion=3)
+        self.block5 = DepthwiseAudioBlock(192, 256, expansion=3)
 
         # Frequency pooling & projection
         self.freq_proj = nn.Sequential(
@@ -180,10 +181,10 @@ class FishAudioBackbone(nn.Module):
 
         # 1D Temporal Rhythm Stream (Group 3b: cadence & pulse repetition rate)
         self.rhythm_stream = nn.Sequential(
-            nn.Conv1d(160, 160, kernel_size=5, padding=2, groups=160, bias=False),
-            nn.BatchNorm1d(160),
+            nn.Conv1d(256, 256, kernel_size=5, padding=2, groups=256, bias=False),
+            nn.BatchNorm1d(256),
             nn.SiLU(inplace=True),
-            nn.Conv1d(160, embed_dim, kernel_size=1, bias=False),
+            nn.Conv1d(256, embed_dim, kernel_size=1, bias=False),
             nn.BatchNorm1d(embed_dim)
         )
 
@@ -211,18 +212,19 @@ class FishAudioBackbone(nn.Module):
         if mel_spec.dim() == 3:
             mel_spec = mel_spec.unsqueeze(1)
 
-        # 1. Frequency Attention (Group 3a)
+        # 1. Frequency Attention (Group 3a) with Physics Prior
         weighted_mel, freq_weights = self.freq_attention(mel_spec)
         f_frequency = self.freq_proj(freq_weights) # [B, embed_dim]
 
-        # 2. Time-Frequency 2D Conv stages
+        # 2. Time-Frequency 2D Conv stages (5 stages)
         x = self.block1(weighted_mel, pool_size=(2, 2))
         x = self.block2(x, pool_size=(2, 2))
         x = self.block3(x, pool_size=(2, 2))
-        x = self.block4(x, pool_size=(1, 2)) # [B, 160, T', F']
+        x = self.block4(x, pool_size=(1, 2))
+        x = self.block5(x, pool_size=(1, 2)) # [B, 256, T', F']
 
         # 3. Temporal Rhythm 1D Stream (Group 3b)
-        # Average pool across frequency axis -> [B, 160, T']
+        # Average pool across frequency axis -> [B, 256, T']
         time_profile = x.mean(dim=-1)
         rhythm_seq = self.rhythm_stream(time_profile) # [B, embed_dim, T']
         

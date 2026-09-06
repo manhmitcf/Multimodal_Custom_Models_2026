@@ -19,14 +19,14 @@ class EnhancedFishMultimodalFusion(nn.Module):
        - Uses actual physical metrics (white foam ratio, foam expansion rate dA/dt, fish aggregation density)
          to dynamically weigh visual vs. acoustic confidence.
     """
-    def __init__(self, feat_dim: int = 128, num_classes: int = 4) -> None:
+    def __init__(self, feat_dim: int = 256, num_classes: int = 4) -> None:
         super().__init__()
         self.feat_dim = feat_dim
         self.num_classes = num_classes
 
-        # 1. Bi-directional Cross-Attention
-        self.cross_attn_a2v = nn.MultiheadAttention(embed_dim=feat_dim, num_heads=4, batch_first=True)
-        self.cross_attn_v2a = nn.MultiheadAttention(embed_dim=feat_dim, num_heads=4, batch_first=True)
+        # 1. Bi-directional Cross-Attention (8 heads for 256-dim feature space)
+        self.cross_attn_a2v = nn.MultiheadAttention(embed_dim=feat_dim, num_heads=8, batch_first=True)
+        self.cross_attn_v2a = nn.MultiheadAttention(embed_dim=feat_dim, num_heads=8, batch_first=True)
         self.norm_v = nn.LayerNorm(feat_dim)
         self.norm_a = nn.LayerNorm(feat_dim)
 
@@ -46,7 +46,7 @@ class EnhancedFishMultimodalFusion(nn.Module):
         )
 
         # 4. Final Multimodal Classifier Head
-        fused_dim = feat_dim * 2 + feat_dim + 1 + 3 # Dynamic(256) + Static(128) + Sync(1) + External(3)
+        fused_dim = feat_dim * 2 + feat_dim + 1 + 3 # Dynamic(512) + Static(256) + Sync(1) + External(3) = 772
         self.classifier = nn.Sequential(
             nn.Linear(fused_dim, 128),
             nn.LayerNorm(128),

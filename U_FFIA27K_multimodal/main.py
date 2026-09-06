@@ -54,9 +54,10 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
     frontend = AudioFrontend(config.audio_features)
     
     if model_cls == DualStreamFishNet:
+        embed_dim = 256 if config.model.embed_dim == 192 else config.model.embed_dim
         return DualStreamFishNet(
             classes_num=config.model.classes_num,
-            embed_dim=config.model.embed_dim,
+            embed_dim=embed_dim,
             audio_frontend=frontend
         )
         

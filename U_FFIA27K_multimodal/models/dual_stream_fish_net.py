@@ -52,29 +52,30 @@ class DualStreamFishNet(nn.Module):
     """
     DualStreamFishNet: Custom Dual-Stream Multimodal Architecture for Fish Feeding Intensity Assessment.
     
-    Architectural Specification (< 5M Parameters):
-    - Video Stream (~1.45M params):
+    Architectural Specification (~4.52M Parameters, < 5.0M strict budget):
+    - Video Stream (~2.96M params):
         * FishVideoBackbone accepting 4 channels [R, G, B, Frame_Diff]
         * Temporal Shift Module (TSM) with 0 params / 0 FLOPs for temporal dynamics
-        * Motion Excitation (ME) modules highlighting feeding ripples and splashes
-        * Extracts: f_spatial (Group 1), f_motion (Group 2), f_v_seq [B, T, D]
-    - Audio Stream (~1.28M params):
+        * 3 Motion Excitation (ME) modules highlighting feeding ripples and splashes
+        * 6 deep Inverted Residual stages (14 blocks, up to 288 channels)
+        * Extracts: f_spatial (Group 1), f_motion (Group 2), f_v_seq [B, T, 256]
+    - Audio Stream (~0.77M params):
         * FishAudioBackbone accepting 128 Log-Mel Spectrogram bins
-        * Frequency Attention Block prioritizing 2-8 kHz feeding band, suppressing pump noise
-        * 4-Stage Depthwise Separable Convolutions
+        * Physics-grounded Frequency Attention Block (<500Hz suppressed, 2-8kHz amplified)
+        * 5 deep Depthwise Separable stages (up to 256 channels)
         * 1D Temporal Rhythm Stream capturing pulse repetition rate (cadence)
-        * Extracts: f_frequency (Group 3a), f_rhythm (Group 3b), f_a_seq [B, T', D]
-    - Multimodal Fusion Stream (~0.35M params):
-        * Bi-directional Cross-Attention (Video-to-Audio and Audio-to-Video)
+        * Extracts: f_frequency (Group 3a), f_rhythm (Group 3b), f_a_seq [B, T', 256]
+    - Multimodal Fusion Stream (~0.79M params):
+        * 8-head Bi-directional Cross-Attention (Video-to-Audio and Audio-to-Video)
         * Spectral-Spatial FiLM Modulation (Frequency modulates Foam sensitivity)
         * Temporal Phase-Lag Synchronization Score
         * Physics-Informed Dynamic Reliability Gating (using Foam, dA/dt, and Density)
-    - Total Model Parameters: ~3.08 Million Parameters (< 5.0M strict budget).
+    - Total Model Parameters: 4,519,306 Parameters (~4.52M params, strictly < 5.0M).
     """
     def __init__(
         self,
         classes_num: int = 4,
-        embed_dim: int = 128,
+        embed_dim: int = 256,
         audio_frontend: Optional[nn.Module] = None
     ) -> None:
         super().__init__()

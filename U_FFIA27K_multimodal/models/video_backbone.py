@@ -100,52 +100,64 @@ class FishVideoBackbone(nn.Module):
         * f_spatial: Pure spatial visual feature [B, embed_dim]
         * f_motion: Motion dynamics feature [B, embed_dim]
         * f_seq: Temporal frame sequence representation [B, T, embed_dim]
-    - Parameter Budget: ~1.45M params (< 1.6M).
+    - Parameter Budget: ~2.96M params.
     """
-    def __init__(self, in_channels: int = 4, embed_dim: int = 128, n_segment: int = 2) -> None:
+    def __init__(self, in_channels: int = 4, embed_dim: int = 256, n_segment: int = 2) -> None:
         super().__init__()
         self.n_segment = n_segment
         self.embed_dim = embed_dim
 
         # Stem Conv: accepts 4 channels [B*T, 4, H, W] -> stride 2
         self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, 24, kernel_size=3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(24),
+            nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32),
             nn.SiLU(inplace=True)
         )
 
-        # Stage 1: 24 -> 32 channels
-        self.stage1 = InvertedResidual(24, 32, stride=1, expand_ratio=2, use_tsm=True, n_segment=n_segment)
-
-        # Stage 2: 32 -> 48 channels + Motion Excitation
-        self.stage2 = nn.Sequential(
-            InvertedResidual(32, 48, stride=2, expand_ratio=3, use_tsm=True, n_segment=n_segment),
+        # Stage 1: 32 -> 48 channels (2 blocks)
+        self.stage1 = nn.Sequential(
+            InvertedResidual(32, 48, stride=1, expand_ratio=2, use_tsm=True, n_segment=n_segment),
             InvertedResidual(48, 48, stride=1, expand_ratio=3, use_tsm=True, n_segment=n_segment),
         )
-        self.me2 = MotionExcitation(in_channels=48, squeeze_factor=4)
 
-        # Stage 3: 48 -> 80 channels + Motion Excitation
+        # Stage 2: 48 -> 64 channels (3 blocks) + Motion Excitation
+        self.stage2 = nn.Sequential(
+            InvertedResidual(48, 64, stride=2, expand_ratio=3, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(64, 64, stride=1, expand_ratio=3, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(64, 64, stride=1, expand_ratio=3, use_tsm=True, n_segment=n_segment),
+        )
+        self.me2 = MotionExcitation(in_channels=64, squeeze_factor=4)
+
+        # Stage 3: 64 -> 112 channels (3 blocks) + Motion Excitation
         self.stage3 = nn.Sequential(
-            InvertedResidual(48, 80, stride=2, expand_ratio=3, use_tsm=True, n_segment=n_segment),
-            InvertedResidual(80, 80, stride=1, expand_ratio=3, use_tsm=True, n_segment=n_segment),
-            InvertedResidual(80, 80, stride=1, expand_ratio=3, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(64, 112, stride=2, expand_ratio=4, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(112, 112, stride=1, expand_ratio=4, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(112, 112, stride=1, expand_ratio=4, use_tsm=True, n_segment=n_segment),
         )
-        self.me3 = MotionExcitation(in_channels=80, squeeze_factor=4)
+        self.me3 = MotionExcitation(in_channels=112, squeeze_factor=4)
 
-        # Stage 4: 80 -> 128 channels
+        # Stage 4: 112 -> 160 channels (3 blocks) + Motion Excitation (deep feeding ripples)
         self.stage4 = nn.Sequential(
-            InvertedResidual(80, 128, stride=2, expand_ratio=4, use_tsm=True, n_segment=n_segment),
-            InvertedResidual(128, 128, stride=1, expand_ratio=4, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(112, 160, stride=2, expand_ratio=4, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(160, 160, stride=1, expand_ratio=4, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(160, 160, stride=1, expand_ratio=4, use_tsm=True, n_segment=n_segment),
+        )
+        self.me4 = MotionExcitation(in_channels=160, squeeze_factor=4)
+
+        # Stage 5: 160 -> 224 channels (2 blocks)
+        self.stage5 = nn.Sequential(
+            InvertedResidual(160, 224, stride=2, expand_ratio=4, use_tsm=True, n_segment=n_segment),
+            InvertedResidual(224, 224, stride=1, expand_ratio=4, use_tsm=True, n_segment=n_segment),
         )
 
-        # Stage 5: 128 -> 192 channels
-        self.stage5 = nn.Sequential(
-            InvertedResidual(128, 192, stride=2, expand_ratio=4, use_tsm=False),
-            InvertedResidual(192, 192, stride=1, expand_ratio=4, use_tsm=False),
+        # Stage 6 (Deep Stage): 224 -> 288 channels (2 blocks)
+        self.stage6 = nn.Sequential(
+            InvertedResidual(224, 288, stride=1, expand_ratio=4, use_tsm=False),
+            InvertedResidual(288, 288, stride=1, expand_ratio=4, use_tsm=False),
         )
 
         self.head_conv = nn.Sequential(
-            nn.Conv2d(192, embed_dim, 1, bias=False),
+            nn.Conv2d(288, embed_dim, 1, bias=False),
             nn.BatchNorm2d(embed_dim),
             nn.SiLU(inplace=True),
             nn.AdaptiveAvgPool2d(1)
@@ -185,7 +197,7 @@ class FishVideoBackbone(nn.Module):
         if t >= 2:
             x_curr = x_reshaped[:, -1]
             x_prev = x_reshaped[:, 0]
-            x_curr_mod, m_mask = self.me2(x_curr, x_prev)
+            x_curr_mod, _ = self.me2(x_curr, x_prev)
             x_reshaped = torch.cat([x_reshaped[:, :-1], x_curr_mod.unsqueeze(1)], dim=1)
             x = x_reshaped.view(b * t, x.size(1), x.size(2), x.size(3))
 
@@ -199,7 +211,16 @@ class FishVideoBackbone(nn.Module):
             x = x_reshaped.view(b * t, x.size(1), x.size(2), x.size(3))
 
         x = self.stage4(x)
+        x_reshaped = x.view(b, t, x.size(1), x.size(2), x.size(3))
+        if t >= 2:
+            x_curr = x_reshaped[:, -1]
+            x_prev = x_reshaped[:, 0]
+            x_curr_mod, _ = self.me4(x_curr, x_prev)
+            x_reshaped = torch.cat([x_reshaped[:, :-1], x_curr_mod.unsqueeze(1)], dim=1)
+            x = x_reshaped.view(b * t, x.size(1), x.size(2), x.size(3))
+
         x = self.stage5(x)
+        x = self.stage6(x)
 
         feat = self.head_conv(x).view(b, t, -1) # [B, T, embed_dim]
         f_seq = feat
