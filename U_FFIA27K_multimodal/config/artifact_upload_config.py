@@ -11,7 +11,7 @@ class ArtifactUploadConfig(BaseModel):
     Configuration for uploading the completed training artifact to Hugging Face.
     """
     enabled: bool = Field(
-        default=False,
+        default=True,
         description="Whether to zip and upload the project after training completes successfully."
     )
     source_dir: str = Field(

@@ -151,7 +151,7 @@ def zip_directory(source_dir: str, output_path: str) -> str:
             if not file_path.is_file():
                 continue
             resolved_file = file_path.resolve()
-            if resolved_file == target_path:
+            if resolved_file == target_path or ".git" in resolved_file.parts or resolved_file.suffix == ".zip":
                 continue
             zip_file.write(resolved_file, arcname=resolved_file.relative_to(source_path))
 
@@ -201,8 +201,8 @@ def upload_artifact_if_enabled(upload_config: ArtifactUploadConfig, config: Trai
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     suffix = Path(upload_config.path_in_repo).suffix or ".zip"
-    artifact_filename = build_artifact_filename(config, timestamp, suffix=suffix)
-    output_zip_path = os.path.join(upload_config.source_dir, artifact_filename)
+    zip_parent = Path(upload_config.zip_path).parent if upload_config.zip_path else Path(upload_config.source_dir).parent
+    output_zip_path = str(zip_parent / artifact_filename)
     artifact_zip = zip_directory(upload_config.source_dir, output_zip_path)
 
     if upload_config.create_repo:
