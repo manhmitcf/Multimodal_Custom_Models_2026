@@ -37,12 +37,12 @@
     "num_frames": 2
   },
   "audio_features": {
-    "sample_rate": 64000,
+    "sample_rate": 128000,
     "window_size": 2048,
-    "hop_size": 512,
+    "hop_size": 1024,
     "mel_bins": 128,
     "fmin": 50,
-    "fmax": 32000,
+    "fmax": 64000,
     "use_tkeo": true,
     "alpha_max": 0.99,
     "beta": 0.8,

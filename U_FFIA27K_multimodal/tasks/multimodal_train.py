@@ -19,7 +19,7 @@ import torch.optim as optim
 from tqdm import tqdm
 
 from config import MultimodalTrainConfig
-from utils import EarlyStopping, HistoryLogger, MultimodalEvaluator, InferenceTimer, ClipCELoss
+from utils import EarlyStopping, HistoryLogger, MultimodalEvaluator, InferenceTimer, ClipCELoss, AdaptiveOrdinalCELoss
 
 # Logging configuration
 logging.basicConfig(
@@ -54,8 +54,8 @@ class MultimodalTrainer:
         self.device = device
         self.train_config_path = train_config_path
 
-        # Setup Loss and Optimizer
-        self.loss_fn = ClipCELoss()
+        # Setup Loss and Optimizer (Adaptive Ordinal Loss with Weak vs Medium Margin)
+        self.loss_fn = AdaptiveOrdinalCELoss(margin=0.2, margin_weight=0.5)
         self.optimizer = optimizer if optimizer is not None else optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,

@@ -4,6 +4,38 @@ import torch.nn.functional as F
 from typing import Tuple, Dict, Optional
 
 
+class TemporalCadenceAttentionModule(nn.Module):
+    """
+    Temporal Cadence Attention Module (TCAM).
+    Measures acoustic impulse recurrence regularity and burst density to distinguish
+    between isolated sporadic bites (Weak) and rapid rhythmic feeding feeding frenzy (Medium/Strong).
+    """
+    def __init__(self, feat_dim: int = 256) -> None:
+        super().__init__()
+        self.conv1d = nn.Sequential(
+            nn.Conv1d(feat_dim, 64, kernel_size=3, padding=1),
+            nn.SiLU(),
+            nn.Conv1d(64, 1, kernel_size=1)
+        )
+
+    def forward(self, f_a_seq: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        # f_a_seq: [B, T_a, D] -> transpose to [B, D, T_a]
+        b, t, d = f_a_seq.shape
+        energy_curve = self.conv1d(f_a_seq.permute(0, 2, 1)) # [B, 1, T_a]
+        
+        # Temporal rate of change (cadence variance)
+        if t >= 2:
+            diff1 = torch.abs(energy_curve[:, :, 1:] - energy_curve[:, :, :-1]) # [B, 1, T_a-1]
+            cadence_density = diff1.mean(dim=-1) # [B, 1]
+        else:
+            cadence_density = torch.zeros(b, 1, device=f_a_seq.device, dtype=f_a_seq.dtype)
+            
+        # Attention weights along time
+        time_weights = torch.softmax(energy_curve.squeeze(1), dim=-1) # [B, T_a]
+        f_cadence = torch.bmm(time_weights.unsqueeze(1), f_a_seq).squeeze(1) # [B, D]
+        return f_cadence, cadence_density
+
+
 class EnhancedFishMultimodalFusion(nn.Module):
     """
     Enhanced Physics-Informed Bi-Directional Multimodal Fusion for Fish Feeding Intensity Assessment:
@@ -12,12 +44,15 @@ class EnhancedFishMultimodalFusion(nn.Module):
        - Video-to-Audio: Visual motion queries acoustic impulse rhythm.
        - Audio-to-Video: Acoustic splash queries video visual motion to eliminate aeration pump false positives.
     2. Spectral-Spatial FiLM Modulation:
-       - Acoustic frequency profile (2-8kHz) modulates static visual foam & pond texture.
+       - Acoustic frequency profile modulates static visual foam & pond texture.
     3. Phase-Lag Synchronization Score:
        - Computes peak correlation between visual water upheaval and underwater acoustic shockwave.
     4. Physics-Informed Reliability Gating:
-       - Uses actual physical metrics (white foam ratio, foam expansion rate dA/dt, fish aggregation density)
+       - Uses actual physical metrics (white foam ratio, foam rate dA/dt, velocity v_mean, feeding flux Phi_feed)
          to dynamically weigh visual vs. acoustic confidence.
+    5. Adaptive Weak vs. Medium Disambiguation:
+       - Analyzes feeding convergence flux and acoustic pulse cadence to dynamically separate
+         fuzzy boundaries between Weak and Medium feeding states.
     """
     def __init__(self, feat_dim: int = 256, num_classes: int = 4) -> None:
         super().__init__()
@@ -30,29 +65,44 @@ class EnhancedFishMultimodalFusion(nn.Module):
         self.norm_v = nn.LayerNorm(feat_dim)
         self.norm_a = nn.LayerNorm(feat_dim)
 
-        # 2. FiLM Modulation (Frequency controls Foam Sensitivity)
+        # 2. Temporal Cadence Attention
+        self.tcam = TemporalCadenceAttentionModule(feat_dim=feat_dim)
+
+        # 3. FiLM Modulation (Frequency controls Foam Sensitivity)
         self.film_generator = nn.Sequential(
             nn.Linear(feat_dim, feat_dim * 2),
             nn.SiLU()
         )
 
-        # 3. Physics-Informed Reliability Gate
-        # Input: [f_v, f_a, external_physics_feats (3 dimensions)]
+        # 4. Physics-Informed Reliability Gate
+        # Input: [f_v, f_a, external_physics_feats (4 dimensions: foam, da_dt, v_mean, phi_feed)]
         self.physics_gate = nn.Sequential(
-            nn.Linear(feat_dim * 2 + 3, 64),
+            nn.Linear(feat_dim * 2 + 4, 64),
             nn.ReLU(inplace=True),
             nn.Linear(64, 2),
             nn.Softmax(dim=-1)
         )
 
-        # 4. Final Multimodal Classifier Head
-        fused_dim = feat_dim * 2 + feat_dim + 1 + 3 # Dynamic(512) + Static(256) + Sync(1) + External(3) = 772
+        # 5. Final Multimodal Classifier Head
+        # Dynamic(512) + Static(256) + Cadence(256) + Sync(1) + Cadence_Density(1) + Kinematics(4) = 1030
+        fused_dim = feat_dim * 2 + feat_dim + feat_dim + 1 + 1 + 4 
+        self.fused_dim = fused_dim
+        
         self.classifier = nn.Sequential(
             nn.Linear(fused_dim, 128),
             nn.LayerNorm(128),
             nn.SiLU(),
             nn.Dropout(0.2),
             nn.Linear(128, num_classes)
+        )
+
+        # 6. Adaptive Weak vs Medium Disambiguation Head:
+        # Pushes apart class 1 (Weak) and class 2 (Medium) based on feeding flux and pulse cadence
+        self.disambig_head = nn.Sequential(
+            nn.Linear(fused_dim, 64),
+            nn.SiLU(),
+            nn.Linear(64, 1),
+            nn.Tanh()
         )
 
     def forward(
@@ -75,16 +125,23 @@ class EnhancedFishMultimodalFusion(nn.Module):
             f_a_frq: Audio frequency profile representation [B, feat_dim]
             f_a_rhy: Audio rhythm representation [B, feat_dim]
             f_audio: Overall acoustic representation [B, feat_dim]
-            external_physics_feats: [B, 3] (white_foam_area, foam_rate, fish_density)
+            external_physics_feats: [B, 4] (a_foam, da_dt, v_mean, phi_feed)
         """
         B = f_v_seq.size(0)
         device = f_v_seq.device
 
         if external_physics_feats is None or external_physics_feats.numel() == 0:
-            external_physics_feats = torch.zeros(B, 3, device=device, dtype=f_v_seq.dtype)
+            external_physics_feats = torch.zeros(B, 4, device=device, dtype=f_v_seq.dtype)
+        elif external_physics_feats.size(-1) < 4:
+            # Pad to 4 if older 3-dim tensor provided
+            pad_size = 4 - external_physics_feats.size(-1)
+            external_physics_feats = F.pad(external_physics_feats, (0, pad_size))
 
-        # 1. Bi-directional Cross-Attention
-        # 1.1 Audio queries Video
+        # 1. Temporal Cadence Analysis on Audio Sequence
+        f_cadence, cadence_density = self.tcam(f_a_seq)
+
+        # 2. Bi-directional Cross-Attention
+        # 2.1 Audio queries Video
         attn_v, _ = self.cross_attn_a2v(query=f_a_seq, key=f_v_seq, value=f_v_seq)
         f_a_enhanced = self.norm_a(f_a_seq + attn_v).mean(dim=1)
         if f_a_rhy is not None:
@@ -92,21 +149,21 @@ class EnhancedFishMultimodalFusion(nn.Module):
         if f_audio is not None:
             f_a_enhanced = f_a_enhanced + f_audio
 
-        # 1.2 Video queries Audio
+        # 2.2 Video queries Audio
         attn_a, attn_weights_v2a = self.cross_attn_v2a(query=f_v_seq, key=f_a_seq, value=f_a_seq)
         f_v_enhanced = self.norm_v(f_v_seq + attn_a).mean(dim=1)
         if f_v_mot is not None:
             f_v_enhanced = f_v_enhanced + f_v_mot
 
-        # 1.3 Synchronization Score (Max alignment score across attention map)
+        # 2.3 Synchronization Score (Max alignment score across attention map)
         sync_score = attn_weights_v2a.max(dim=-1)[0].mean(dim=-1, keepdim=True) # [B, 1]
 
-        # 2. FiLM Modulation (Spectral -> Spatial)
+        # 3. FiLM Modulation (Spectral -> Spatial)
         film_params = self.film_generator(f_a_frq)
         gamma, beta = film_params.chunk(2, dim=-1)
         f_static = gamma * f_v_spa + beta # [B, feat_dim]
 
-        # 3. Physics-Informed Gating
+        # 4. Physics-Informed Gating
         gate_input = torch.cat([f_v_enhanced, f_a_enhanced, external_physics_feats], dim=-1)
         weights = self.physics_gate(gate_input) # [B, 2] -> [w_video, w_audio]
         w_v = weights[:, :1]
@@ -115,15 +172,33 @@ class EnhancedFishMultimodalFusion(nn.Module):
         # Apply confidence-weighted dynamic features
         f_dynamic_gated = torch.cat([w_v * f_v_enhanced, w_a * f_a_enhanced], dim=-1) # [B, 2 * feat_dim]
 
-        # 4. Joint Fusion Representation & Classification
-        f_final = torch.cat([f_dynamic_gated, f_static, sync_score, external_physics_feats], dim=-1)
-        logits = self.classifier(f_final)
+        # 5. Joint Fusion Representation & Classification
+        f_final = torch.cat([
+            f_dynamic_gated, 
+            f_static, 
+            f_cadence, 
+            sync_score, 
+            cadence_density, 
+            external_physics_feats
+        ], dim=-1)
+        
+        raw_logits = self.classifier(f_final) # [B, 4]
+
+        # 6. Adaptive Weak vs. Medium Disambiguation:
+        # Push-pull margin delta: > 0 favors Medium (class 2), < 0 favors Weak (class 1)
+        delta_margin = self.disambig_head(f_final) # [B, 1] in range [-1, 1]
+        logits = raw_logits.clone()
+        logits[:, 1:2] = logits[:, 1:2] - 0.5 * delta_margin # Weak
+        logits[:, 2:3] = logits[:, 2:3] + 0.5 * delta_margin # Medium
 
         return {
             "logits": logits,
+            "raw_logits": raw_logits,
             "f_fused": f_final,
             "modality_weights": weights,
             "sync_score": sync_score,
+            "delta_margin": delta_margin,
+            "cadence_density": cadence_density,
             "w_video": w_v,
             "w_audio": w_a
         }

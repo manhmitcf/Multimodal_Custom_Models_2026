@@ -64,7 +64,7 @@ def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames:
     return np.stack(frames[:num_frames])
 
 
-def _decode_audio_waveform_raw(audio_path: str, sample_rate: int = 64000) -> np.ndarray:
+def _decode_audio_waveform_raw(audio_path: str, sample_rate: int = 128000) -> np.ndarray:
     """Load raw audio waveform into float32 NumPy array [sample_rate * 2]."""
     target_len = sample_rate * 2
     if audio_path and os.path.exists(audio_path):
@@ -101,7 +101,7 @@ class FishMultimodalDataLoader:
         image_size: int = 224,
         frame_policy: str = "end",
         num_frames: int = 2,
-        sample_rate: int = 64000,
+        sample_rate: int = 128000,
         splitter_config: Optional[SplitterConfig] = None,
     ) -> None:
         self.batch_size = batch_size

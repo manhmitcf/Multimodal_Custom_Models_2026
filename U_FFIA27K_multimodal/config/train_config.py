@@ -36,12 +36,12 @@ class AudioFeaturesConfig(BaseModel):
     """
     Audio Log-Mel Spectrogram extraction parameters.
     """
-    sample_rate: int = Field(default=64000, description="Target audio sampling rate in Hz.")
-    window_size: int = Field(default=2048, description="STFT window length in samples.")
-    hop_size: int = Field(default=512, description="STFT hop size in samples.")
+    sample_rate: int = Field(default=128000, description="Target audio sampling rate in Hz.")
+    window_size: int = Field(default=2048, description="STFT window length in samples (16ms at 128kHz).")
+    hop_size: int = Field(default=1024, description="STFT hop size in samples (8ms at 128kHz).")
     mel_bins: int = Field(default=128, description="Number of Mel frequency filter banks.")
     fmin: int = Field(default=50, description="Minimum frequency for Mel filter bank in Hz.")
-    fmax: int = Field(default=32000, description="Maximum frequency for Mel filter bank in Hz.")
+    fmax: int = Field(default=64000, description="Maximum frequency for Mel filter bank in Hz (Nyquist limit).")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator (TKEO) adaptive pre-emphasis.")
     alpha_max: float = Field(default=0.99, ge=0.0, le=1.0, description="Maximum alpha scaling factor for TKEO filter.")
     beta: float = Field(default=0.8, ge=0.0, le=1.0, description="Smoothing momentum parameter across consecutive frames in TKEO.")
