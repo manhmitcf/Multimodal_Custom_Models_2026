@@ -34,11 +34,13 @@ class AdaptiveOrdinalCELoss(BaseLoss):
     """
     Adaptive Ordinal Cross Entropy Loss with Weak-vs-Medium Contrastive Margin.
     
-    1. Cross Entropy with Soft Gaussian Ordinal Smoothing:
-       Respects class ranking None (0) < Weak (1) < Medium (2) < Strong (3).
+    Dataset class mapping:
+       0: None, 1: Strong, 2: Medium, 3: Weak
+    
+    1. Standard Cross Entropy Loss over 4 classes.
     2. Boundary Disambiguation Margin Loss:
        Directly supervises delta_margin:
-       - If ground truth is Weak (1): encourages delta_margin <= -margin (amplifying Weak over Medium)
+       - If ground truth is Weak (3): encourages delta_margin <= -margin (amplifying Weak over Medium)
        - If ground truth is Medium (2): encourages delta_margin >= +margin (amplifying Medium over Weak)
     """
     def __init__(self, margin: float = 0.2, margin_weight: float = 0.5) -> None:
@@ -63,11 +65,11 @@ class AdaptiveOrdinalCELoss(BaseLoss):
         if 'delta_margin' in output_dict:
             delta = output_dict['delta_margin'].squeeze(-1) # [B]
             
-            # Loss for Weak (class 1): delta should be <= 0
-            is_weak = (target_indices == 1).float()
+            # Loss for Weak (class 3 in dataset mapping): delta should be <= -margin
+            is_weak = (target_indices == 3).float()
             weak_penalty = is_weak * F.relu(delta + self.margin)
             
-            # Loss for Medium (class 2): delta should be >= 0
+            # Loss for Medium (class 2 in dataset mapping): delta should be >= +margin
             is_medium = (target_indices == 2).float()
             medium_penalty = is_medium * F.relu(-delta + self.margin)
             

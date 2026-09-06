@@ -73,15 +73,23 @@ class FishMotionKinematics(nn.Module):
         device = frames_rgb.device
         dtype = frames_rgb.dtype
 
-        # 1. Grayscale luminance conversion [B * T, 1, H, W]
+        # Unnormalize ImageNet normalization to [0, 1] for physics/kinematics extraction
         rgb_flat = frames_rgb.view(B * T, 3, H, W)
-        gray_flat = 0.299 * rgb_flat[:, 0:1] + 0.587 * rgb_flat[:, 1:2] + 0.114 * rgb_flat[:, 2:3]
+        if rgb_flat.min() < 0.0:
+            mean = torch.tensor([0.485, 0.456, 0.406], device=device, dtype=dtype).view(1, 3, 1, 1)
+            std = torch.tensor([0.229, 0.224, 0.225], device=device, dtype=dtype).view(1, 3, 1, 1)
+            rgb_01 = torch.clamp(rgb_flat * std + mean, 0.0, 1.0)
+        else:
+            rgb_01 = torch.clamp(rgb_flat, 0.0, 1.0)
+
+        # 1. Grayscale luminance conversion [B * T, 1, H, W] in [0, 1]
+        gray_flat = 0.299 * rgb_01[:, 0:1] + 0.587 * rgb_01[:, 1:2] + 0.114 * rgb_01[:, 2:3]
         gray_seq = gray_flat.view(B, T, 1, H, W)
 
         # 2. Sủi bọt (White Water Foam & Bubble Texture)
-        # Foam has high brightness and high spatial variance
-        brightness = rgb_flat.mean(dim=1, keepdim=True) # [B*T, 1, H, W]
-        is_bright = F.relu(brightness - 0.75) * 4.0     # Soft thresholding
+        # Foam has high brightness (>= 0.70) and high spatial variance
+        brightness = rgb_01.mean(dim=1, keepdim=True) # [B*T, 1, H, W]
+        is_bright = F.relu(brightness - 0.70) * 3.33  # Soft thresholding
         lap_edges = torch.abs(F.conv2d(gray_flat, self.laplacian, padding=1))
         foam_map = (is_bright * (1.0 + lap_edges)).view(B, T, H, W) # [B, T, H, W]
         

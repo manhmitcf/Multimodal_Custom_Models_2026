@@ -97,7 +97,7 @@ class EnhancedFishMultimodalFusion(nn.Module):
         )
 
         # 6. Adaptive Weak vs Medium Disambiguation Head:
-        # Pushes apart class 1 (Weak) and class 2 (Medium) based on feeding flux and pulse cadence
+        # Pushes apart class 3 (Weak) and class 2 (Medium) based on feeding flux and pulse cadence
         self.disambig_head = nn.Sequential(
             nn.Linear(fused_dim, 64),
             nn.SiLU(),
@@ -185,11 +185,11 @@ class EnhancedFishMultimodalFusion(nn.Module):
         raw_logits = self.classifier(f_final) # [B, 4]
 
         # 6. Adaptive Weak vs. Medium Disambiguation:
-        # Push-pull margin delta: > 0 favors Medium (class 2), < 0 favors Weak (class 1)
+        # Push-pull margin delta: > 0 favors Medium (class 2), < 0 favors Weak (class 3)
         delta_margin = self.disambig_head(f_final) # [B, 1] in range [-1, 1]
         logits = raw_logits.clone()
-        logits[:, 1:2] = logits[:, 1:2] - 0.5 * delta_margin # Weak
-        logits[:, 2:3] = logits[:, 2:3] + 0.5 * delta_margin # Medium
+        logits[:, 3:4] = logits[:, 3:4] - 0.5 * delta_margin # Weak (class 3)
+        logits[:, 2:3] = logits[:, 2:3] + 0.5 * delta_margin # Medium (class 2)
 
         return {
             "logits": logits,

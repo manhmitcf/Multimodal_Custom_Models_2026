@@ -304,14 +304,16 @@ class FishMultimodalDataLoader:
                     else:
                         indices = np.linspace(0, total_frames - 1, self.parent.num_frames).astype(int)
 
+                    raw_frames = []
                     for idx in indices:
                         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                         ret, frame = cap.read()
                         if ret:
                             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                            tensor = self.transform(frame)
-                            frames.append(tensor)
-                cap.release()
+                            raw_frames.append(frame)
+                    cap.release()
+                    if raw_frames:
+                        frames = self.transform(raw_frames)
 
             while len(frames) < self.parent.num_frames:
                 frames.append(torch.zeros(3, self.parent.image_size, self.parent.image_size, dtype=torch.float32))
@@ -343,7 +345,7 @@ class FishMultimodalDataLoader:
         def __getitem__(self, idx: int) -> Dict[str, Any]:
             if self.ram_cache is not None and self.ram_cache[idx] is not None:
                 video_raw, audio_raw, target_onehot, clip_name = self.ram_cache[idx]
-                frames = [self.transform(frame) for frame in video_raw]
+                frames = self.transform(video_raw)
                 video_tensor = torch.stack(frames[:self.parent.num_frames])
                 audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
                 return {
