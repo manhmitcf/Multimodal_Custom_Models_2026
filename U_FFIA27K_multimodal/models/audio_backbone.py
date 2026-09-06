@@ -69,9 +69,9 @@ class AudioAcousticBackbone(nn.Module):
       - Group 3b: Rhythm Features (f_rhythm: temporal cadence and splashing frequency impulses)
       - Combined: Acoustic Embedding (f_audio)
       
-    Total parameters: ~1.49M params.
+    Total parameters: ~1.63M params.
     """
-    def __init__(self, embed_dim: int = 192) -> None:
+    def __init__(self, embed_dim: int = 224) -> None:
         super().__init__()
         
         # 6-Stage Inverted Residual Feature Extractor
@@ -102,6 +102,10 @@ class AudioAcousticBackbone(nn.Module):
         # Projection to common embedding space
         self.proj = nn.Sequential(
             nn.Linear(512, embed_dim),
+            nn.LayerNorm(embed_dim)
+        )
+        self.joint_proj = nn.Sequential(
+            nn.Linear(embed_dim * 2, embed_dim),
             nn.LayerNorm(embed_dim)
         )
 
@@ -135,7 +139,7 @@ class AudioAcousticBackbone(nn.Module):
         w_freq = self.freq_attention(freq_global)
         f_frequency = self.proj(freq_global * w_freq)
 
-        # 3. Joint Acoustic Vector
-        f_audio = self.proj(freq_global) + f_rhythm
+        # 3. Joint Acoustic Vector fusing frequency profile and temporal rhythm
+        f_audio = self.joint_proj(torch.cat([f_frequency, f_rhythm], dim=-1))
 
         return f_audio, f_frequency, f_rhythm

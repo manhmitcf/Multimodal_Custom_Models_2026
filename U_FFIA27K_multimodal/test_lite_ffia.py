@@ -20,7 +20,7 @@ def run_benchmark():
     # 1. Instantiate model
     model = LiteFFIANet(
         classes_num=4,
-        embed_dim=192,
+        embed_dim=224,
         num_bottlenecks=4,
         num_heads=4,
         pretrained_video=False
@@ -32,7 +32,7 @@ def run_benchmark():
     print("\n[1] PARAMETER BREAKDOWN:")
     print(f"  - Video Backbone (Spatial + Motion ME):  {breakdown['video_backbone'] / 1e6:6.3f} M params")
     print(f"  - Audio Backbone (Frequency + Rhythm):   {breakdown['audio_backbone'] / 1e6:6.3f} M params")
-    print(f"  - Multimodal Bottleneck Fusion (MBT):    {breakdown['mbt_fusion'] / 1e6:6.3f} M params")
+    print(f"  - Bidirectional Cross-Attention Fusion:  {breakdown['fusion'] / 1e6:6.3f} M params")
     print(f"  - Adaptive Modality Reliability Gate:    {breakdown['modality_gate'] / 1e6:6.3f} M params")
     print(f"  - Classifier Head (4 Classes):           {breakdown['classifier'] / 1e6:6.3f} M params")
     print("  " + "-" * 55)
@@ -57,11 +57,11 @@ def run_benchmark():
     out_2f = model(v_input_2f, a_input)
     print("  * Test A (Batch=2, 2 Frames):")
     print(f"    - clipwise_output (logits): {tuple(out_2f['clipwise_output'].shape)}  [Expected: (2, 4)]")
-    print(f"    - f_spatial (Group 1):      {tuple(out_2f['f_spatial'].shape)}  [Expected: (2, 192)]")
-    print(f"    - f_motion (Group 2):       {tuple(out_2f['f_motion'].shape)}  [Expected: (2, 192)]")
-    print(f"    - f_frequency (Group 3a):   {tuple(out_2f['f_frequency'].shape)}  [Expected: (2, 192)]")
-    print(f"    - f_rhythm (Group 3b):      {tuple(out_2f['f_rhythm'].shape)}  [Expected: (2, 192)]")
-    print(f"    - f_fused (Multimodal MBT): {tuple(out_2f['f_fused'].shape)}  [Expected: (2, 192)]")
+    print(f"    - f_spatial (Group 1):      {tuple(out_2f['f_spatial'].shape)}  [Expected: (2, 224)]")
+    print(f"    - f_motion (Group 2):       {tuple(out_2f['f_motion'].shape)}  [Expected: (2, 224)]")
+    print(f"    - f_frequency (Group 3a):   {tuple(out_2f['f_frequency'].shape)}  [Expected: (2, 224)]")
+    print(f"    - f_rhythm (Group 3b):      {tuple(out_2f['f_rhythm'].shape)}  [Expected: (2, 224)]")
+    print(f"    - f_fused (Multimodal BMCA): {tuple(out_2f['f_fused'].shape)}  [Expected: (2, 224)]")
     print(f"    - gating_alpha (Reliability): {tuple(out_2f['gating_alpha'].shape)}, avg={out_2f['gating_alpha'].mean().item():.3f}")
 
     # Test B: 4-frame video input [B=1, T=4, 3, 224, 224]
@@ -95,19 +95,19 @@ def run_benchmark():
     v_grad = model.video_backbone.stem[0][0].weight.grad is not None
     m_grad = model.video_backbone.motion_excitation.channel_squeeze.weight.grad is not None
     a_grad = model.audio_backbone.block1.conv1a.weight.grad is not None
-    mbt_grad = model.mbt_fusion.bottlenecks.grad is not None
-    gate_grad = model.modality_gate.gate_mlp[0].weight.grad is not None
+    fusion_grad = model.fusion.v_to_a_attn.in_proj_weight.grad is not None
+    gate_grad = model.fusion.gate[0].weight.grad is not None
     cls_grad = model.classifier[0].weight.grad is not None
 
     print(f"  * Gradient flow check:")
     print(f"    - Video Stem:              {'OK' if v_grad else 'FAILED'}")
     print(f"    - Motion Excitation:       {'OK' if m_grad else 'FAILED'}")
     print(f"    - Audio Backbone:          {'OK' if a_grad else 'FAILED'}")
-    print(f"    - MBT Bottleneck Tokens:   {'OK' if mbt_grad else 'FAILED'}")
+    print(f"    - BMCA Cross-Attention:    {'OK' if fusion_grad else 'FAILED'}")
     print(f"    - Adaptive Modality Gate:  {'OK' if gate_grad else 'FAILED'}")
     print(f"    - Classifier Head:         {'OK' if cls_grad else 'FAILED'}")
     
-    assert all([v_grad, m_grad, a_grad, mbt_grad, gate_grad, cls_grad]), "Error: Some modules did not receive gradients!"
+    assert all([v_grad, m_grad, a_grad, fusion_grad, gate_grad, cls_grad]), "Error: Some modules did not receive gradients!"
     print("  >>> VERIFICATION PASSED: End-to-end backpropagation operates flawlessly!")
 
     # 6. Latency Benchmark

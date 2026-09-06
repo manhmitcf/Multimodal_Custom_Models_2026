@@ -61,7 +61,7 @@ class ModelConfig(BaseModel):
         default="LiteFFIANet",
         description="Model architecture name exported by U_FFIA27K_multimodal.models."
     )
-    embed_dim: int = Field(default=192, description="Common embedding dimension for visual and acoustic tokens.")
+    embed_dim: int = Field(default=224, description="Common embedding dimension for visual and acoustic tokens.")
     num_bottlenecks: int = Field(default=4, description="Number of MBT bottleneck tokens.")
     num_heads: int = Field(default=4, description="Number of cross-attention heads.")
     pretrained_video: bool = Field(default=True, description="Whether to load ImageNet pretrained weights for the video backbone.")

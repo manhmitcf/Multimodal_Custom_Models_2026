@@ -11,16 +11,22 @@ except ImportError:
 
 def count_parameters(model: nn.Module) -> Dict[str, Any]:
     """Calculate parameter breakdown for LiteFFIANet."""
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     
+    fusion_module = getattr(model, "fusion", getattr(model, "mbt_fusion", None))
+    fusion_params = sum(p.numel() for p in fusion_module.parameters() if p.requires_grad) if fusion_module else 0
+    gate_module = getattr(model, "modality_gate", None)
+    gate_params = sum(p.numel() for p in gate_module.parameters() if p.requires_grad) if gate_module else 0
+
     breakdown = {
-        "video_backbone": sum(p.numel() for p in model.video_backbone.parameters() if p.requires_grad),
-        "audio_backbone": sum(p.numel() for p in model.audio_backbone.parameters() if p.requires_grad),
-        "mbt_fusion": sum(p.numel() for p in model.mbt_fusion.parameters() if p.requires_grad),
-        "modality_gate": sum(p.numel() for p in model.modality_gate.parameters() if p.requires_grad),
-        "classifier": sum(p.numel() for p in model.classifier.parameters() if p.requires_grad),
-        "total": total_params,
-        "total_million": total_params / 1e6
+        "video_backbone": sum(p.numel() for p in model.video_backbone.parameters() if p.requires_grad) if hasattr(model, "video_backbone") else 0,
+        "audio_backbone": sum(p.numel() for p in model.audio_backbone.parameters() if p.requires_grad) if hasattr(model, "audio_backbone") else 0,
+        "fusion": fusion_params,
+        "mbt_fusion": fusion_params,
+        "modality_gate": gate_params,
+        "classifier": sum(p.numel() for p in model.classifier.parameters() if p.requires_grad) if hasattr(model, "classifier") else 0,
+        "total": total_trainable,
+        "total_million": total_trainable / 1e6
     }
     return breakdown
 
