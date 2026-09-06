@@ -6,7 +6,7 @@
   "ckpt_dir": "checkpoint/",
   "monitor": "loss",
   "early_stopping": true,
-  "patience": 40,
+  "patience": 80,
   "delta": 0.0,
   "cache_mode": "ram",
   "dataloader_workers": 5,
