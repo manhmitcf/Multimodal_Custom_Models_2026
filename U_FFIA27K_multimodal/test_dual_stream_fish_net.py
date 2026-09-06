@@ -53,6 +53,32 @@ def test_dual_stream_fish_net():
     print(f"  * (Note: AudioFrontend STFT uses 4.3M fixed non-trainable Fourier basis constants)")
     assert stats_full['total'] < 5_000_000, "Trainable parameters exceed 5M!"
 
+    # 3b. Verification of Frequency Attention Physics Prior
+    print("\n[2b] FREQUENCY ATTENTION ACOUSTIC PHYSICS VERIFICATION:")
+    freq_attn = model_core.audio_backbone.freq_attention
+    assert hasattr(freq_attn, "physics_prior"), "FrequencyAttentionBlock missing physics_prior buffer!"
+    dummy_mel = torch.zeros(1, 1, 100, 128)
+    with torch.no_grad():
+        _, init_weights = freq_attn(dummy_mel)
+    init_weights = init_weights[0].cpu().numpy()
+    
+    print(f"  - Bin 0   (50 Hz)   Weight: {init_weights[0]:.4f} (Suppression: {(1-init_weights[0])*100:.1f}%)")
+    print(f"  - Bin 10  (389 Hz)  Weight: {init_weights[10]:.4f} (Suppression: {(1-init_weights[10])*100:.1f}%)")
+    print(f"  - Bin 13  (491 Hz)  Weight: {init_weights[13]:.4f} (Suppression: {(1-init_weights[13])*100:.1f}%)")
+    print(f"  - Bin 48  (2,014 Hz) Weight: {init_weights[48]:.4f} (Amplification band)")
+    print(f"  - Bin 68  (4,057 Hz) Weight: {init_weights[68]:.4f} (Cavitation peak band)")
+    print(f"  - Bin 88  (8,171 Hz) Weight: {init_weights[88]:.4f} (Amplification band)")
+    print(f"  - Bin 127 (32,000 Hz) Weight: {init_weights[127]:.4f} (High-freq spray roll-off)")
+
+    # Assert physical constraints
+    assert init_weights[0] < 0.05, f"Low frequency 50Hz not suppressed: {init_weights[0]}"
+    assert init_weights[10] < 0.05, f"Low frequency 389Hz not suppressed: {init_weights[10]}"
+    assert init_weights[68] > 0.85, f"Feeding peak 4kHz not amplified: {init_weights[68]}"
+    assert init_weights[48] > 0.70, f"Feeding band 2kHz not amplified: {init_weights[48]}"
+    assert init_weights[88] > 0.70, f"Feeding band 8kHz not amplified: {init_weights[88]}"
+    print("  >>> [PASS] Acoustic Physics Prior correctly suppresses <500Hz and amplifies 2-8kHz!")
+
+
     # 4. Forward Pass Tests
     print("\n[3] FORWARD PASS COMPATIBILITY TESTS:")
     B = 2
