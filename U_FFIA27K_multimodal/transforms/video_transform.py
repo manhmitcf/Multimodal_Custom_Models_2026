@@ -1,3 +1,5 @@
+import random
+from typing import List, Union, Optional
 import numpy as np
 import torch
 import torchvision.transforms as transforms
@@ -35,42 +37,89 @@ class ImageToPIL:
 
 class VideoTransform:
     """
-    Backward-compatible name for the single-frame image transform pipeline.
-
-    Input:  np.ndarray [H, W, C] or [C, H, W] uint8
-    Output: torch.Tensor [C, H, W] float32 normalized with ImageNet statistics.
+    VideoTransform supporting both single-frame and spatiotemporally consistent multi-frame clips.
+    
+    For multi-frame sequences (T frames):
+    Applies IDENTICAL spatial augmentation (flip, rotation, affine shift) across all frames
+    in the clip to prevent destroying temporal frame difference (It = It - It-1) and optical flow.
     """
-    def __init__(self, transform: transforms.Compose) -> None:
-        self.transform = transform
+    def __init__(
+        self,
+        is_train: bool = False,
+        image_size: int = 224,
+        mean: tuple = (0.485, 0.456, 0.406),
+        std: tuple = (0.229, 0.224, 0.225)
+    ) -> None:
+        self.is_train = is_train
+        self.image_size = image_size
+        self.mean = mean
+        self.std = std
+        self.to_pil = ImageToPIL()
 
-    def __call__(self, image: np.ndarray) -> torch.Tensor:
-        return self.transform(image)
+    def transform_clip(self, frames: List[Union[np.ndarray, torch.Tensor]]) -> List[torch.Tensor]:
+        """
+        Transform a sequence of video frames with spatiotemporal consistency.
+        """
+        if not frames:
+            return []
+
+        # Convert all frames to PIL Image
+        pil_frames = [self.to_pil(f) for f in frames]
+
+        # In train mode, sample geometric and photometric augmentation parameters ONCE per clip
+        if self.is_train:
+            do_flip = random.random() < 0.5
+            angle = random.uniform(-15.0, 15.0)
+            max_trans = int(0.1 * self.image_size)
+            translate = (random.randint(-max_trans, max_trans), random.randint(-max_trans, max_trans))
+            bright_factor = random.uniform(0.85, 1.15)
+        else:
+            do_flip = False
+            angle = 0.0
+            translate = (0, 0)
+            bright_factor = 1.0
+
+        transformed_tensors = []
+        for img in pil_frames:
+            # 1. Resize to target resolution
+            img = TF.resize(img, (self.image_size, self.image_size), interpolation=InterpolationMode.BILINEAR)
+
+            # 2. Consistent Photometric Augmentation
+            if self.is_train and bright_factor != 1.0:
+                img = TF.adjust_brightness(img, bright_factor)
+
+            # 3. Consistent Geometric Augmentation
+            if do_flip:
+                img = TF.hflip(img)
+            if angle != 0.0 or translate != (0, 0):
+                img = TF.affine(
+                    img,
+                    angle=angle,
+                    translate=translate,
+                    scale=1.0,
+                    shear=0.0,
+                    interpolation=InterpolationMode.BILINEAR
+                )
+
+            # 4. ToTensor & Normalize with ImageNet stats
+            tensor = TF.to_tensor(img)
+            tensor = TF.normalize(tensor, mean=self.mean, std=self.std)
+            transformed_tensors.append(tensor)
+
+        return transformed_tensors
+
+    def __call__(self, image: Union[np.ndarray, torch.Tensor, List]) -> Union[torch.Tensor, List[torch.Tensor]]:
+        """
+        Supports single image or list of frames.
+        """
+        if isinstance(image, (list, tuple)):
+            return self.transform_clip(list(image))
+        return self.transform_clip([image])[0]
 
     @staticmethod
     def get_transforms(image_size: int = 224):
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
-
-        train_transform = [
-            ImageToPIL(),
-            transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
-            transforms.ColorJitter(brightness=0.15),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(20),
-            transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ]
-
-        eval_transform = [
-            ImageToPIL(),
-            transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ]
-
         return {
-            "train": VideoTransform(transforms.Compose(train_transform)),
-            "val": VideoTransform(transforms.Compose(eval_transform)),
-            "test": VideoTransform(transforms.Compose(eval_transform)),
+            "train": VideoTransform(is_train=True, image_size=image_size),
+            "val": VideoTransform(is_train=False, image_size=image_size),
+            "test": VideoTransform(is_train=False, image_size=image_size),
         }
