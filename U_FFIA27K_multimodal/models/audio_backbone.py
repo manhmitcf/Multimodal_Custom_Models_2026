@@ -79,97 +79,97 @@ class FrequencyAttentionBlock(nn.Module):
         return x * weights_expanded, weights
 
 
-class DepthwiseAudioBlock(nn.Module):
+class ConvBlock5x5(nn.Module):
     """
-    Inverted residual depthwise separable block tailored for audio spectrograms.
+    PANNs CNN6 Convolutional Block:
+    - 5x5 2D Convolution with stride 1, padding 2 (large time-frequency receptive field).
+    - BatchNorm2d + ReLU activation.
+    - Average Pooling (2, 2).
+    - Xavier Uniform + BatchNorm weight initialization from PANNs.
     """
-    def __init__(self, in_channels: int, out_channels: int, expansion: int = 2) -> None:
+    def __init__(self, in_channels: int, out_channels: int) -> None:
         super().__init__()
-        mid_channels = in_channels * expansion
-        
-        self.conv1a = nn.Conv2d(in_channels, mid_channels, kernel_size=1, bias=False)
-        self.bn1a = nn.BatchNorm2d(mid_channels)
-        self.conv1b = nn.Conv2d(mid_channels, mid_channels, kernel_size=3, padding=1, groups=mid_channels, bias=False)
-        self.bn1b = nn.BatchNorm2d(mid_channels)
-        self.conv1c = nn.Conv2d(mid_channels, out_channels, kernel_size=1, bias=False)
-        self.bn1c = nn.BatchNorm2d(out_channels)
-        
-        self.gelu = nn.GELU()
-        self.is_shortcut = (in_channels != out_channels)
-        if self.is_shortcut:
-            self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
-            self.bn_shortcut = nn.BatchNorm2d(out_channels)
-            init_layer(self.shortcut)
-            init_bn(self.bn_shortcut)
-
-        init_layer(self.conv1a)
-        init_layer(self.conv1b)
-        init_layer(self.conv1c)
-        init_bn(self.bn1a)
-        init_bn(self.bn1b)
-        init_bn(self.bn1c)
+        self.conv = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=(5, 5),
+            stride=(1, 1),
+            padding=(2, 2),
+            bias=False
+        )
+        self.bn = nn.BatchNorm2d(out_channels)
+        init_layer(self.conv)
+        init_bn(self.bn)
 
     def forward(self, x: torch.Tensor, pool_size: Tuple[int, int] = (2, 2)) -> torch.Tensor:
-        identity = x
-        out = self.gelu(self.bn1a(self.conv1a(x)))
-        out = self.gelu(self.bn1b(self.conv1b(out)))
-        out = self.bn1c(self.conv1c(out))
-
-        if self.is_shortcut:
-            identity = self.bn_shortcut(self.shortcut(identity))
-            
-        out = identity + out
-        return F.avg_pool2d(out, kernel_size=pool_size, stride=pool_size)
+        x = F.relu_(self.bn(self.conv(x)))
+        return F.avg_pool2d(x, kernel_size=pool_size)
 
 
 class FishAudioBackbone(nn.Module):
     """
-    Custom Lightweight Audio Backbone for Fish Feeding Intensity Assessment:
-    - Input: Log-Mel Spectrogram [B, 1, Time, 128]
-    - Frequency Attention (2-8kHz splash amplification)
-    - 4-Stage Depthwise Separable 2D Convolutions
-    - 1D Temporal Rhythm Stream (Pulse Repetition Rate)
-    - Outputs:
-        * f_audio: Global acoustic embedding [B, embed_dim]
-        * f_frequency: Pure frequency spectral feature [B, embed_dim]
-        * f_rhythm: Temporal rhythm feature [B, embed_dim]
-        * f_seq: Temporal sequence feature [B, T', embed_dim]
-    - Parameter Budget: ~0.77M params.
+    PANNs CNN6-Enhanced Audio Backbone for Multimodal Fish Feeding Assessment:
+    - Incorporates proven PANNs CNN6 architecture (Kong et al., IEEE/ACM TASLP 2020):
+        * 4 Stages of 5x5 Convolutions with BatchNorm and ReLU (broader time-frequency footprint).
+        * Dropout(0.2) after each stage for regularization against pond ambient noise.
+        * PANNs Dual Temporal Pooling: Max + Mean over time captures impulsive cavitation snaps
+          as well as sustained background feeding murmurs.
+    - Data-Driven Adaptive Frequency Attention (Group 3a):
+        * Modulates 128 Mel bands adaptively without hardcoded acoustic priors.
+    - 1D Temporal Rhythm Stream (Group 3b):
+        * Measures cadence and pulse repetition rate to resolve Weak vs Medium feeding intensity.
+    - Preserves sequence features f_seq for 8-head Bi-directional Cross-Attention with video.
+    - Parameter budget: ~0.99M params, maintaining total model strictly under 5.0M (~4.89M params).
     """
-    def __init__(self, in_channels: int = 1, embed_dim: int = 256) -> None:
+    def __init__(
+        self,
+        in_channels: int = 1,
+        embed_dim: int = 256,
+        channels: Tuple[int, ...] = (32, 64, 96, 192)
+    ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
 
-        # Frequency attention block directly at input (physics-grounded prior)
+        # 1. Data-Driven Frequency Attention Block (Group 3a)
         self.freq_attention = FrequencyAttentionBlock(n_mels=128, reduction=4)
-
-        # 5 Stages of Depthwise Inverted Residuals (~0.75M params)
-        self.block1 = DepthwiseAudioBlock(in_channels, 32, expansion=2)
-        self.block2 = DepthwiseAudioBlock(32, 64, expansion=2)
-        self.block3 = DepthwiseAudioBlock(64, 128, expansion=3)
-        self.block4 = DepthwiseAudioBlock(128, 192, expansion=3)
-        self.block5 = DepthwiseAudioBlock(192, 256, expansion=3)
-
-        # Frequency pooling & projection
         self.freq_proj = nn.Sequential(
             nn.Linear(128, embed_dim),
             nn.LayerNorm(embed_dim)
         )
 
-        # 1D Temporal Rhythm Stream (Group 3b: cadence & pulse repetition rate)
-        self.rhythm_stream = nn.Sequential(
-            nn.Conv1d(256, 256, kernel_size=5, padding=2, groups=256, bias=False),
-            nn.BatchNorm1d(256),
-            nn.SiLU(inplace=True),
-            nn.Conv1d(256, embed_dim, kernel_size=1, bias=False),
-            nn.BatchNorm1d(embed_dim)
+        # 2. 4-Stage PANNs CNN6 Backbone (5x5 Convolutions)
+        self.conv1 = ConvBlock5x5(in_channels, channels[0])
+        self.conv2 = ConvBlock5x5(channels[0], channels[1])
+        self.conv3 = ConvBlock5x5(channels[1], channels[2])
+        self.conv4 = ConvBlock5x5(channels[2], channels[3])
+        self.drop = nn.Dropout2d(p=0.2)
+
+        # 3. Sequence token projection for Multimodal Cross-Attention
+        self.seq_proj = nn.Sequential(
+            nn.Linear(channels[3], embed_dim),
+            nn.LayerNorm(embed_dim)
         )
 
+        # 4. PANNs Dual Pooling Projection (Max + Mean over time)
+        self.panns_pool_proj = nn.Sequential(
+            nn.Linear(channels[3], embed_dim),
+            nn.LayerNorm(embed_dim)
+        )
+
+        # 5. 1D Temporal Rhythm Stream (Group 3b: pulse cadence & repetition)
+        self.rhythm_stream = nn.Sequential(
+            nn.Conv1d(channels[3], channels[3], kernel_size=5, padding=2, groups=channels[3], bias=False),
+            nn.BatchNorm1d(channels[3]),
+            nn.SiLU(inplace=True),
+            nn.Conv1d(channels[3], embed_dim, kernel_size=1, bias=False),
+            nn.BatchNorm1d(embed_dim)
+        )
         self.rhythm_proj = nn.Sequential(
             nn.Linear(embed_dim, embed_dim),
             nn.LayerNorm(embed_dim)
         )
 
+        # 6. Global Audio Feature Fusion
         self.audio_proj = nn.Sequential(
             nn.Linear(embed_dim, embed_dim),
             nn.LayerNorm(embed_dim)
@@ -185,36 +185,41 @@ class FishAudioBackbone(nn.Module):
             f_rhythm: [B, embed_dim]
             f_seq: [B, T', embed_dim]
         """
-        # Ensure 4D
         if mel_spec.dim() == 3:
             mel_spec = mel_spec.unsqueeze(1)
 
-        # 1. Frequency Attention (Group 3a) with Physics Prior
+        # 1. Data-driven Frequency Attention
         weighted_mel, freq_weights = self.freq_attention(mel_spec)
         f_frequency = self.freq_proj(freq_weights) # [B, embed_dim]
 
-        # 2. Time-Frequency 2D Conv stages (5 stages)
-        x = self.block1(weighted_mel, pool_size=(2, 2))
-        x = self.block2(x, pool_size=(2, 2))
-        x = self.block3(x, pool_size=(2, 2))
-        x = self.block4(x, pool_size=(1, 2))
-        x = self.block5(x, pool_size=(1, 2)) # [B, 256, T', F']
+        # 2. 4-Stage PANNs CNN6 (5x5 Convolutions)
+        x = self.drop(self.conv1(weighted_mel, pool_size=(2, 2)))
+        x = self.drop(self.conv2(x, pool_size=(2, 2)))
+        x = self.drop(self.conv3(x, pool_size=(2, 2)))
+        x = self.drop(self.conv4(x, pool_size=(1, 2))) # [B, 192, T', F']
 
-        # 3. Temporal Rhythm 1D Stream (Group 3b)
-        # Average pool across frequency axis -> [B, 256, T']
-        time_profile = x.mean(dim=-1)
-        rhythm_seq = self.rhythm_stream(time_profile) # [B, embed_dim, T']
-        
-        # Transpose to [B, T', embed_dim] for sequence cross-attention
-        f_seq = rhythm_seq.permute(0, 2, 1)
+        # 3. Collapse Frequency Axis (PANNs formulation) -> [B, 192, T']
+        x_time = torch.mean(x, dim=3)
 
-        # Global temporal pooling
+        # 4. Multimodal Sequence Tokens for Cross-Attention: [B, T', embed_dim]
+        f_seq = self.seq_proj(x_time.permute(0, 2, 1))
+
+        # 5. PANNs Dual Temporal Pooling (Max across time + Mean across time)
+        (x_max, _) = torch.max(x_time, dim=2) # Peak cavitation burst clicks
+        x_mean = torch.mean(x_time, dim=2)    # Sustained feeding ambient murmur
+        f_panns = self.panns_pool_proj(x_max + x_mean) # [B, embed_dim]
+
+        # 6. 1D Temporal Rhythm Stream
+        rhythm_seq = self.rhythm_stream(x_time)
         f_rhythm = self.rhythm_proj(rhythm_seq.mean(dim=-1)) # [B, embed_dim]
 
-        # Combined acoustic embedding
-        f_audio = self.audio_proj(f_frequency + f_rhythm)    # [B, embed_dim]
+        # 7. Joint Acoustic Feature: PANNs (Max+Mean) + Rhythm Cadence + Frequency Spectral Profile
+        f_audio = self.audio_proj(f_panns + f_rhythm + f_frequency) # [B, embed_dim]
 
         return f_audio, f_frequency, f_rhythm, f_seq
+
+
+FishPannsCNN6Backbone = FishAudioBackbone
 
 
 class AudioAcousticBackbone(nn.Module):

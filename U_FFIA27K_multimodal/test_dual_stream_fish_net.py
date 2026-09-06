@@ -33,14 +33,14 @@ def test_dual_stream_fish_net():
     stats = count_parameters(model_core)
     print("\n[1] CORE MODEL PARAMETER BREAKDOWN (Audio + Video + Fusion):")
     print(f"  - Video Backbone (ConvNeXt 7x7 DW)  : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-    print(f"  - Audio Backbone (Dual-Pool AFA)    : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+    print(f"  - Audio Backbone (PANNs CNN6 5x5)   : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
     print(f"  - Enhanced Fusion & Disambiguation  : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
     print(f"  ===============================================================")
     print(f"  * TOTAL ARCHITECTURE PARAMETERS     : {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
     print(f"  * TOTAL TRAINABLE PARAMETERS        : {stats['total']:,} ({stats['total_million']:.3f} M)")
     
-    assert 4_300_000 <= stats['core_total'] < 5_000_000, f"Model not in ~4.5M - 4.7M range: {stats['core_total']}"
-    print(f"  >>> [PASS] Core Architecture meets ~4.6M target (Exact: {stats['core_total']:,}) strictly under 5.0M! (Margin: {(5_000_000 - stats['core_total'])/1e6:.3f} M)")
+    assert 4_300_000 <= stats['core_total'] < 5_000_000, f"Model not in under 5.0M range: {stats['core_total']}"
+    print(f"  >>> [PASS] Core Architecture meets ~4.89M target (Exact: {stats['core_total']:,}) strictly under 5.0M! (Margin: {(5_000_000 - stats['core_total'])/1e6:.3f} M)")
 
     # 3. Verify FishMotionKinematics Module
     print("\n[2] MOTION KINEMATICS EXTRACTION VERIFICATION (T=4 Frames):")

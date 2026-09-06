@@ -1,6 +1,6 @@
 from .motion_excitation import MotionExcitation
 from .video_backbone import VideoSpatiotemporalBackbone, FishVideoBackbone, TemporalShiftModule
-from .audio_backbone import AudioAcousticBackbone, FishAudioBackbone, FrequencyAttentionBlock
+from .audio_backbone import AudioAcousticBackbone, FishAudioBackbone, FrequencyAttentionBlock, FishPannsCNN6Backbone
 from .convnext_video_backbone import FishConvNeXtBackbone
 from .motion_kinematics import FishMotionKinematics
 from .multimodal_fusion import (
@@ -21,6 +21,7 @@ __all__ = [
     "TemporalShiftModule",
     "AudioAcousticBackbone",
     "FishAudioBackbone",
+    "FishPannsCNN6Backbone",
     "FrequencyAttentionBlock",
     "MultimodalBottleneckFusion",
     "AdaptiveModalityGate",
