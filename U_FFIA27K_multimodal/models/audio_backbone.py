@@ -19,85 +19,62 @@ def init_bn(bn: nn.BatchNorm2d | nn.BatchNorm1d) -> None:
         bn.weight.data.fill_(1.0)
 
 
-def compute_physics_acoustic_prior(
-    n_mels: int = 128,
-    fmin: float = 50.0,
-    fmax: float = 32000.0,
-    suppress_cutoff: float = 500.0,
-    peak_freq: float = 4000.0,
-    bandwidth: float = 0.65
-) -> torch.Tensor:
-    """
-    Computes a physically-grounded logit prior over Mel frequency bins:
-    1. Low-frequency band (< 500 Hz): Continuous machinery noise (aerator paddle wheels,
-       submersible pumps, electrical hum). Injected with negative logit bias (-3.5),
-       yielding initial sigmoid attention of ~0.029 (suppressing ~97.1% of pump noise).
-    2. Cavitation & feeding splash band (2,000 - 8,000 Hz, centered at 4,000 Hz):
-       Fish rapid surface breaks, pellet snapping, and turbulent water cavitation.
-       Modeled via log-Gaussian resonance reaching +2.5 logit (sigmoid ~ 0.924).
-    3. Ultra-high frequency hiss / water spray (> 8,000 Hz): Attenuated gracefully.
-    """
-    import numpy as np
-    try:
-        import librosa
-        freqs = librosa.mel_frequencies(n_mels=n_mels, fmin=fmin, fmax=fmax, htk=False)
-    except Exception:
-        # Fallback to standard Slaney formula if librosa is unavailable
-        min_mel = 2595.0 * np.log10(1.0 + fmin / 700.0)
-        max_mel = 2595.0 * np.log10(1.0 + fmax / 700.0)
-        mels = np.linspace(min_mel, max_mel, n_mels)
-        freqs = 700.0 * (10.0 ** (mels / 2595.0) - 1.0)
-
-    prior = np.zeros(n_mels, dtype=np.float32)
-    for i, f in enumerate(freqs):
-        if f < suppress_cutoff:
-            prior[i] = -3.5
-        else:
-            # Gaussian resonance around peak feeding cavitation frequency (4 kHz) in log-frequency space
-            log_dist = (np.log(f) - np.log(peak_freq)) / bandwidth
-            gauss = np.exp(-0.5 * (log_dist ** 2))
-            prior[i] = -0.5 + 3.0 * gauss
-
-    return torch.from_numpy(prior).float()
-
-
 class FrequencyAttentionBlock(nn.Module):
     """
-    Frequency Attention Mechanism (Group 3a Feature) with Physics-Guided Acoustic Prior.
-    Applies learnable channel-like attention across the 128 Mel frequency bins.
+    Data-Driven Adaptive Frequency Attention Block (Group 3a Feature).
     
-    Scientific Basis:
-      - Continuous aerator motor & pump noise (< 500 Hz) is suppressed (~97.1% baseline suppression).
-      - Feeding cavitation & water slap (2,000 - 8,000 Hz, peak ~4,000 Hz) is amplified (up to 92.4% transmission).
-      - Learnable MLP provides sample-dependent adaptive modulation around this physical acoustic prior.
+    Dynamically models inter-frequency dependencies across 128 Log-Mel frequency bins:
+    - Eliminates rigid hardcoded acoustic priors, allowing the network to self-adapt to 
+      ANY fish species (e.g., low-frequency swim bladder sounds vs. high-frequency surface splashes)
+      and ANY aquaculture pond acoustic environment (various aeration machinery, pump types, water depths).
+    - Dual Spectral Pooling:
+        * Global Average Pooling captures baseline ambient noise profile of the specific pond.
+        * Global Max Pooling captures transient impulsive bursts from feeding snaps and cavitation.
+    - Shared Bottleneck MLP learns continuous channel-wise frequency modulation weights in [0, 1].
+    - Initialized neutrally so no frequency band is artificially suppressed or boosted prior to training.
     """
     def __init__(
         self,
         n_mels: int = 128,
-        reduction: int = 4,
-        fmin: float = 50.0,
-        fmax: float = 32000.0
+        reduction: int = 4
     ) -> None:
         super().__init__()
         self.n_mels = n_mels
-        self.fc = nn.Sequential(
-            nn.Linear(n_mels, n_mels // reduction, bias=False),
+        hidden_dim = max(16, n_mels // reduction)
+        
+        # Shared MLP for frequency channel attention
+        self.mlp = nn.Sequential(
+            nn.Linear(n_mels, hidden_dim, bias=True),
             nn.ReLU(inplace=True),
-            nn.Linear(n_mels // reduction, n_mels, bias=False)
+            nn.Linear(hidden_dim, n_mels, bias=True)
         )
-        # Initialize final projection near zero so the physics prior dominates at initialization
-        nn.init.normal_(self.fc[2].weight, std=0.01)
-
-        # Register non-trainable physics prior buffer
-        prior = compute_physics_acoustic_prior(n_mels=n_mels, fmin=fmin, fmax=fmax)
-        self.register_buffer("physics_prior", prior)
+        
+        # Initialize final layer weights and bias near zero for a neutral identity-like starting point
+        nn.init.normal_(self.mlp[2].weight, std=0.01)
+        nn.init.constant_(self.mlp[2].bias, 0.0)
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        # x: [B, 1, Time, Freq(128)]
-        energy = x.mean(dim=(1, 2))  # [B, 128]
-        # Dynamic residual modulation around the physics prior
-        logits = self.fc(energy) + self.physics_prior  # [B, 128]
-        weights = torch.sigmoid(logits)   # [B, 128]
+        """
+        Args:
+            x: Spectrogram tensor [B, 1, Time, Freq(128)] or [B, Time, Freq(128)]
+        Returns:
+            modulated_x: Spectrogram with frequency bands adaptively weighted [B, 1, Time, 128]
+            weights: Dynamic frequency attention weights [B, 128]
+        """
+        if x.dim() == 3:
+            x = x.unsqueeze(1)
+        # x shape: [B, 1, T, F]
+        # 1. Dual Spectral Pooling along time axis:
+        avg_energy = x.mean(dim=(1, 2))  # [B, 128] - Ambient spectral profile
+        max_energy = x.amax(dim=(1, 2))  # [B, 128] - Feeding impulsive peaks
+        
+        # 2. Shared MLP projection & combination
+        logits = self.mlp(avg_energy) + self.mlp(max_energy) # [B, 128]
+        
+        # 3. Dynamic Attention Weights in range (0, 1)
+        weights = torch.sigmoid(logits)  # [B, 128]
+        
+        # 4. Modulate spectrogram
         weights_expanded = weights.unsqueeze(1).unsqueeze(1)  # [B, 1, 1, 128]
         return x * weights_expanded, weights
 
