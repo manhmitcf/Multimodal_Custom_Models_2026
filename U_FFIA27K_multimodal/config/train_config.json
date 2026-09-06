@@ -1,0 +1,54 @@
+{
+  "epochs": 400,
+  "batch_size": 256,
+  "learning_rate": 1e-4,
+  "weight_decay": 1e-4,
+  "ckpt_dir": "checkpoint/",
+  "monitor": "loss",
+  "early_stopping": true,
+  "patience": 40,
+  "delta": 0.0,
+  "cache_mode": "ram",
+  "model": {
+    "backbone": "LiteFFIANet",
+    "embed_dim": 192,
+    "num_bottlenecks": 4,
+    "num_heads": 4,
+    "pretrained_video": true,
+    "classes_num": 4
+  },
+  "dataset_splitter": {
+    "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",
+    "seed": 42,
+    "test_sample_per_class": 700,
+    "save_results": true,
+    "include_video": true,
+    "split_strategy": "random_sample",
+    "evaluation_mode": "holdout",
+    "num_folds": 5,
+    "fold_index": null,
+    "cv_val_ratio": 0.2
+  },
+  "video_features": {
+    "image_size": 224,
+    "frame_policy": "end",
+    "num_frames": 2
+  },
+  "audio_features": {
+    "sample_rate": 64000,
+    "window_size": 2048,
+    "hop_size": 512,
+    "mel_bins": 128,
+    "fmin": 50,
+    "fmax": 32000,
+    "use_tkeo": true,
+    "alpha_max": 0.99,
+    "beta": 0.8,
+    "time_drop_width": 64,
+    "time_stripes_num": 2,
+    "freq_drop_width": 8,
+    "freq_stripes_num": 2
+  }
+}
+
+
