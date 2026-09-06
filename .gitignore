@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -23,3 +23,6 @@ audio_checkpoint/
 *.pt
 *.pth
 *.log
+run_marimo.txt
+run_*.txt
+*.secret
