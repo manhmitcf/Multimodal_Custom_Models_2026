@@ -10,11 +10,17 @@ from torchvision.transforms import InterpolationMode
 class ImageToPIL:
     """Convert one RGB image in [C, H, W] or [H, W, C] format to PIL."""
     def __call__(self, image):
+        from PIL import Image
+        if isinstance(image, Image.Image):
+            return image
+
         if isinstance(image, np.ndarray):
+            if image.ndim == 4 and image.shape[0] == 1:
+                image = image.squeeze(0)
             if image.ndim != 3:
                 raise ValueError(f"Expected image with 3 dimensions, got shape {tuple(image.shape)}")
 
-            if image.shape[0] == 3:
+            if image.shape[0] == 3 and image.shape[-1] != 3:
                 image = image.transpose(1, 2, 0)
             elif image.shape[-1] != 3:
                 raise ValueError(f"Expected RGB channel dimension with size 3, got shape {tuple(image.shape)}")
@@ -22,6 +28,8 @@ class ImageToPIL:
             return TF.to_pil_image(image)
 
         if isinstance(image, torch.Tensor):
+            if image.ndim == 4 and image.shape[0] == 1:
+                image = image.squeeze(0)
             if image.ndim != 3:
                 raise ValueError(f"Expected image with 3 dimensions, got shape {tuple(image.shape)}")
 
@@ -56,15 +64,30 @@ class VideoTransform:
         self.std = std
         self.to_pil = ImageToPIL()
 
-    def transform_clip(self, frames: List[Union[np.ndarray, torch.Tensor]]) -> List[torch.Tensor]:
+    def transform_clip(self, frames: Union[List, tuple, np.ndarray, torch.Tensor]) -> List[torch.Tensor]:
         """
         Transform a sequence of video frames with spatiotemporal consistency.
+        Supports:
+        - List or Tuple of 3D frames [H, W, C] or [C, H, W]
+        - 4D NumPy array [T, H, W, C] or [T, C, H, W]
+        - 4D PyTorch tensor [T, C, H, W] or [T, H, W, C]
         """
-        if not frames:
+        if frames is None:
+            return []
+
+        # Unpack 4D tensor/array into list of 3D frames
+        if hasattr(frames, "ndim") and frames.ndim == 4:
+            frame_list = [frames[i] for i in range(frames.shape[0])]
+        elif isinstance(frames, (list, tuple)):
+            frame_list = list(frames)
+        else:
+            frame_list = [frames]
+
+        if not frame_list:
             return []
 
         # Convert all frames to PIL Image
-        pil_frames = [self.to_pil(f) for f in frames]
+        pil_frames = [self.to_pil(f) for f in frame_list]
 
         # In train mode, sample geometric and photometric augmentation parameters ONCE per clip
         if self.is_train:
@@ -108,12 +131,17 @@ class VideoTransform:
 
         return transformed_tensors
 
-    def __call__(self, image: Union[np.ndarray, torch.Tensor, List]) -> Union[torch.Tensor, List[torch.Tensor]]:
+    def __call__(self, image: Union[np.ndarray, torch.Tensor, List, tuple]) -> Union[torch.Tensor, List[torch.Tensor]]:
         """
-        Supports single image or list of frames.
+        Supports:
+        - List or Tuple of frames -> returns List[torch.Tensor]
+        - 4D array or tensor [T, H, W, C] / [T, C, H, W] -> returns List[torch.Tensor]
+        - Single 3D image (np.ndarray [H, W, C] or torch.Tensor [C, H, W]) -> returns torch.Tensor [C, H, W]
         """
         if isinstance(image, (list, tuple)):
-            return self.transform_clip(list(image))
+            return self.transform_clip(image)
+        if hasattr(image, "ndim") and image.ndim == 4:
+            return self.transform_clip(image)
         return self.transform_clip([image])[0]
 
     @staticmethod
