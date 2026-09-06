@@ -250,7 +250,9 @@ def run_training_session(
 
             data_loader = FishMultimodalDataLoader(
                 batch_size=fold_config.batch_size,
-                dataloader_workers=0,
+                dataloader_workers=fold_config.dataloader_workers,
+                prefetch_factor=fold_config.prefetch_factor,
+                cache_mode=getattr(fold_config, "cache_mode", "ram"),
                 image_size=fold_config.video_features.image_size,
                 frame_policy=fold_config.video_features.frame_policy,
                 num_frames=fold_config.video_features.num_frames,
@@ -282,7 +284,9 @@ def run_training_session(
         logger.info(f"Starting Holdout Training for {model_name}...")
         data_loader = FishMultimodalDataLoader(
             batch_size=config.batch_size,
-            dataloader_workers=0,
+            dataloader_workers=config.dataloader_workers,
+            prefetch_factor=config.prefetch_factor,
+            cache_mode=getattr(config, "cache_mode", "ram"),
             image_size=config.video_features.image_size,
             frame_policy=config.video_features.frame_policy,
             num_frames=config.video_features.num_frames,

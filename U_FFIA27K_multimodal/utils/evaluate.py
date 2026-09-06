@@ -1,7 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import numpy as np
 import torch
 import torch.nn as nn
@@ -31,10 +31,11 @@ class BaseEvaluator:
 class MultimodalEvaluator(BaseEvaluator):
     """
     MultimodalEvaluator evaluating both Video and Audio inputs.
-    Calculates Accuracy, Average Precision (AP), AUC, Confusion Matrix, and F1-Scores.
+    Calculates Loss, Accuracy, Average Precision (AP), AUC, Confusion Matrix, and F1-Scores.
     """
-    def __init__(self, model: nn.Module) -> None:
+    def __init__(self, model: nn.Module, loss_fn: Optional[nn.Module] = None) -> None:
         super().__init__(model=model)
+        self.loss_fn = loss_fn
 
     def _move_data_to_device(self, x: Any) -> torch.Tensor:
         if isinstance(x, torch.Tensor):
@@ -53,13 +54,16 @@ class MultimodalEvaluator(BaseEvaluator):
         else:
             data_dict[key] = [value]
 
-    def _forward_multimodal(self, data_loader: Any) -> Dict[str, np.ndarray]:
+    def _forward_multimodal(self, data_loader: Any) -> tuple:
         output_dict = {}
+        total_loss = 0.0
+        total_samples = 0
         pbar = tqdm(data_loader, desc="Running multimodal model evaluation...")
 
         for batch_data_dict in pbar:
             batch_video = self._move_data_to_device(batch_data_dict['video_form'])
             batch_audio = self._move_data_to_device(batch_data_dict['audio_form'])
+            batch_targets = self._move_data_to_device(batch_data_dict['target'])
 
             with torch.no_grad():
                 self.model.eval()
@@ -68,6 +72,12 @@ class MultimodalEvaluator(BaseEvaluator):
                     batch_logits = batch_output.get('clipwise_output', batch_output)
                 else:
                     batch_logits = batch_output
+
+                if self.loss_fn is not None:
+                    batch_loss = self.loss_fn({'clipwise_output': batch_logits}, {'target': batch_targets})
+                    bs = batch_targets.size(0)
+                    total_loss += batch_loss.item() * bs
+                    total_samples += bs
 
             if 'clip_name' in batch_data_dict:
                 self._append_to_dict(output_dict, 'clip_name', batch_data_dict['clip_name'])
@@ -78,15 +88,21 @@ class MultimodalEvaluator(BaseEvaluator):
             )
 
             if 'target' in batch_data_dict:
-                self._append_to_dict(output_dict, 'target', batch_data_dict['target'])
+                tgt = batch_data_dict['target']
+                if hasattr(tgt, 'detach'):
+                    tgt = tgt.detach().cpu().numpy()
+                elif hasattr(tgt, 'numpy'):
+                    tgt = tgt.numpy()
+                self._append_to_dict(output_dict, 'target', tgt)
 
         for key in output_dict.keys():
             output_dict[key] = np.concatenate(output_dict[key], axis=0)
 
-        return output_dict
+        mean_loss = (total_loss / max(1, total_samples)) if total_samples > 0 else 0.0
+        return output_dict, mean_loss
 
     def evaluate(self, data_loader: Any) -> Dict[str, Any]:
-        output_dict = self._forward_multimodal(data_loader)
+        output_dict, mean_loss = self._forward_multimodal(data_loader)
 
         clipwise_output = output_dict['clipwise_output']
         target = output_dict['target']
@@ -104,9 +120,15 @@ class MultimodalEvaluator(BaseEvaluator):
         clipwise_output_acc = np.argmax(clipwise_output, axis=1)
         acc = accuracy_score(target_acc, clipwise_output_acc)
 
-        cm = confusion_matrix(target_acc, clipwise_output_acc)
+        num_classes = clipwise_output.shape[1]
+        all_labels = list(range(num_classes))
+        cm = confusion_matrix(target_acc, clipwise_output_acc, labels=all_labels)
 
-        message = classification_report(target_acc, clipwise_output_acc, digits=4, zero_division=0)
+        class_names = ['None', 'Strong', 'Medium', 'Weak'] if num_classes == 4 else None
+        if class_names is not None:
+            message = classification_report(target_acc, clipwise_output_acc, labels=all_labels, target_names=class_names, digits=4, zero_division=0)
+        else:
+            message = classification_report(target_acc, clipwise_output_acc, digits=4, zero_division=0)
         message = '\n' + message
 
         prec_weighted, rec_weighted, f1_weighted, _ = precision_recall_fscore_support(
@@ -117,6 +139,7 @@ class MultimodalEvaluator(BaseEvaluator):
         )
 
         statistics = {
+            'loss': mean_loss,
             'average_precision': average_precision,
             'accuracy': acc,
             'auc': auc,

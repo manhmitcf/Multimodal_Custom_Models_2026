@@ -70,13 +70,13 @@ class MultimodalTrainer:
         )
 
         # Evaluator and Timer
-        self.evaluator = MultimodalEvaluator(model=self.model)
+        self.evaluator = MultimodalEvaluator(model=self.model, loss_fn=self.loss_fn)
         self.timer = InferenceTimer(model=self.model, device=self.device)
 
         # Early stopping setup
         self.early_stopping = EarlyStopping(
-            patience=self.config.patience,
-            delta=self.config.delta,
+            patience=getattr(self.config, "patience", 40),
+            delta=getattr(self.config, "delta", 0.0),
             verbose=True
         )
 
@@ -108,8 +108,8 @@ class MultimodalTrainer:
     def _train_epoch(self, epoch: int) -> Tuple[float, float, float]:
         self.model.train()
         total_loss = 0.0
-        correct_predictions = 0
-        total_samples = 0
+        train_preds = []
+        train_targets = []
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch:03d}/{self.config.epochs:03d} [Train]")
         for batch_dict in pbar:
@@ -127,47 +127,89 @@ class MultimodalTrainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
 
-            batch_size = targets.size(0)
-            total_loss += loss.item() * batch_size
-            total_samples += batch_size
+            loss_val = loss.item()
+            total_loss += loss_val
 
             logits = outputs['clipwise_output']
-            preds = torch.argmax(logits, dim=1)
-            gt = torch.argmax(targets, dim=1) if targets.dim() > 1 else targets
-            correct_predictions += (preds == gt).sum().item()
+            train_preds.append(logits.detach().cpu().numpy())
+            train_targets.append(targets.detach().cpu().numpy())
 
-            pbar.set_postfix({'loss': f"{loss.item():.4f}"})
+            pbar.set_postfix({'loss': f"{loss_val:.4f}"})
 
-        epoch_loss = total_loss / max(1, total_samples)
-        epoch_acc = correct_predictions / max(1, total_samples)
-        epoch_mAP = epoch_acc  # Proxy metric for training loop speed
-        return epoch_loss, epoch_acc, epoch_mAP
+        epoch_loss = total_loss / max(1, len(self.train_loader))
+        train_preds = np.concatenate(train_preds, axis=0)
+        train_targets = np.concatenate(train_targets, axis=0)
+
+        target_acc_labels = np.argmax(train_targets, axis=1) if train_targets.ndim > 1 else train_targets
+        pred_acc_labels = np.argmax(train_preds, axis=1)
+        train_acc = float(np.mean(target_acc_labels == pred_acc_labels))
+
+        try:
+            from sklearn import metrics as sklearn_metrics
+            train_mAP = float(np.mean(sklearn_metrics.average_precision_score(train_targets, train_preds, average=None)))
+        except Exception:
+            train_mAP = train_acc
+
+        return epoch_loss, train_acc, train_mAP
 
     def train(self) -> Dict[str, Any]:
-        logger.info("Starting multimodal training session...")
+        logger.info(f"Starting training pipeline (Monitor metric: {self.config.monitor})...")
         training_start_time = time.perf_counter()
 
-        best_score = float('inf') if self.config.monitor == 'loss' else -float('inf')
+        best_acc = 0.0
+        best_mAP = 0.0
+        best_loss = float('inf')
+        best_epoch = 1
+        best_val_statistics = None
+
+        if self.config.monitor == 'accuracy':
+            best_val_metric = 0.0
+        else:
+            best_val_metric = float('inf')
 
         for epoch in range(1, self.config.epochs + 1):
             train_loss, train_acc, train_mAP = self._train_epoch(epoch)
             self.scheduler.step()
 
             # Evaluate on validation split
+            self.model.eval()
             val_stats = self.evaluator.evaluate(self.val_loader)
-            val_loss = 1.0 - val_stats['accuracy']  # Monitor loss proxy
-            val_acc = val_stats['accuracy']
+            val_loss = float(val_stats.get('loss', 0.0))
+            val_acc = float(np.mean(val_stats['accuracy']))
+            val_mAP = float(np.mean(val_stats['average_precision']))
+
+            # Print epoch summary metrics identical to audio and video trainers
+            logger.info(
+                f"Epoch {epoch:03d}: "
+                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train mAP = {train_mAP:.4f} | "
+                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val mAP = {val_mAP:.4f}"
+            )
 
             # Determine if this is the best checkpoint
             is_best = False
-            current_score = val_loss if self.config.monitor == 'loss' else val_acc
-            score_improved = (current_score < best_score) if self.config.monitor == 'loss' else (current_score > best_score)
+            if self.config.monitor == 'accuracy':
+                score = val_acc
+                if val_acc > best_val_metric:
+                    best_val_metric = val_acc
+                    is_best = True
+            else:
+                score = -val_loss
+                if val_loss < best_val_metric:
+                    best_val_metric = val_loss
+                    is_best = True
 
-            if score_improved:
-                best_score = current_score
-                is_best = True
+            if is_best:
+                best_epoch = epoch
+                best_acc = val_acc
+                best_mAP = val_mAP
+                best_loss = val_loss
+                best_val_statistics = val_stats
                 torch.save(self.model.state_dict(), self.best_checkpoint_path)
-                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}'")
+                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {val_acc if self.config.monitor == 'accuracy' else val_loss:.5f})")
+
+            logger.info(
+                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | mAP: {best_mAP:.4f}"
+            )
 
             # Always save last checkpoint
             torch.save(self.model.state_dict(), self.last_checkpoint_path)
@@ -184,32 +226,48 @@ class MultimodalTrainer:
             )
 
             # Early stopping check
-            stop_score = -val_loss if self.config.monitor == 'loss' else val_acc
-            if self.config.early_stopping and self.early_stopping.step(stop_score):
-                logger.info(f"Early stopping condition satisfied at epoch {epoch}. Stopping training.")
-                break
+            if self.config.early_stopping and self.early_stopping is not None:
+                if self.early_stopping.step(score):
+                    logger.info(f"Early stopping condition satisfied at epoch {epoch:03d}. Stopping training.")
+                    break
 
         training_duration = time.perf_counter() - training_start_time
 
-        # Load best model for final evaluation
-        if os.path.exists(self.best_checkpoint_path):
-            self.model.load_state_dict(torch.load(self.best_checkpoint_path, map_location=self.device))
-            logger.info(f"Loaded best checkpoint '{self.best_checkpoint_path}' for final evaluation.")
+        # Generate learning curves plot
+        try:
+            self.logger.plot_history()
+        except Exception as exc:
+            logger.warning(f"Failed to generate learning curves plot: {exc}")
 
-        final_val_stats = self.evaluator.evaluate(self.val_loader)
+        # Final evaluation on Test split
+        logger.info("==================================================")
+        logger.info("Training complete. Starting evaluation on Test split...")
+        if os.path.exists(self.best_checkpoint_path):
+            self.model.load_state_dict(torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=True))
+            logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
+
+        self.model.eval()
+        final_val_stats = best_val_statistics if best_val_statistics is not None else self.evaluator.evaluate(self.val_loader)
         final_test_stats = self.evaluator.evaluate(self.test_loader)
 
+        test_acc = float(np.mean(final_test_stats['accuracy']))
+        test_mAP = float(np.mean(final_test_stats['average_precision']))
+        logger.info(f"TEST Results -> Accuracy: {test_acc:.4f} | mAP: {test_mAP:.4f}")
+        logger.info(f"Detailed Classification Report:\n{final_test_stats.get('message', '')}")
+        if 'confu_matrix' in final_test_stats:
+            logger.info(f"Confusion Matrix:\n{final_test_stats['confu_matrix']}")
+
         # Measure inference latency
+        logger.info("Measuring model Inference Latency on device...")
         inference_latency_ms = self.timer.measure_latency_per_sample()
 
-        # Save summary report & plot curves
+        # Save summary report
         self.logger.save_summary(
             training_time=training_duration,
             inference_time_ms=inference_latency_ms,
             val_statistics=final_val_stats,
             test_statistics=final_test_stats
         )
-        self.logger.plot_history()
 
         return {
             'training_time': training_duration,
