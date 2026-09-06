@@ -175,6 +175,22 @@ def upload_artifact_if_enabled(upload_config: ArtifactUploadConfig, config: Trai
         except ImportError:
             token = None
     if not token:
+        # Fallback check in common token file locations
+        for token_path in [
+            Path("run_marimo.txt"),
+            Path("/marimo/run_marimo.txt"),
+            Path(__file__).resolve().parent / "run_marimo.txt",
+            Path(__file__).resolve().parent.parent / "run_marimo.txt"
+        ]:
+            if token_path.is_file():
+                try:
+                    candidate = token_path.read_text(encoding="utf-8").strip()
+                    if candidate:
+                        token = candidate
+                        break
+                except Exception:
+                    pass
+    if not token:
         logger.warning("HF_TOKEN environment variable not set. Skipping Hugging Face upload.")
         return
 
