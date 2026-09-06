@@ -64,11 +64,12 @@ def test_dual_stream_fish_net():
     )
     model_full.train()
     stats_full = count_parameters(model_full)
-    print(f"\n[3] FULL END-TO-END PIPELINE (With 128kHz AudioFrontend GPU STFT):")
+    print(f"\n[3] FULL END-TO-END PIPELINE (Linear STFT + GeM p=3 + TKEO + 128kHz Audio):")
+    print(f"  * Audio Frontend Representation    : {audio_frontend.frontend_type.upper()} (GeM p={audio_frontend.gem_p} Peak-Preserving)")
     print(f"  * Audio Sampling Rate              : {audio_frontend.config.sample_rate} Hz (128 kHz)")
     print(f"  * STFT Window Size                 : {audio_frontend.config.window_size} samples (16 ms)")
     print(f"  * STFT Hop Size                    : {audio_frontend.config.hop_size} samples (8 ms)")
-    print(f"  * Frequency Range (fmin - fmax)    : {audio_frontend.config.fmin} Hz - {audio_frontend.config.fmax} Hz")
+    print(f"  * Frequency Resolution             : 128 uniform linear bands (500 Hz/band, 50 Hz - 64000 Hz)")
     print(f"  * Total Trainable Parameters       : {stats_full['total']:,} ({stats_full['total_million']:.3f} M)")
     assert stats_full['total'] < 5_000_000, "Trainable parameters exceed 5M!"
 

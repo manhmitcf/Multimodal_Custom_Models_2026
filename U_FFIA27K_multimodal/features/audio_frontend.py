@@ -11,6 +11,7 @@ if project_root not in sys.path:
 import logging
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchlibrosa.stft import Spectrogram, LogmelFilterBank
 from torchlibrosa.augmentation import SpecAugmentation
 from features.stft_ape import Spectrogram_APE
@@ -61,6 +62,8 @@ class AudioFrontend(nn.Module):
             self.config = config
 
         self.mel_bins = self.config.mel_bins
+        self.frontend_type = getattr(self.config, 'frontend_type', 'stft_gem').lower()
+        self.gem_p = float(getattr(self.config, 'gem_p', 3.0))
 
         use_tkeo = getattr(self.config, 'use_tkeo', True)
         alpha_max = getattr(self.config, 'alpha_max', 0.99)
@@ -91,20 +94,22 @@ class AudioFrontend(nn.Module):
                 freeze_parameters=True
             )
 
-
-        # 2. Logmel Filterbank Extractor on GPU using torchlibrosa
+        # 2. Spectral Compression (STFT with GeM Pooling vs Mel Filterbank)
         fmax = min(self.config.fmax, self.config.sample_rate // 2)
-        self.logmel_extractor = LogmelFilterBank(
-            sr=self.config.sample_rate,
-            n_fft=self.config.window_size,
-            n_mels=self.config.mel_bins,
-            fmin=self.config.fmin,
-            fmax=fmax,
-            ref=1.0,
-            amin=1e-10,
-            top_db=None,
-            freeze_parameters=True
-        )
+        if self.frontend_type == "mel":
+            self.logmel_extractor = LogmelFilterBank(
+                sr=self.config.sample_rate,
+                n_fft=self.config.window_size,
+                n_mels=self.config.mel_bins,
+                fmin=self.config.fmin,
+                fmax=fmax,
+                ref=1.0,
+                amin=1e-10,
+                top_db=None,
+                freeze_parameters=True
+            )
+        else:
+            self.logmel_extractor = None
 
         # 3. SpecAugment Spec Augmentation Extractor on GPU using torchlibrosa
         self.spec_augmenter = SpecAugmentation(
@@ -114,46 +119,57 @@ class AudioFrontend(nn.Module):
             freq_stripes_num=getattr(self.config, 'freq_stripes_num', 2)
         )
 
-
         # 4. BatchNorm normalization layer
         self.bn0 = nn.BatchNorm2d(self.mel_bins)
         init_bn(self.bn0)
 
         logger.info("==================================================")
         logger.info("Initialized AudioFrontend module on GPU:")
-        logger.info(f"  - Sample Rate:              {self.config.sample_rate} Hz")
-        logger.info(f"  - Window Size:              {self.config.window_size}")
-        logger.info(f"  - Hop Size:                 {self.config.hop_size}")
-        logger.info(f"  - Mel Bins:                 {self.config.mel_bins}")
+        logger.info(f"  - Frontend Representation:  {self.frontend_type.upper()} (GeM p={self.gem_p} Peak-Preserving)" if self.frontend_type != "mel" else "  - Frontend Representation:  MEL FILTERBANK")
+        logger.info(f"  - Sample Rate:              {self.config.sample_rate} Hz (128 kHz)")
+        logger.info(f"  - Window Size:              {self.config.window_size} (16 ms)")
+        logger.info(f"  - Hop Size:                 {self.config.hop_size} (8 ms)")
+        logger.info(f"  - Frequency Bins:           {self.config.mel_bins} (500 Hz/bin linear resolution)")
         logger.info(f"  - Fmin/Fmax:                {self.config.fmin} / {fmax} Hz")
+        logger.info(f"  - TKEO Adaptive Pre-Emph:   {'ENABLED (alpha_max=' + str(alpha_max) + ', beta=' + str(beta) + ')' if use_tkeo else 'DISABLED'}")
         logger.info(f"  - SpecAugment Time Masking: Width={self.config.time_drop_width}, Stripes={self.config.time_stripes_num}")
         logger.info(f"  - SpecAugment Freq Masking: Width={self.config.freq_drop_width}, Stripes={self.config.freq_stripes_num}")
         logger.info("==================================================")
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         """
-        Forward Pass converting raw 1D waveforms into 2D Mel-spectrograms.
+        Forward Pass converting raw 1D waveforms into 2D linear-frequency STFT GeM spectrograms.
 
         Args:
             input_tensor (torch.Tensor): Raw waveform tensor [Batch, Num_Samples].
 
         Returns:
-            torch.Tensor: Augmented Mel-spectrogram tensor [Batch, 1, Time_Steps + 2, Mel_Bins].
+            torch.Tensor: Augmented Spectrogram tensor [Batch, 1, Time_Steps + 2, 128].
         """
-        # Step A: Raw 1D Waveform -> STFT 2D Spectrogram [Batch, 1, Time_Steps, Freq_Bins]
+        # Step A: Raw 1D Waveform -> STFT 2D Spectrogram [Batch, 1, Time_Steps, 1025] (via TKEO APE)
         x = self.spectrogram_extractor(input_tensor)
         
-        # Step B: Logmel filtering -> [Batch, 1, Time_Steps, Mel_Bins]
-        x = self.logmel_extractor(x)
-        
+        # Step B: Time-frequency compression to 128 bins
+        if self.frontend_type == "mel" and self.logmel_extractor is not None:
+            x = self.logmel_extractor(x)
+        else:
+            # Linear STFT with GeM (p=3.0) Peak-Preserving Compression:
+            # Slice 1024 bins (bins 1 to 1025, covering 62.5 Hz to 64,000 Hz)
+            # Exactly 8 STFT bins per output band -> 500 Hz per band uniform linear spacing!
+            s = x[:, :, :, 1:1025] # [Batch, 1, Time_Steps, 1024]
+            s_p = torch.clamp(s, min=1e-8) ** self.gem_p
+            gem_down = F.avg_pool2d(s_p, kernel_size=(1, 8), stride=(1, 8))
+            x_gem = torch.clamp(gem_down, min=1e-8) ** (1.0 / self.gem_p)
+            x = torch.log(torch.clamp(x_gem, min=1e-10))
+
         # Step C: Pad time-steps dimension by 2 rows of zeros for shape alignment
         m = nn.ZeroPad2d((0, 0, 2, 0))
         x = m(x)
 
-        # Step D: Transpose for BatchNorm2d along mel bins axis
+        # Step D: Transpose for BatchNorm2d along frequency bins axis
         x = x.transpose(1, 3)
         x = self.bn0(x)
-        x = x.transpose(1, 3)  # Result shape: [Batch, 1, Time_Steps + 2, Mel_Bins]
+        x = x.transpose(1, 3)  # Result shape: [Batch, 1, Time_Steps + 2, 128]
 
         # Step E: Apply SpecAugment masking during training
         if self.training:
