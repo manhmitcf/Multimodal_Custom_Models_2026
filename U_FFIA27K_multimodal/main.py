@@ -65,6 +65,88 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
     )
 
 
+def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: torch.device) -> None:
+    """
+    Fast pre-flight validation of the complete multimodal model pipeline on the target device
+    BEFORE loading the dataset into RAM or starting training.
+
+    Validates:
+      1. Model parameter budget (< 5.0M).
+      2. Device placement of all submodules, weights, and buffer filters.
+      3. Forward pass with multi-frame 10-ch kinematics extraction and 128 Mel-bins STFT.
+      4. Backward pass & gradient propagation through all trainable parameters.
+      5. Evaluation mode forward pass with torch.no_grad().
+
+    If any check fails, logs the error and aborts immediately,
+    saving users from waiting through minutes of dataset RAM preloading.
+    """
+    logger.info("==================================================")
+    logger.info("STARTING PRE-FLIGHT DRY-RUN VERIFICATION (Fast Fail Check)...")
+    logger.info(f"Target Device: {device}")
+
+    try:
+        # 1. Parameter audit
+        stats = count_parameters(model)
+        logger.info(f"  - Video Backbone (MobileViT-XS 10-ch): {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Audio Backbone (EfficientAT mn05):   {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Multimodal Fusion (MBT + TMC):       {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+        logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
+        logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+
+        if stats['total'] >= 5_000_000:
+            raise ValueError(f"Model parameters ({stats['total']:,}) exceed 5.0M budget!")
+
+        # 2. Test forward pass with dummy tensors
+        model.train()
+        dummy_video = torch.randn(
+            2, config.num_frames, 3, config.image_size, config.image_size,
+            device=device, dtype=torch.float32
+        )
+        audio_length = config.audio_features.sample_rate * 2  # 2 seconds
+        dummy_audio = torch.randn(2, audio_length, device=device, dtype=torch.float32)
+        dummy_targets = torch.tensor([[1.0, 0, 0, 0], [0, 1.0, 0, 0]], device=device, dtype=torch.float32)
+
+        out = model(dummy_video, dummy_audio)
+        if "clipwise_output" not in out:
+            raise KeyError("Model output missing 'clipwise_output' key.")
+        if out["clipwise_output"].shape != (2, 4):
+            raise ValueError(f"Expected output shape (2, 4), got {out['clipwise_output'].shape}")
+
+        # 3. Test backward pass & gradient flow
+        from utils.losses import ClipCELoss
+        loss_fn = ClipCELoss()
+        loss = loss_fn(out, {"target": dummy_targets})
+        loss.backward()
+
+        trainable_with_grads = sum(1 for p in model.parameters() if p.requires_grad and p.grad is not None)
+        total_trainable = sum(1 for p in model.parameters() if p.requires_grad)
+        if trainable_with_grads != total_trainable:
+            raise RuntimeError(f"Gradient flow broken: only {trainable_with_grads}/{total_trainable} parameters received gradients.")
+
+        model.zero_grad(set_to_none=True)
+
+        # 4. Test evaluation mode forward pass
+        model.eval()
+        with torch.no_grad():
+            _ = model(dummy_video, dummy_audio)
+
+        # 5. Clean up temporary tensors and GPU cache
+        del dummy_video, dummy_audio, dummy_targets, out, loss
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        logger.info(">>> [PASS] PRE-FLIGHT DRY-RUN COMPLETED SUCCESSFULLY!")
+        logger.info(f">>> All {total_trainable} parameters, device placement, and gradients 100% verified.")
+        logger.info(">>> Proceeding to Dataset RAM Preloading and Full Training Pipeline...")
+        logger.info("==================================================")
+    except Exception as exc:
+        logger.error("==================================================")
+        logger.error(f">>> [FATAL ERROR IN PRE-FLIGHT DRY-RUN]: {exc}")
+        logger.error(">>> Aborting before loading dataset into RAM to avoid wasting time and resources.")
+        logger.error("==================================================")
+        raise exc
+
+
 def model_cv_dir(base_ckpt_dir: str, model_name: str) -> str:
     base_dir = base_ckpt_dir if base_ckpt_dir else "checkpoint"
     if Path(base_dir).name == model_name:
@@ -269,7 +351,17 @@ def run_training_session(
     eval_mode = config.dataset_splitter.evaluation_mode
     model_name = config.model.backbone
 
+    # =========================================================================
+    # FAST PRE-FLIGHT DRY-RUN (Verify full network before preloading RAM)
+    # =========================================================================
+    preflight_model = build_model(config).to(device)
+    verify_model_dry_run(preflight_model, config, device)
+
     if eval_mode == "cross_validation":
+        del preflight_model
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         num_folds = config.dataset_splitter.num_folds
         logger.info(f"Starting {num_folds}-Fold Cross-Validation for {model_name}...")
         base_dir = Path(model_cv_dir(config.ckpt_dir, model_name))
@@ -319,16 +411,7 @@ def run_training_session(
             splitter_config=config.dataset_splitter,
         )
 
-        model = build_model(config).to(device)
-        stats = count_parameters(model)
-        logger.info("==================================================")
-        logger.info(f"SOTA MODEL PARAMETER AUDIT:")
-        logger.info(f"  - Video Backbone (MobileViT-XS 10-ch): {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (EfficientAT mn05):   {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Multimodal Fusion (MBT + TMC):       {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
-        logger.info(f"  * TOTAL ARCHITECTURE PARAMETERS:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
-        logger.info(f"  * TOTAL TRAINABLE PARAMETERS:          {stats['total']:,} ({stats['total_million']:.3f} M)")
-        logger.info("==================================================")
+        model = preflight_model
 
         trainer = MultimodalTrainer(
             model=model,
