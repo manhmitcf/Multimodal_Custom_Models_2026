@@ -27,8 +27,11 @@ class VideoSpatiotemporalBackbone(nn.Module):
     """
     def __init__(self, embed_dim: int = 224, pretrained: bool = True) -> None:
         super().__init__()
-        weights = MobileNet_V2_Weights.DEFAULT if (pretrained and MobileNet_V2_Weights) else None
-        base_mobilenet = mobilenet_v2(weights=weights)
+        if MobileNet_V2_Weights is not None:
+            weights = MobileNet_V2_Weights.DEFAULT if pretrained else None
+            base_mobilenet = mobilenet_v2(weights=weights)
+        else:
+            base_mobilenet = mobilenet_v2(pretrained=pretrained)
         
         # Spatial Stem (Stages 0 - 2, 32 channels, H/4, W/4)
         self.stem = base_mobilenet.features[:7]
