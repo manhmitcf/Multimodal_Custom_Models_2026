@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -17,6 +17,7 @@ Thumbs.db
 # Data & Models
 raw_dataset/
 U-FFIA/
+papers/
 checkpoint/
 video_checkpoint/
 audio_checkpoint/

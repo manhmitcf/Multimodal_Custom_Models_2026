@@ -1,0 +1,48 @@
+{
+  "epochs": 400,
+  "batch_size": 32,
+  "learning_rate": 1e-4,
+  "weight_decay": 1e-2,
+  "monitor": "val_f1_macro",
+  "mode": "max",
+  "early_stopping": true,
+  "patience": 80,
+  "min_delta": 0.0005,
+  "lr_scheduler": "cosine",
+  "warmup_epochs": 5,
+  "min_lr": 1e-6,
+  "num_frames": 4,
+  "image_size": 224,
+  "sample_rate": 64000,
+  "cache_mode": "ram",
+  "dataloader_workers": -1,
+  "ckpt_dir": "checkpoint",
+  "save_best_only": true,
+  "model": {
+    "backbone": "MultimodalSOTANet",
+    "classes_num": 4,
+    "embed_dim": 224,
+    "num_bottlenecks": 4,
+    "num_heads": 4,
+    "pretrained_video": true
+  },
+  "audio_features": {
+    "sample_rate": 64000,
+    "window_size": 2048,
+    "hop_size": 512,
+    "mel_bins": 128,
+    "fmin": 50,
+    "fmax": 32000
+  },
+  "dataset_splitter": {
+    "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",
+    "split_strategy": "stratified",
+    "evaluation_mode": "holdout",
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15,
+    "num_folds": 5,
+    "fold_index": 0,
+    "random_seed": 42
+  }
+}

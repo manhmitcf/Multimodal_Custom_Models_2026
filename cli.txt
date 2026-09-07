@@ -1,0 +1,45 @@
+# ==============================================================================
+# 1. TẢI DATA VỀ VÀ CẤU HÌNH BAN ĐẦU TRÊN MÁY CHỦ (MARIMO / GPU)
+# ==============================================================================
+# Vui lòng gán token của bạn hoặc export trước khi chạy:
+export HF_TOKEN="${HF_TOKEN:-YOUR_HF_TOKEN_HERE}"
+huggingface-cli login --token $HF_TOKEN || hf auth login --token $HF_TOKEN
+sudo apt update && sudo apt install git-lfs -y
+git lfs install
+git config --global lfs.concurrenttransfers 64
+cd /marimo && nohup git clone https://huggingface.co/datasets/manhmitcf/Fish_Feeding_Intensity_Dataset > /marimo/clone.log 2>&1 &
+tail -n +1 -f /marimo/clone.log
+
+# ==============================================================================
+# 2. SẮP XẾP LẠI THƯ MỤC DATASET
+# ==============================================================================
+mv /marimo/Fish_Feeding_Intensity_Dataset/audio/audio/* /marimo/Fish_Feeding_Intensity_Dataset/audio/
+mv /marimo/Fish_Feeding_Intensity_Dataset/video/video/* /marimo/Fish_Feeding_Intensity_Dataset/video/
+rm -rf /marimo/Fish_Feeding_Intensity_Dataset/audio/audio
+rm -rf /marimo/Fish_Feeding_Intensity_Dataset/video/video
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
+
+# ==============================================================================
+# 3. HUẤN LUYỆN NHÁNH: U_FFIA27K_multimodal_sota_4p8m (MobileViT + EfficientAT + MBT + TMC)
+# ==============================================================================
+if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
+    git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
+fi
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity
+git fetch origin
+git checkout U_FFIA27K_multimodal_sota_4p8m
+git pull origin U_FFIA27K_multimodal_sota_4p8m
+
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+pip install --upgrade pip
+pip install -r requirements.txt
+
+pkill -f "python main.py" || true
+nohup python main.py > main.log 2>&1 &
+tail -n +1 -f main.log
+
+# ==============================================================================
+# THEO DÕI TIẾN ĐỘ TRAINING BẤT CỨ LÚC NÀO
+# ==============================================================================
+# cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal && tail -n +1 -f main.log
