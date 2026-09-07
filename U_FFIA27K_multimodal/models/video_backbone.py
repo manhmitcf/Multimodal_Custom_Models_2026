@@ -76,22 +76,30 @@ class VideoSpatiotemporalBackbone(nn.Module):
             f_motion: Motion dynamics feature between FIRST and LAST frame [B, embed_dim]
         """
         B, T, C, H, W = frames.shape
-        if T >= 2:
-            frame_start = frames[:, 0]   # Frame đầu clip
-            frame_end = frames[:, -1]    # Frame cuối clip (dùng cho Spatial)
+        if T == 1:
+            f_end_early = self.stem(frames[:, 0])
+            motion_mask = torch.zeros_like(f_end_early)
+            f_motion = self.motion_proj(self.global_pool(motion_mask).flatten(1))
+        elif T == 2:
+            f_start_early = self.stem(frames[:, 0])
+            f_end_early = self.stem(frames[:, -1])
+            _, motion_mask = self.motion_excitation(f_end_early, f_start_early)
+            f_motion = self.motion_proj(self.global_pool(motion_mask).flatten(1))
         else:
-            frame_start = frames[:, 0]
-            frame_end = frames[:, 0]
+            # Multi-frame (T >= 3, e.g. T=4):
+            # Run all T frames through early stem efficiently: [B*T, 3, H, W] -> [B*T, 32, H', W']
+            frames_flat = frames.reshape(B * T, C, H, W)
+            stem_flat = self.stem(frames_flat)
+            _, c_s, h_s, w_s = stem_flat.shape
+            stem_all = stem_flat.view(B, T, c_s, h_s, w_s)
+            f_end_early = stem_all[:, -1]
+            
+            # Consecutive temporal difference across all steps: e.g. (|F1-F0| + |F2-F1| + |F3-F2|) / 3
+            diff_consecutive = torch.mean(torch.abs(stem_all[:, 1:] - stem_all[:, :-1]), dim=1)
+            motion_mask = self.motion_excitation.forward_diff(diff_consecutive)
+            f_motion = self.motion_proj(self.global_pool(motion_mask).flatten(1))
 
-        # 1. Early spatial stem representations (32 channels)
-        f_start_early = self.stem(frame_start)  # [B, 32, H/4, W/4]
-        f_end_early = self.stem(frame_end)      # [B, 32, H/4, W/4]
-
-        # 2. Extract Motion Mask: ΔF = |F_end - F_start| (Group 2 Motion)
-        _, motion_mask = self.motion_excitation(f_end_early, f_start_early)
-        f_motion = self.motion_proj(self.global_pool(motion_mask).flatten(1))
-
-        # 3. Pure Deep Spatial feature from LAST frame (Group 1 Spatial)
+        # 3. Pure Deep Spatial feature from LAST frame (Group 1 Spatial - 1280 channels)
         f_spatial_deep = self.deep_stages(f_end_early)  # [B, 1280, H/32, W/32]
         f_spatial = self.spatial_proj(self.global_pool(f_spatial_deep).flatten(1))
 

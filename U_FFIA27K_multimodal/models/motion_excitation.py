@@ -40,18 +40,10 @@ class MotionExcitation(nn.Module):
         self.bn_expand = nn.BatchNorm2d(in_channels)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, f_curr: torch.Tensor, f_prev: torch.Tensor):
+    def forward_diff(self, diff: torch.Tensor) -> torch.Tensor:
         """
-        Args:
-            f_curr: Current frame feature map [B, C, H, W]
-            f_prev: Previous frame feature map [B, C, H, W]
-            
-        Returns:
-            f_st: Modulated Spatiotemporal feature map [B, C, H, W]
-            motion_mask: Attention map of detected movements [B, C, H, W]
+        Compute motion attention mask directly from temporal difference tensor [B, C, H, W].
         """
-        diff = torch.abs(f_curr - f_prev)
-        
         x = self.channel_squeeze(diff)
         x = self.bn_squeeze(x)
         x = self.relu(x)
@@ -63,6 +55,20 @@ class MotionExcitation(nn.Module):
         x = self.channel_expand(x)
         x = self.bn_expand(x)
         motion_mask = self.sigmoid(x)
+        return motion_mask
+
+    def forward(self, f_curr: torch.Tensor, f_prev: torch.Tensor):
+        """
+        Args:
+            f_curr: Current frame feature map [B, C, H, W]
+            f_prev: Previous frame feature map [B, C, H, W]
+            
+        Returns:
+            f_st: Modulated Spatiotemporal feature map [B, C, H, W]
+            motion_mask: Attention map of detected movements [B, C, H, W]
+        """
+        diff = torch.abs(f_curr - f_prev)
+        motion_mask = self.forward_diff(diff)
         
         # Residual excitation
         f_st = f_curr * (1.0 + motion_mask)

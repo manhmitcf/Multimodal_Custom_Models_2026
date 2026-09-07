@@ -34,7 +34,7 @@
   "video_features": {
     "image_size": 224,
     "frame_policy": "end",
-    "num_frames": 2
+    "num_frames": 4
   },
   "audio_features": {
     "sample_rate": 64000,

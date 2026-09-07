@@ -29,7 +29,7 @@ class VideoFeaturesConfig(BaseModel):
     """
     image_size: int = Field(default=224, description="Target width and height for extracted video frames.")
     frame_policy: str = Field(default="end", description="Frame extraction policy: 'quarter', 'center', 'three_quarters', 'end', or 'random'.")
-    num_frames: int = Field(default=2, description="Number of consecutive or sampled frames per video clip.")
+    num_frames: int = Field(default=4, description="Number of consecutive or sampled frames per video clip.")
 
 
 class AudioFeaturesConfig(BaseModel):
