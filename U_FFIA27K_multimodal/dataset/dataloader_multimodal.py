@@ -156,8 +156,8 @@ class FishMultimodalDataLoader:
             self.splitter = FishDataSplitter(config=self.splitter_config)
             self.train_dict, self.test_dict, self.val_dict = self.splitter.split_data()
         except Exception as exc:
-            logger.warning(f"Could not load dataset from '{self.splitter_config.dataset_path}' ({exc}). Mock splits initialized.")
-            self.train_dict, self.test_dict, self.val_dict = [], [], []
+            logger.error(f"Failed to load dataset from '{self.splitter_config.dataset_path}': {exc}")
+            raise
 
         logger.info("==================================================")
         logger.info("Initializing FishMultimodalDataLoader:")

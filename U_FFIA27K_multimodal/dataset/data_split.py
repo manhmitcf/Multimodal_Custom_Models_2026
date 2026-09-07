@@ -31,7 +31,7 @@ from config import SplitterConfig
 
 LABEL_TO_CLASS = {0: "none", 1: "strong", 2: "medium", 3: "weak"}
 LABEL_ORDER = [0, 1, 2, 3]
-VALID_SPLIT_STRATEGIES = {"random_sample", "time_series", "group_random"}
+VALID_SPLIT_STRATEGIES = {"random_sample", "time_series", "group_random", "stratified"}
 VALID_EVALUATION_MODES = {"holdout", "cross_validation"}
 
 
@@ -58,11 +58,12 @@ class BaseDataSplitter(ABC):
     def __init__(self, config: SplitterConfig) -> None:
         self.config = config
         self.dataset_path = config.dataset_path
-        self.seed = config.seed
-        self.test_sample_per_class = config.test_sample_per_class
-        self.save_results = config.save_results
-        self.include_video = config.include_video
-        self.split_strategy = getattr(config, "split_strategy", "random_sample")
+        self.seed = getattr(config, "seed", getattr(config, "random_seed", 42))
+        self.test_sample_per_class = getattr(config, "test_sample_per_class", 700)
+        self.save_results = getattr(config, "save_results", True)
+        self.include_video = getattr(config, "include_video", True)
+        raw_strategy = getattr(config, "split_strategy", "random_sample")
+        self.split_strategy = "random_sample" if raw_strategy == "stratified" else raw_strategy
         self.evaluation_mode = getattr(config, "evaluation_mode", "holdout")
         self.num_folds = int(getattr(config, "num_folds", 5))
         self.fold_index = getattr(config, "fold_index", None)

@@ -36,13 +36,14 @@
   },
   "dataset_splitter": {
     "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",
-    "split_strategy": "stratified",
+    "seed": 42,
+    "test_sample_per_class": 700,
+    "save_results": true,
+    "include_video": true,
+    "split_strategy": "random_sample",
     "evaluation_mode": "holdout",
-    "train_ratio": 0.7,
-    "val_ratio": 0.15,
-    "test_ratio": 0.15,
     "num_folds": 5,
-    "fold_index": 0,
-    "random_seed": 42
+    "fold_index": null,
+    "cv_val_ratio": 0.2
   }
 }
