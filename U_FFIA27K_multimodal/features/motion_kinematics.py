@@ -59,13 +59,18 @@ class FishMotionKinematics10Ch(nn.Module):
         else:
             rgb_01 = torch.clamp(rgb_flat, 0.0, 1.0)
 
+        # Ensure buffers match input device and dtype dynamically
+        sobel_x = self.sobel_x.to(device=device, dtype=dtype)
+        sobel_y = self.sobel_y.to(device=device, dtype=dtype)
+        center_field = self.center_field.to(device=device, dtype=dtype)
+
         # 1. Grayscale luminance [B, T, 1, H, W]
         gray_flat = 0.299 * rgb_01[:, 0:1] + 0.587 * rgb_01[:, 1:2] + 0.114 * rgb_01[:, 2:3]
         gray_seq = gray_flat.view(B, T, 1, H, W)
 
         # 2. Spatial gradients Ix, Iy
-        ix_flat = F.conv2d(gray_flat, self.sobel_x, padding=1)
-        iy_flat = F.conv2d(gray_flat, self.sobel_y, padding=1)
+        ix_flat = F.conv2d(gray_flat, sobel_x, padding=1)
+        iy_flat = F.conv2d(gray_flat, sobel_y, padding=1)
         ix_seq = ix_flat.view(B, T, 1, H, W)
         iy_seq = iy_flat.view(B, T, 1, H, W)
 
@@ -99,8 +104,8 @@ class FishMotionKinematics10Ch(nn.Module):
         # 7. Fluid Vorticity omega = dv/dx - du/dy
         v_flat = v_seq.view(B * T, 1, H, W)
         u_flat = u_seq.view(B * T, 1, H, W)
-        dv_dx = F.conv2d(v_flat, self.sobel_x, padding=1)
-        du_dy = F.conv2d(u_flat, self.sobel_y, padding=1)
+        dv_dx = F.conv2d(v_flat, sobel_x, padding=1)
+        du_dy = F.conv2d(u_flat, sobel_y, padding=1)
         omega_flat = torch.tanh((dv_dx - du_dy) * 4.0)  # normalized vorticity
         omega_seq = omega_flat.view(B, T, 1, H, W)
 
@@ -138,7 +143,7 @@ class FishMotionKinematics10Ch(nn.Module):
 
         # Feeding convergence flux: dot product between (u, v) and center_field
         flow_2d = torch.cat([u_seq, v_seq], dim=2)  # [B, T, 2, H, W]
-        flux_pixel = (flow_2d * self.center_field.unsqueeze(1)).sum(dim=2, keepdim=True)
+        flux_pixel = (flow_2d * center_field.unsqueeze(1)).sum(dim=2, keepdim=True)
         active_flux = flux_pixel * (v_mag_seq > 0.05).float()
         convergence_flux = active_flux.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
 

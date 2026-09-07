@@ -46,12 +46,12 @@ class MultimodalTrainer:
         optimizer: Optional[optim.Optimizer] = None,
         train_config_path: str = 'config/train_config.json'
     ) -> None:
-        self.model = model
+        self.device = device
+        self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.test_loader = test_loader
         self.config = config
-        self.device = device
         self.train_config_path = train_config_path
 
         # Setup Loss and Optimizer

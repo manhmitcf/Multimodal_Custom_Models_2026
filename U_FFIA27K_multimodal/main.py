@@ -290,7 +290,7 @@ def run_training_session(
                 splitter_config=fold_config.dataset_splitter,
             )
 
-            model = build_model(fold_config)
+            model = build_model(fold_config).to(device)
             stats = count_parameters(model)
             logger.info(f"Fold {fold_idx} Model Parameters: {stats['total']:,} ({stats['total_million']:.3f} M)")
 
@@ -319,7 +319,7 @@ def run_training_session(
             splitter_config=config.dataset_splitter,
         )
 
-        model = build_model(config)
+        model = build_model(config).to(device)
         stats = count_parameters(model)
         logger.info("==================================================")
         logger.info(f"SOTA MODEL PARAMETER AUDIT:")
