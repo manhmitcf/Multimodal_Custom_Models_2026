@@ -1,5 +1,5 @@
 {
-  "epochs": 400,
+  "epochs": 450,
   "batch_size": 32,
   "learning_rate": 1e-3,
   "weight_decay": 0.05,
@@ -25,7 +25,7 @@
   "weight_pairwise": 0.5,
   "weight_ce": 1.0,
   "enable_two_phase_warmup": true,
-  "phase1_warmup_epochs": 200,
+  "phase1_warmup_epochs": 250,
   "phase2_backbone_mode": "freeze_all",
   "aux_loss_weight": 0.3,
   "model": {
