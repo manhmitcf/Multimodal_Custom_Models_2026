@@ -26,7 +26,8 @@ find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
 #    - Model 2: NanoFAST (0.88M params, 1.26 GFLOPs)
 #    - Model 3: NanoUnderwaterDualBranch (1.29M params, 2.18 GFLOPs)
 #    - Độc lập 100%: 3 mạng hoàn toàn tách biệt, không chung bất kỳ tham số nào
-#    - Tổng số Epoch: 400 Epochs (From Scratch, OneCycleLR lr=1e-3, Không Early Stopping)
+#    - Tổng số Epoch: 400 Epochs (From Scratch, Batch Size 256, OneCycleLR lr=1e-3, Không Early Stopping)
+#    - Monitor: QWK (Chuẩn hóa y hệt MLP, lưu checkpoint theo Val QWK, đánh giá Test ở cuối)
 #    - Tiền xử lý: TKEO STFT 256kHz (2049 linear bins, FFT=4096, Hop=2048, Pure Spectral)
 #    - Huấn luyện luân phiên (Interleaved Loop): Tối ưu VRAM đỉnh ~2.4GB / 4GB
 # ==============================================================================

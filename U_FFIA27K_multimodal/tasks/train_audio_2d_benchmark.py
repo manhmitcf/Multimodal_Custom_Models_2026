@@ -3,6 +3,7 @@ import sys
 import copy
 import time
 import csv
+import json
 import logging
 import argparse
 from pathlib import Path
@@ -173,8 +174,9 @@ def run_audio_2d_benchmark(
     model_registry['conformer'] = {
         'name': 'NanoConformer',
         'model': NanoConformer(num_classes=4, embed_dim=160, num_layers=2).to(device),
-        'best_acc': 0.0,
-        'best_qwk': 0.0,
+        'best_val_metric': -1e9,
+        'best_val_qwk': 0.0,
+        'best_val_acc': 0.0,
         'best_epoch': 0,
         'ckpt_file': os.path.join(ckpt_dir, "best_conformer.pt")
     }
@@ -183,8 +185,9 @@ def run_audio_2d_benchmark(
     model_registry['fast'] = {
         'name': 'NanoFAST',
         'model': NanoFAST(num_classes=4).to(device),
-        'best_acc': 0.0,
-        'best_qwk': 0.0,
+        'best_val_metric': -1e9,
+        'best_val_qwk': 0.0,
+        'best_val_acc': 0.0,
         'best_epoch': 0,
         'ckpt_file': os.path.join(ckpt_dir, "best_fast.pt")
     }
@@ -193,8 +196,9 @@ def run_audio_2d_benchmark(
     model_registry['underwater'] = {
         'name': 'NanoUnderwaterDualBranch',
         'model': NanoUnderwaterDualBranch(num_classes=4, d_model=160, num_transformer_layers=2).to(device),
-        'best_acc': 0.0,
-        'best_qwk': 0.0,
+        'best_val_metric': -1e9,
+        'best_val_qwk': 0.0,
+        'best_val_acc': 0.0,
         'best_epoch': 0,
         'ckpt_file': os.path.join(ckpt_dir, "best_underwater.pt")
     }
@@ -234,7 +238,7 @@ def run_audio_2d_benchmark(
         item['optimizer'] = opt
         item['scheduler'] = sched
 
-    # 7. Setup CSV Logging
+    # 7. Setup CSV Logging (Training & Validation per Epoch)
     csv_headers = ["epoch"]
     for key, item in model_registry.items():
         name = item['name']
@@ -243,16 +247,14 @@ def run_audio_2d_benchmark(
             f"{name}_val_loss",
             f"{name}_val_acc",
             f"{name}_val_f1",
-            f"{name}_val_qwk",
-            f"{name}_test_acc",
-            f"{name}_test_qwk"
+            f"{name}_val_qwk"
         ])
     with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(csv_headers)
 
     # 8. Training Loop
-    logger.info(f"Commencing Interleaved Training for {config.epochs} Epochs...")
+    logger.info(f"Commencing Interleaved Training for {config.epochs} Epochs (Batch Size: {config.batch_size}, Monitor: {getattr(config, 'monitor', 'qwk')})...")
     start_time = time.time()
 
     for epoch in range(1, config.epochs + 1):
@@ -297,14 +299,13 @@ def run_audio_2d_benchmark(
                 desc_parts.append(f"{k[0].upper()}:{train_losses[k]/train_samples:.3f}")
             pbar.set_postfix_str(" | ".join(desc_parts))
 
-        # 9. Evaluation at end of Epoch
+        # 9. Validation at end of Epoch (Strictly Validation, NO Test Peeking)
         epoch_results = {"epoch": epoch}
         log_line_parts = [f"Epoch {epoch:03d}/{config.epochs:03d}"]
 
         for key, item in model_registry.items():
             model = item['model']
             val_metrics = evaluate_model(model, audio_frontend, val_loader, device)
-            test_metrics = evaluate_model(model, audio_frontend, test_loader, device)
 
             train_loss = train_losses[key] / max(train_samples, 1)
             epoch_results[f"{item['name']}_train_loss"] = round(train_loss, 4)
@@ -312,28 +313,38 @@ def run_audio_2d_benchmark(
             epoch_results[f"{item['name']}_val_acc"] = round(val_metrics['accuracy'], 2)
             epoch_results[f"{item['name']}_val_f1"] = round(val_metrics['f1'], 2)
             epoch_results[f"{item['name']}_val_qwk"] = round(val_metrics['qwk'], 4)
-            epoch_results[f"{item['name']}_test_acc"] = round(test_metrics['accuracy'], 2)
-            epoch_results[f"{item['name']}_test_qwk"] = round(test_metrics['qwk'], 4)
 
-            # Check for best accuracy on Val/Test
+            # Monitor metric determination (strictly on validation set, exactly matching MLP baseline)
+            monitor_metric = getattr(config, 'monitor', 'qwk')
+            if monitor_metric == 'qwk':
+                current_val_metric = val_metrics['qwk']
+            elif monitor_metric == 'accuracy':
+                current_val_metric = val_metrics['accuracy']
+            else:
+                current_val_metric = -val_metrics['loss']
+
+            # Check for best validation score
             is_best = False
-            if test_metrics['accuracy'] > item['best_acc']:
-                item['best_acc'] = test_metrics['accuracy']
-                item['best_qwk'] = test_metrics['qwk']
+            if current_val_metric > item['best_val_metric']:
+                item['best_val_metric'] = current_val_metric
+                item['best_val_acc'] = val_metrics['accuracy']
+                item['best_val_qwk'] = val_metrics['qwk']
                 item['best_epoch'] = epoch
                 is_best = True
-                # Save checkpoint
+                # Save checkpoint strictly based on Validation peak
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
-                    'test_acc': test_metrics['accuracy'],
-                    'test_qwk': test_metrics['qwk'],
+                    'val_acc': val_metrics['accuracy'],
+                    'val_qwk': val_metrics['qwk'],
+                    'monitor': monitor_metric,
+                    'best_val_metric': current_val_metric,
                     'config': _config_to_dict(config)
                 }, item['ckpt_file'])
 
             best_marker = "(*BEST*)" if is_best else ""
             log_line_parts.append(
-                f"[{item['name']}: ValAcc={val_metrics['accuracy']:.2f}% | TestAcc={test_metrics['accuracy']:.2f}% (QWK={test_metrics['qwk']:.4f}) {best_marker}]"
+                f"[{item['name']}: ValQWK={val_metrics['qwk']:.4f} | ValAcc={val_metrics['accuracy']:.2f}% {best_marker}]"
             )
 
         logger.info(" ".join(log_line_parts))
@@ -346,17 +357,46 @@ def run_audio_2d_benchmark(
 
     total_time = time.time() - start_time
     logger.info("==================================================")
-    logger.info("           BENCHMARK COMPLETED SUCCESSFULLY       ")
-    logger.info(f"Total Elapsed Time: {total_time / 60:.1f} minutes")
+    logger.info(f"  BENCHMARK TRAINING COMPLETED ({config.epochs} EPOCHS)  ")
+    logger.info(f"  Total Elapsed Time: {total_time / 60:.1f} minutes")
     logger.info("==================================================")
-    logger.info("FINAL COMPARATIVE SUMMARY (BASELINE MLP: 89.00%):")
+    logger.info("EVALUATING BEST VALIDATION CHECKPOINTS ON HOLDOUT TEST SET...")
+
+    final_test_summary = {}
     for key, item in model_registry.items():
-        diff = item['best_acc'] - 89.00
+        model = item['model']
+        if os.path.exists(item['ckpt_file']):
+            ckpt = torch.load(item['ckpt_file'], map_location=device)
+            model.load_state_dict(ckpt['model_state_dict'])
+            logger.info(f"[*] Loaded best checkpoint for {item['name']} from Epoch {ckpt.get('epoch', '?')} (Best Val QWK: {ckpt.get('val_qwk', 0.0):.4f})")
+
+        test_metrics = evaluate_model(model, audio_frontend, test_loader, device)
+        final_test_summary[key] = {
+            'name': item['name'],
+            'best_epoch': item['best_epoch'],
+            'best_val_acc': item['best_val_acc'],
+            'best_val_qwk': item['best_val_qwk'],
+            'test_acc': test_metrics['accuracy'],
+            'test_qwk': test_metrics['qwk'],
+            'test_f1': test_metrics['f1'],
+            'test_loss': test_metrics['loss'],
+        }
+
+    logger.info("==================================================")
+    logger.info("FINAL TEST EVALUATION SUMMARY (BASELINE MLP: 89.00%):")
+    for key, res in final_test_summary.items():
+        diff = res['test_acc'] - 89.00
         status = f"SURPASSED (+{diff:.2f}%)" if diff > 0 else f"BELOW ({diff:.2f}%)"
         logger.info(
-            f"  • {item['name']:<25}: Best Test Acc = {item['best_acc']:.2f}% (Epoch {item['best_epoch']}) | Best QWK = {item['best_qwk']:.4f} -> {status}"
+            f"  • {res['name']:<25}: Test Acc = {res['test_acc']:.2f}% | Test QWK = {res['test_qwk']:.4f} (Best Val Ep {res['best_epoch']}) -> {status}"
         )
     logger.info("==================================================")
+
+    # Save final test results to JSON
+    summary_path = os.path.join(ckpt_dir, "final_test_results.json")
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump(final_test_summary, f, indent=2)
+    logger.info(f"Saved final test summary to '{summary_path}'")
 
 
 def main() -> None:
