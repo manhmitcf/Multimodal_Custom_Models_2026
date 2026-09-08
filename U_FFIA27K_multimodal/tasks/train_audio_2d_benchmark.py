@@ -243,7 +243,7 @@ def run_audio_2d_benchmark(
         epoch_start = time.time()
         for item in model_registry.values():
             item['model'].train()
-        audio_frontend.train()
+        audio_frontend.eval()
 
         train_losses = {k: 0.0 for k in model_registry}
         train_samples = 0
@@ -256,8 +256,9 @@ def run_audio_2d_benchmark(
             batch_size = targets.size(0)
             train_samples += batch_size
 
-            # Extract 2D STFT Spectrogram [B, 1, 250, 2049]
-            spec_2d = audio_frontend(audio, return_2d=True)
+            # Extract 2D STFT Spectrogram [B, 1, 250, 2049] (deterministic frontend, detached from graph)
+            with torch.no_grad():
+                spec_2d = audio_frontend(audio, return_2d=True)
 
             # Interleaved Single-Batch Training for each independent model
             for key, item in model_registry.items():
