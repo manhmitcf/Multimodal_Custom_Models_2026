@@ -7,237 +7,195 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class CumulativeOrdinalBoundaryHead(nn.Module):
+class PairwiseBoundaryTournamentHead(nn.Module):
     """
-    Cumulative Ordinal Decision Head (CORAL / Monotonic Boundary Head).
-    Fish feeding intensity ordinal continuum:
-      Rank 0: None
-      Rank 1: Weak
-      Rank 2: Medium
-      Rank 3: Strong
+    Hierarchical Pairwise Cross-Boundary Tournament Head (~80K params).
+    
+    Level 1: Feeding Activity Gating
+      - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
+      - p_feeding = sigmoid(w_act^T * f) in (0, 1)
+      - p_none = 1 - p_feeding
 
-    Projects feature representation into a 1D scalar score:
-      s = w^T * f in R
-    and learns 3 strictly monotonic cutoffs:
-      b_1 < b_2 < b_3
-    enforced via:
-      b_1 = theta_1
-      b_2 = b_1 + softplus(Delta_theta_2) + 0.5
-      b_3 = b_2 + softplus(Delta_theta_3) + 0.5
+    Level 2: 3-Way Pairwise Cross-Boundary Tournament
+      - B12: Weak <-> Medium    -> P(W > M) = sigmoid(s_12)
+      - B23: Medium <-> Strong  -> P(M > S) = sigmoid(s_23)
+      - B13: Weak <-> Strong    -> P(W > S) = sigmoid(s_13)  [Cross-skipping protection boundary]
 
-    Cumulative exceedance probabilities:
-      P(Rank >= k) = sigma(s - b_k)
+    Tournament Scoring (Borda count):
+      - V_Weak   = P(W > M) + P(W > S)
+      - V_Medium = (1 - P(W > M)) + P(M > S)
+      - V_Strong = (1 - P(W > S)) + (1 - P(M > S))
     """
-    def __init__(self, dim: int = 224, init_theta1: float = -1.0) -> None:
+    def __init__(self, dim: int = 224, temperature: float = 2.0) -> None:
         super().__init__()
-        self.score_proj = nn.Linear(dim, 1)
+        self.dim = dim
+        self.temperature = temperature
 
-        # Monotonic cutoff parameters
-        self.theta_1 = nn.Parameter(torch.tensor(init_theta1, dtype=torch.float32))
-        self.delta_theta_2 = nn.Parameter(torch.tensor(0.5, dtype=torch.float32))
-        self.delta_theta_3 = nn.Parameter(torch.tensor(0.5, dtype=torch.float32))
-
-        # Dataset raw indexing map:
-        # Raw 0: None   (Rank 0)
-        # Raw 1: Strong (Rank 3)
-        # Raw 2: Medium (Rank 2)
-        # Raw 3: Weak   (Rank 1)
-        self.register_buffer(
-            "rank_to_raw",
-            torch.tensor([0, 3, 2, 1], dtype=torch.long)
+        # Level 1: Feeding Activity Gate (None vs Feeding)
+        self.activity_head = nn.Sequential(
+            nn.Linear(dim, 64),
+            nn.GELU(),
+            nn.Linear(64, 1)
         )
 
-    def get_cutoffs(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        b_1 = self.theta_1
-        b_2 = b_1 + F.softplus(self.delta_theta_2) + 0.5
-        b_3 = b_2 + F.softplus(self.delta_theta_3) + 0.5
-        return b_1, b_2, b_3
+        # Level 2: 3 Specialized Pairwise Subspace Expert Heads
+        # B12: Weak vs Medium
+        self.head_b12 = nn.Sequential(
+            nn.Linear(dim, 112),
+            nn.GELU(),
+            nn.LayerNorm(112),
+            nn.Linear(112, 1)
+        )
 
-    def set_cutoffs(self, cutoffs: Tuple[float, float, float]) -> None:
-        """Utility for Nelder-Mead post-calibration."""
-        with torch.no_grad():
-            b1, b2, b3 = cutoffs
-            self.theta_1.copy_(torch.tensor(b1, dtype=torch.float32))
-            # Inverse softplus for deltas
-            d2 = max(b2 - b1 - 0.5, 1e-4)
-            d3 = max(b3 - b2 - 0.5, 1e-4)
-            inv_sp2 = math_inv_softplus(d2)
-            inv_sp3 = math_inv_softplus(d3)
-            self.delta_theta_2.copy_(torch.tensor(inv_sp2, dtype=torch.float32))
-            self.delta_theta_3.copy_(torch.tensor(inv_sp3, dtype=torch.float32))
+        # B23: Medium vs Strong
+        self.head_b23 = nn.Sequential(
+            nn.Linear(dim, 112),
+            nn.GELU(),
+            nn.LayerNorm(112),
+            nn.Linear(112, 1)
+        )
+
+        # B13: Weak vs Strong (Direct cross-boundary protection)
+        self.head_b13 = nn.Sequential(
+            nn.Linear(dim, 112),
+            nn.GELU(),
+            nn.LayerNorm(112),
+            nn.Linear(112, 1)
+        )
 
     def forward(self, f: torch.Tensor) -> Dict[str, torch.Tensor]:
-        s = self.score_proj(f).squeeze(-1)  # [B]
-        b_1, b_2, b_3 = self.get_cutoffs()
+        B = f.size(0)
 
-        # Cumulative exceedance probabilities
-        p_ge_1 = torch.sigmoid(s - b_1)
-        p_ge_2 = torch.sigmoid(s - b_2)
-        p_ge_3 = torch.sigmoid(s - b_3)
+        # 1. Level 1: Feeding Activity Gate
+        logit_act = self.activity_head(f).squeeze(-1)       # [B]
+        p_feeding = torch.sigmoid(logit_act)                # [B] in (0, 1)
+        p_none = torch.clamp(1.0 - p_feeding, min=1e-6)     # [B]
 
-        # Telescoping individual rank probabilities
-        p_rank_0 = torch.clamp(1.0 - p_ge_1, min=1e-6)
-        p_rank_1 = torch.clamp(p_ge_1 - p_ge_2, min=1e-6)
-        p_rank_2 = torch.clamp(p_ge_2 - p_ge_3, min=1e-6)
-        p_rank_3 = torch.clamp(p_ge_3, min=1e-6)
+        # 2. Level 2: 3 Pairwise Cross-Boundary Logits & Probabilities
+        logit_12 = self.head_b12(f).squeeze(-1)            # [B] (Positive -> Weak, Negative -> Medium)
+        logit_23 = self.head_b23(f).squeeze(-1)            # [B] (Positive -> Medium, Negative -> Strong)
+        logit_13 = self.head_b13(f).squeeze(-1)            # [B] (Positive -> Weak, Negative -> Strong)
 
-        p_rank = torch.stack([p_rank_0, p_rank_1, p_rank_2, p_rank_3], dim=-1)
-        p_rank = p_rank / torch.sum(p_rank, dim=-1, keepdim=True)
+        # Head-to-head pairwise winning probabilities
+        p_w_over_m = torch.sigmoid(logit_12)               # P(W > M)
+        p_m_over_w = 1.0 - p_w_over_m                      # P(M > W)
 
-        # Map to raw dataset class indexing: [None, Strong, Medium, Weak]
-        p_raw = torch.stack([p_rank[:, 0], p_rank[:, 3], p_rank[:, 2], p_rank[:, 1]], dim=-1)
+        p_m_over_s = torch.sigmoid(logit_23)               # P(M > S)
+        p_s_over_m = 1.0 - p_m_over_s                      # P(S > M)
+
+        p_w_over_s = torch.sigmoid(logit_13)               # P(W > S)
+        p_s_over_w = 1.0 - p_w_over_s                      # P(S > W)
+
+        # 3. Tournament Borda Count Voting
+        # Weak wins if it beats Medium AND beats Strong
+        v_weak = p_w_over_m + p_w_over_s                   # [B] in [0, 2]
+        # Medium wins if it beats Weak AND beats Strong
+        v_medium = p_m_over_w + p_m_over_s                 # [B] in [0, 2]
+        # Strong wins if it beats Weak AND beats Medium
+        v_strong = p_s_over_w + p_s_over_m                 # [B] in [0, 2]
+
+        v_voting = torch.stack([v_weak, v_medium, v_strong], dim=-1)  # [B, 3]
+
+        # Softmax over normalized tournament votes (Rank order: Weak=1, Med=2, Strong=3)
+        p_feeding_ranks = F.softmax(v_voting * self.temperature, dim=-1)  # [B, 3]
+        p_weak_given_feed = p_feeding_ranks[:, 0]
+        p_med_given_feed = p_feeding_ranks[:, 1]
+        p_strong_given_feed = p_feeding_ranks[:, 2]
+
+        # 4. Final Hierarchical Combination
+        p_final_none = p_none
+        p_final_weak = p_feeding * p_weak_given_feed
+        p_final_medium = p_feeding * p_med_given_feed
+        p_final_strong = p_feeding * p_strong_given_feed
+
+        # Map to raw dataset class indexing: [0: None, 1: Strong, 2: Medium, 3: Weak]
+        p_raw = torch.stack([p_final_none, p_final_strong, p_final_medium, p_final_weak], dim=-1)
+        p_raw = p_raw / torch.sum(p_raw, dim=-1, keepdim=True)
         logits_raw = torch.log(torch.clamp(p_raw, min=1e-7))
-        expected_intensity = p_ge_1 + p_ge_2 + p_ge_3
 
-        cutoffs = torch.stack([b_1, b_2, b_3])
+        # Expected physical intensity on 0..3 ordinal scale
+        # None=0, Weak=1, Medium=2, Strong=3
+        expected_intensity = (
+            p_final_none * 0.0 +
+            p_final_weak * 1.0 +
+            p_final_medium * 2.0 +
+            p_final_strong * 3.0
+        ).unsqueeze(-1)
 
         return {
-            "score": s,
-            "cutoffs": cutoffs,
-            "p_raw": p_raw,
             "logits": logits_raw,
+            "probabilities": p_raw,
             "expected_intensity": expected_intensity,
-            "cum_probs": torch.stack([p_ge_1, p_ge_2, p_ge_3], dim=-1)
+            "intensity_score": expected_intensity,
+            # Pairwise logits & probabilities for specialized loss calculation
+            "logit_act": logit_act,
+            "p_feeding": p_feeding,
+            "logit_12": logit_12,
+            "logit_23": logit_23,
+            "logit_13": logit_13,
+            "p_w_over_m": p_w_over_m,
+            "p_m_over_s": p_m_over_s,
+            "p_w_over_s": p_w_over_s,
+            "v_voting": v_voting
         }
 
 
-def math_inv_softplus(x: float) -> float:
-    import math
-    if x > 20.0:
-        return x
-    return math.log(max(math.exp(x) - 1.0, 1e-6))
-
-
-class GatedBilateralBoundaryFusion(nn.Module):
+class MultimodalTournamentFusion(nn.Module):
     """
-    Streamlined Gated Bilateral Boundary Fusion Engine (~50K params).
-    1. Gated Fusion: Learns cross-modal reliability weight g = sigma(W[f_V || f_A]) (~0.5K params).
-    2. Bilateral Boundary Heads:
-       - Video CORAL Head: Evaluates video scalar score s_V with cutoffs b_V1 < b_V2 < b_V3.
-       - Audio CORAL Head: Evaluates audio scalar score s_A with cutoffs b_A1 < b_A2 < b_A3.
-    3. Blended Decision: Combines s_final = g * s_V + (1-g) * s_A and b_final = g * b_V + (1-g) * b_A.
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~80K params).
+    1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
+    2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament.
     """
     def __init__(self, dim: int = 224, dropout: float = 0.1, **kwargs) -> None:
         super().__init__()
         self.dim = dim
 
-        # 1. Gated Cross-Modal Reliability Gating: [B, dim * 2] -> [B, 1]
+        # 1. Gated Reliability Fusion
         self.gate = nn.Sequential(
             nn.Linear(dim * 2, 1),
             nn.Sigmoid()
         )
         self.norm_fused = nn.LayerNorm(dim)
 
-        # Branch refinement projections
-        self.proj_v = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.LayerNorm(dim)
-        )
-        self.proj_a = nn.Sequential(
+        # 2. Residual refinement
+        self.proj_joint = nn.Sequential(
             nn.Linear(dim, dim),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.LayerNorm(dim)
         )
 
-        # 2. Bilateral CORAL Heads
-        self.head_v = CumulativeOrdinalBoundaryHead(dim=dim, init_theta1=-1.0)
-        self.head_a = CumulativeOrdinalBoundaryHead(dim=dim, init_theta1=-1.0)
+        # 3. Pairwise Boundary Tournament Decision Head
+        self.tournament_head = PairwiseBoundaryTournamentHead(dim=dim, temperature=2.0)
 
     def forward(
         self,
         f_video: torch.Tensor,
         f_audio: torch.Tensor,
-        tokens_video: Optional[torch.Tensor] = None,
-        tokens_audio: Optional[torch.Tensor] = None,
-        f_burst_v: Optional[torch.Tensor] = None,
-        f_burst_a: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        """
-        Args:
-            f_video: Spatiotemporal video embedding [B, dim]
-            f_audio: Acoustic embedding [B, dim]
-
-        Returns:
-            Dictionary with final blended logits, probabilities, cutoffs,
-            unimodal scores, and gate weights.
-        """
-        # Step 1: Gated Cross-Modal Fusion
+        # Step 1: Cross-modal adaptive reliability gating
         combined = torch.cat([f_video, f_audio], dim=-1)  # [B, dim * 2]
-        g = self.gate(combined)                            # [B, 1] (Weight for Video)
-        f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)  # [B, dim]
+        g = self.gate(combined)                            # [B, 1]
+        f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)
+        f_joint = self.proj_joint(f_fused)
 
-        # Step 2: Branch features with residual connection
-        f_branch_v = self.proj_v(f_fused + f_video)  # [B, dim]
-        f_branch_a = self.proj_a(f_fused + f_audio)  # [B, dim]
+        # Step 2: Pairwise Boundary Tournament
+        out = self.tournament_head(f_joint)
 
-        # Step 3: Bilateral Head Evaluations
-        out_v = self.head_v(f_branch_v)
-        out_a = self.head_a(f_branch_a)
+        # Step 3: Package metrics
+        out["f_fused"] = f_fused
+        out["gate"] = g
+        out["modality_weights"] = torch.cat([g, 1.0 - g], dim=-1)
 
-        s_v = out_v["score"]       # [B]
-        s_a = out_a["score"]       # [B]
-        b_v = out_v["cutoffs"]     # [3]
-        b_a = out_a["cutoffs"]     # [3]
+        # Shannon entropy uncertainty
+        entropy = -torch.sum(out["probabilities"] * torch.log(torch.clamp(out["probabilities"], min=1e-7)), dim=-1, keepdim=True)
+        out["uncertainty"] = entropy / 1.386294
 
-        # Step 4: Blended Final Decision
-        g_scalar = g.squeeze(-1)   # [B]
-        s_final = g_scalar * s_v + (1.0 - g_scalar) * s_a  # [B]
-
-        # Weighted blended cutoffs per sample or mean
-        g_mean = g.mean()
-        b_final = g_mean * b_v + (1.0 - g_mean) * b_a  # [3]
-
-        # Final blended cumulative probabilities
-        p_ge_1 = torch.sigmoid(s_final - b_final[0])
-        p_ge_2 = torch.sigmoid(s_final - b_final[1])
-        p_ge_3 = torch.sigmoid(s_final - b_final[2])
-
-        p_0 = torch.clamp(1.0 - p_ge_1, min=1e-6)
-        p_1 = torch.clamp(p_ge_1 - p_ge_2, min=1e-6)
-        p_2 = torch.clamp(p_ge_2 - p_ge_3, min=1e-6)
-        p_3 = torch.clamp(p_ge_3, min=1e-6)
-
-        p_rank = torch.stack([p_0, p_1, p_2, p_3], dim=-1)
-        p_rank = p_rank / torch.sum(p_rank, dim=-1, keepdim=True)
-
-        # Map to raw dataset class indexing: [None, Strong, Medium, Weak]
-        p_raw = torch.stack([p_rank[:, 0], p_rank[:, 3], p_rank[:, 2], p_rank[:, 1]], dim=-1)
-        logits_raw = torch.log(torch.clamp(p_raw, min=1e-7))
-        expected_intensity = p_ge_1 + p_ge_2 + p_ge_3
-
-        # Normalized Shannon entropy uncertainty
-        entropy = -torch.sum(p_raw * torch.log(torch.clamp(p_raw, min=1e-7)), dim=-1, keepdim=True)
-        norm_entropy = entropy / 1.386294  # log(4)
-
-        modality_weights = torch.cat([g, 1.0 - g], dim=-1)  # [B, 2]
-
-        return {
-            "logits": logits_raw,
-            "probabilities": p_raw,
-            "intensity_score": s_final.unsqueeze(-1),
-            "expected_intensity": expected_intensity.unsqueeze(-1),
-            "uncertainty": norm_entropy,
-            "modality_weights": modality_weights,
-            "f_fused": f_fused,
-            "gate": g,
-            # Bilateral outputs for loss calculation
-            "score_v": s_v,
-            "score_a": s_a,
-            "cutoffs_v": b_v,
-            "cutoffs_a": b_a,
-            "b_final": b_final,
-            "cum_probs": torch.stack([p_ge_1, p_ge_2, p_ge_3], dim=-1),
-            "cum_probs_v": out_v["cum_probs"],
-            "cum_probs_a": out_a["cum_probs"],
-            "probabilities_v": out_v["p_raw"],
-            "probabilities_a": out_a["p_raw"],
-        }
+        return out
 
 
 # Backward compatibility aliases
-MultimodalBoundaryAwareFusion = GatedBilateralBoundaryFusion
-SOTAMultimodalFusion = GatedBilateralBoundaryFusion
+GatedBilateralBoundaryFusion = MultimodalTournamentFusion
+MultimodalBoundaryAwareFusion = MultimodalTournamentFusion
+SOTAMultimodalFusion = MultimodalTournamentFusion

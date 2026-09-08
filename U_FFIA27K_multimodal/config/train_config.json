@@ -20,9 +20,10 @@
   "prefetch_factor": 2,
   "ckpt_dir": "checkpoint",
   "save_best_only": true,
-  "loss_type": "bilateral_boundary",
-  "lambda_emd": 0.5,
-  "lambda_align": 0.2,
+  "loss_type": "pairwise_tournament",
+  "weight_act": 0.5,
+  "weight_pairwise": 0.5,
+  "weight_ce": 1.0,
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,

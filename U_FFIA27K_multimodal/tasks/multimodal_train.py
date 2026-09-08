@@ -28,6 +28,7 @@ from utils import (
     InferenceTimer,
     ClipCELoss,
     BilateralBoundaryLoss,
+    PairwiseTournamentLoss,
 )
 
 # Logging configuration
@@ -63,8 +64,15 @@ class MultimodalTrainer:
         self.train_config_path = train_config_path
 
         # Setup Loss
-        loss_type = getattr(self.config, "loss_type", "bilateral_boundary")
-        if loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
+        loss_type = getattr(self.config, "loss_type", "pairwise_tournament")
+        if loss_type == "pairwise_tournament":
+            self.loss_fn = PairwiseTournamentLoss(
+                weight_act=getattr(self.config, "weight_act", 0.5),
+                weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
+                weight_ce=getattr(self.config, "weight_ce", 1.0),
+            ).to(self.device)
+            logger.info("Configured PairwiseTournamentLoss (Activity Gate + 3 Pairwise Cross Boundaries B12, B23, B13).")
+        elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
             self.loss_fn = BilateralBoundaryLoss(
                 lambda_emd=getattr(self.config, "lambda_emd", 0.5),
                 lambda_align=getattr(self.config, "lambda_align", 0.2),
@@ -204,6 +212,10 @@ class MultimodalTrainer:
         """
         Nelder-Mead Post-Calibration on Validation split to optimize cutoffs without gradients.
         """
+        if not hasattr(self.model.fusion, 'head_v') or not hasattr(self.model.fusion.head_v, 'get_cutoffs'):
+            logger.info("Tournament architecture uses direct Pairwise Voting (no 1D cutoffs needed). Skipping Nelder-Mead.")
+            return {}
+
         logger.info("Starting Nelder-Mead post-training calibration on validation set...")
         self.model.eval()
 
