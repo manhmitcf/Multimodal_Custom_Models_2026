@@ -19,7 +19,14 @@ import torch.optim as optim
 from tqdm import tqdm
 
 from config import MultimodalTrainConfig
-from utils import EarlyStopping, HistoryLogger, MultimodalEvaluator, InferenceTimer, ClipCELoss
+from utils import (
+    EarlyStopping,
+    HistoryLogger,
+    MultimodalEvaluator,
+    InferenceTimer,
+    ClipCELoss,
+    OrdinalWassersteinEvidentialLoss,
+)
 
 # Logging configuration
 logging.basicConfig(
@@ -55,7 +62,25 @@ class MultimodalTrainer:
         self.train_config_path = train_config_path
 
         # Setup Loss and Optimizer
-        self.loss_fn = ClipCELoss()
+        loss_type = getattr(self.config, "loss_type", "ordinal_wasserstein")
+        if loss_type == "ordinal_wasserstein":
+            self.loss_fn = OrdinalWassersteinEvidentialLoss(
+                classes_num=getattr(self.config.model, "classes_num", 4),
+                sigma=getattr(self.config, "ordinal_sigma", 0.5),
+                lambda_ord_start=getattr(self.config, "lambda_ord_start", 0.2),
+                lambda_ord_end=getattr(self.config, "lambda_ord_end", 2.0),
+                total_epochs=self.config.epochs,
+                annealing_epochs=max(10, getattr(self.config, "warmup_epochs", 5) * 5)
+            ).to(self.device)
+            logger.info(
+                f"Configured OrdinalWassersteinEvidentialLoss: sigma={getattr(self.config, 'ordinal_sigma', 0.5)}, "
+                f"lambda_ord=[{getattr(self.config, 'lambda_ord_start', 0.2)} -> {getattr(self.config, 'lambda_ord_end', 2.0)}], "
+                f"total_epochs={self.config.epochs}."
+            )
+        else:
+            self.loss_fn = ClipCELoss()
+            logger.info("Configured standard ClipCELoss.")
+
         self.optimizer = optimizer if optimizer is not None else optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
@@ -120,7 +145,10 @@ class MultimodalTrainer:
             self.optimizer.zero_grad()
             outputs = self.model(video, audio)
 
-            loss = self.loss_fn(outputs, {'target': targets})
+            try:
+                loss = self.loss_fn(outputs, {'target': targets}, epoch=epoch)
+            except TypeError:
+                loss = self.loss_fn(outputs, {'target': targets})
             loss.backward()
             
             # Gradient clipping to ensure stable training
@@ -144,13 +172,20 @@ class MultimodalTrainer:
         pred_acc_labels = np.argmax(train_preds, axis=1)
         train_acc = float(np.mean(target_acc_labels == pred_acc_labels))
 
+        # Ordinal rank MAE (0: none, 1: strong -> 3, 2: medium -> 2, 3: weak -> 1)
+        rank_map = np.array([0, 3, 2, 1])
+        try:
+            train_mae = float(np.mean(np.abs(rank_map[pred_acc_labels] - rank_map[target_acc_labels])))
+        except Exception:
+            train_mae = 0.0
+
         try:
             from sklearn import metrics as sklearn_metrics
             train_mAP = float(np.mean(sklearn_metrics.average_precision_score(train_targets, train_preds, average=None)))
         except Exception:
             train_mAP = train_acc
 
-        return epoch_loss, train_acc, train_mAP
+        return epoch_loss, train_acc, train_mAP, train_mae
 
     def train(self) -> Dict[str, Any]:
         logger.info(f"Starting training pipeline (Monitor metric: {self.config.monitor})...")
@@ -168,7 +203,7 @@ class MultimodalTrainer:
             best_val_metric = float('inf')
 
         for epoch in range(1, self.config.epochs + 1):
-            train_loss, train_acc, train_mAP = self._train_epoch(epoch)
+            train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
             self.scheduler.step()
 
             # Evaluate on validation split
@@ -177,12 +212,13 @@ class MultimodalTrainer:
             val_loss = float(val_stats.get('loss', 0.0))
             val_acc = float(np.mean(val_stats['accuracy']))
             val_mAP = float(np.mean(val_stats['average_precision']))
+            val_mae = float(val_stats.get('ordinal_mae', 0.0))
 
             # Print epoch summary metrics identical to audio and video trainers
             logger.info(
                 f"Epoch {epoch:03d}: "
-                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train mAP = {train_mAP:.4f} | "
-                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val mAP = {val_mAP:.4f}"
+                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | "
+                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val MAE = {val_mae:.4f} | Val mAP = {val_mAP:.4f}"
             )
 
             # Determine if this is the best checkpoint

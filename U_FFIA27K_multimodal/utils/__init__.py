@@ -2,7 +2,7 @@ from .early_stopping import EarlyStopping
 from .evaluate import BaseEvaluator, MultimodalEvaluator
 from .history_logger import HistoryLogger
 from .inference_timer import InferenceTimer
-from .losses import BaseLoss, ClipCELoss, TMCEvidentialLoss
+from .losses import BaseLoss, ClipCELoss, TMCEvidentialLoss, OrdinalWassersteinEvidentialLoss
 from .profile_model import count_parameters, measure_flops, measure_latency
 
 __all__ = [
@@ -14,6 +14,7 @@ __all__ = [
     "BaseLoss",
     "ClipCELoss",
     "TMCEvidentialLoss",
+    "OrdinalWassersteinEvidentialLoss",
     "count_parameters",
     "measure_flops",
     "measure_latency",

@@ -74,7 +74,8 @@ class MultimodalEvaluator(BaseEvaluator):
                     batch_logits = batch_output
 
                 if self.loss_fn is not None:
-                    batch_loss = self.loss_fn({'clipwise_output': batch_logits}, {'target': batch_targets})
+                    loss_input = batch_output if isinstance(batch_output, dict) else {'clipwise_output': batch_logits}
+                    batch_loss = self.loss_fn(loss_input, {'target': batch_targets})
                     bs = batch_targets.size(0)
                     total_loss += batch_loss.item() * bs
                     total_samples += bs
@@ -138,10 +139,20 @@ class MultimodalEvaluator(BaseEvaluator):
             target_acc, clipwise_output_acc, average='macro', zero_division=0
         )
 
+        # Physical ordinal rank mapping: 0: None (rank 0), 1: Strong (rank 3), 2: Medium (rank 2), 3: Weak (rank 1)
+        if num_classes == 4:
+            rank_map = np.array([0, 3, 2, 1])
+            pred_ranks = rank_map[clipwise_output_acc]
+            target_ranks = rank_map[target_acc]
+            ordinal_mae = float(np.mean(np.abs(pred_ranks - target_ranks)))
+        else:
+            ordinal_mae = float(np.mean(np.abs(clipwise_output_acc - target_acc)))
+
         statistics = {
             'loss': mean_loss,
             'average_precision': average_precision,
             'accuracy': acc,
+            'ordinal_mae': ordinal_mae,
             'auc': auc,
             'message': message,
             'confu_matrix': cm,

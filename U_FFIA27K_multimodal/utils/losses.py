@@ -3,6 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+from .ordinal_loss import OrdinalWassersteinEvidentialLoss
+
+
 class BaseLoss(nn.Module):
     """
     Abstract Base Class for loss functions.
@@ -10,7 +13,7 @@ class BaseLoss(nn.Module):
     def __init__(self) -> None:
         super().__init__()
 
-    def forward(self, output_dict: dict, target_dict: dict) -> torch.Tensor:
+    def forward(self, output_dict: dict, target_dict: dict, epoch: int = 1) -> torch.Tensor:
         raise NotImplementedError("Method 'forward' must be implemented in subclasses.")
 
 
@@ -18,7 +21,7 @@ class ClipCELoss(BaseLoss):
     """
     Standard Multi-class Cross Entropy Loss at the clip level.
     """
-    def forward(self, output_dict: dict, target_dict: dict) -> torch.Tensor:
+    def forward(self, output_dict: dict, target_dict: dict, epoch: int = 1) -> torch.Tensor:
         logits = output_dict['clipwise_output']
         targets = target_dict['target']
         if targets.ndim > 1 and targets.size(-1) > 1:

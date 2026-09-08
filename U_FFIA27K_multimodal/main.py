@@ -113,9 +113,21 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
             raise ValueError(f"Expected output shape (2, 4), got {out['clipwise_output'].shape}")
 
         # 3. Test backward pass & gradient flow
-        from utils.losses import ClipCELoss
-        loss_fn = ClipCELoss()
-        loss = loss_fn(out, {"target": dummy_targets})
+        loss_type = getattr(config, "loss_type", "ordinal_wasserstein")
+        if loss_type == "ordinal_wasserstein":
+            from utils.losses import OrdinalWassersteinEvidentialLoss
+            loss_fn = OrdinalWassersteinEvidentialLoss(
+                classes_num=config.model.classes_num,
+                sigma=getattr(config, "ordinal_sigma", 0.5),
+                lambda_ord_start=getattr(config, "lambda_ord_start", 0.2),
+                lambda_ord_end=getattr(config, "lambda_ord_end", 2.0),
+                total_epochs=config.epochs
+            ).to(device)
+            loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
+        else:
+            from utils.losses import ClipCELoss
+            loss_fn = ClipCELoss()
+            loss = loss_fn(out, {"target": dummy_targets})
         loss.backward()
 
         trainable_with_grads = sum(1 for p in model.parameters() if p.requires_grad and p.grad is not None)

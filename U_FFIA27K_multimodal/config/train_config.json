@@ -18,6 +18,10 @@
   "dataloader_workers": -1,
   "ckpt_dir": "checkpoint",
   "save_best_only": true,
+  "loss_type": "ordinal_wasserstein",
+  "ordinal_sigma": 0.5,
+  "lambda_ord_start": 0.2,
+  "lambda_ord_end": 2.0,
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
