@@ -11,43 +11,30 @@ if project_root not in sys.path:
 
 import torch
 import torch.nn as nn
-import torchaudio.transforms as AT
+from torchlibrosa.stft import Spectrogram, LogmelFilterBank
+from torchlibrosa.augmentation import SpecAugmentation
+from features.stft_ape import Spectrogram_APE
 
 from config.train_config import AudioFeaturesConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SpecAugment(nn.Module):
+def init_bn(bn: nn.BatchNorm2d) -> None:
     """
-    Differentiable SpecAugment for Log-Mel Spectrograms.
-    Applies frequency masking and time masking.
+    Initialize BatchNorm2d weights with default values (bias = 0, weight = 1).
     """
-    def __init__(
-        self,
-        freq_mask_param: int = 16,
-        time_mask_param: int = 64,
-        freq_masks: int = 2,
-        time_masks: int = 2,
-    ) -> None:
-        super().__init__()
-        self.freq_mask = AT.FrequencyMasking(freq_mask_param=freq_mask_param)
-        self.time_mask = AT.TimeMasking(time_mask_param=time_mask_param)
-        self.freq_masks = freq_masks
-        self.time_masks = time_masks
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: [B, 1, T, F] or [B, T, F]
-        for _ in range(self.freq_masks):
-            x = self.freq_mask(x)
-        for _ in range(self.time_masks):
-            x = self.time_mask(x)
-        return x
+    if bn.bias is not None:
+        bn.bias.data.fill_(0.)
+    if bn.weight is not None:
+        bn.weight.data.fill_(1.)
 
 
 class AudioFrontend(nn.Module):
     """
     GPU-based Audio Frontend extracting 128 Mel-frequency Filterbanks.
+    Enhanced with Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis:
+      Psi[x(n)] = x^2(n) - x(n-1) * x(n+1)
     Converts raw 1D waveforms [B, num_samples] into Log-Mel Spectrograms [B, 1, T, 128].
     """
     def __init__(self, config: Optional[AudioFeaturesConfig] = None) -> None:
@@ -64,61 +51,98 @@ class AudioFrontend(nn.Module):
         self.f_min = self.config.fmin
         self.f_max = min(self.config.fmax, self.sample_rate // 2)
 
-        self.mel_spectrogram = AT.MelSpectrogram(
-            sample_rate=self.sample_rate,
+        use_tkeo = getattr(self.config, 'use_tkeo', True)
+        alpha_max = getattr(self.config, 'alpha_max', 0.99)
+        beta = getattr(self.config, 'beta', 0.8)
+
+        # 1. Amplitude Spectrogram Extractor with TKEO Adaptive Pre-Emphasis
+        if use_tkeo:
+            logger.info("Enabling Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis Spectrogram Extractor.")
+            self.spectrogram_extractor = Spectrogram_APE(
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                win_length=self.n_fft,
+                window='hann',
+                center=True,
+                pad_mode='reflect',
+                freeze_parameters=True,
+                alpha_max=alpha_max,
+                beta=beta
+            )
+        else:
+            self.spectrogram_extractor = Spectrogram(
+                n_fft=self.n_fft,
+                hop_length=self.hop_length,
+                win_length=self.n_fft,
+                window='hann',
+                center=True,
+                pad_mode='reflect',
+                freeze_parameters=True
+            )
+
+        # 2. Logmel Filterbank Extractor on GPU using torchlibrosa
+        self.logmel_extractor = LogmelFilterBank(
+            sr=self.sample_rate,
             n_fft=self.n_fft,
-            win_length=self.n_fft,
-            hop_length=self.hop_length,
-            f_min=self.f_min,
-            f_max=self.f_max,
             n_mels=self.n_mels,
-            power=2.0,
-            normalized=False,
-            center=True,
-            pad_mode="reflect",
+            fmin=self.f_min,
+            fmax=self.f_max,
+            ref=1.0,
+            amin=1e-10,
+            top_db=None,
+            freeze_parameters=True
         )
 
-        self.spec_augment = SpecAugment(
-            freq_mask_param=self.config.freq_drop_width,
-            time_mask_param=self.config.time_drop_width,
-            freq_masks=self.config.freq_stripes_num,
-            time_masks=self.config.time_stripes_num,
+        # 3. SpecAugment Spec Augmentation Extractor on GPU using torchlibrosa
+        self.spec_augmenter = SpecAugmentation(
+            time_drop_width=getattr(self.config, 'time_drop_width', 64),
+            time_stripes_num=getattr(self.config, 'time_stripes_num', 2),
+            freq_drop_width=getattr(self.config, 'freq_drop_width', 8),
+            freq_stripes_num=getattr(self.config, 'freq_stripes_num', 2)
         )
 
-        # Normalization over Mel bins
-        self.bn = nn.BatchNorm2d(self.n_mels)
+        # 4. BatchNorm normalization layer over Mel bins
+        self.bn0 = nn.BatchNorm2d(self.n_mels)
+        init_bn(self.bn0)
 
-    def forward(self, waveforms: torch.Tensor) -> torch.Tensor:
+        # 5. Convert non-trainable DFT kernels and Mel filterbanks from Parameters to Buffers
+        # so they are properly treated as constant Fourier basis functions (0 trainable parameters)
+        for _, m in self.named_modules():
+            for p_name, p in list(m.named_parameters(recurse=False)):
+                if not p.requires_grad:
+                    delattr(m, p_name)
+                    m.register_buffer(p_name, p.data)
+
+    def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         """
+        Forward Pass converting raw 1D waveforms into 2D Mel-spectrograms.
+
         Args:
-            waveforms: [B, num_samples] float32 tensor
+            input_tensor (torch.Tensor): Raw waveform tensor [Batch, Num_Samples].
+
         Returns:
-            mel_spec: [B, 1, time_steps, n_mels] normalized log-mel spectrogram
+            torch.Tensor: Augmented Log-Mel Spectrogram [Batch, 1, Time_Steps + 2, 128].
         """
-        if waveforms.ndim == 1:
-            waveforms = waveforms.unsqueeze(0)
+        if input_tensor.ndim == 1:
+            input_tensor = input_tensor.unsqueeze(0)
 
-        # 1. Mel Spectrogram: [B, n_mels, time_steps]
-        mel = self.mel_spectrogram(waveforms)
+        # Step A: Raw 1D Waveform -> STFT 2D Spectrogram [Batch, 1, Time_Steps, Freq_Bins] via TKEO APE
+        x = self.spectrogram_extractor(input_tensor)
 
-        # 2. Log compression (dB scale)
-        log_mel = torch.log(torch.clamp(mel, min=1e-5))
+        # Step B: Logmel filtering -> [Batch, 1, Time_Steps, Mel_Bins]
+        x = self.logmel_extractor(x)
 
-        # 3. Transpose to [B, 1, time_steps, n_mels]
-        log_mel = log_mel.unsqueeze(1).transpose(2, 3)  # [B, 1, time_steps, n_mels]
+        # Step C: Pad time-steps dimension by 2 rows of zeros for shape alignment
+        m = nn.ZeroPad2d((0, 0, 2, 0))
+        x = m(x)
 
-        # 4. BatchNorm normalization along n_mels axis
-        # Permute for BatchNorm2d (expects [B, C, H, W] where C is n_mels)
-        # [B, 1, T, F] -> [B, F, T, 1]
-        x_bn = log_mel.permute(0, 3, 2, 1)
-        x_bn = self.bn(x_bn)
-        log_mel = x_bn.permute(0, 3, 2, 1)  # back to [B, 1, T, F]
+        # Step D: Transpose for BatchNorm2d along mel bins axis
+        x = x.transpose(1, 3)
+        x = self.bn0(x)
+        x = x.transpose(1, 3)  # Result shape: [Batch, 1, Time_Steps + 2, 128]
 
-        # 5. SpecAugment during training
+        # Step E: Apply SpecAugment masking during training
         if self.training:
-            # SpecAugment expects [..., freq, time]
-            x_aug = log_mel.transpose(-2, -1)  # [B, 1, F, T]
-            x_aug = self.spec_augment(x_aug)
-            log_mel = x_aug.transpose(-2, -1)  # [B, 1, T, F]
+            x = self.spec_augmenter(x)
 
-        return log_mel
+        return x

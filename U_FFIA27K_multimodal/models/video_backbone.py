@@ -1,146 +1,165 @@
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional
+import torch.nn.functional as F
+from typing import Tuple
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class MobileViTVideoBackbone(nn.Module):
+class ConvNeXtBlock(nn.Module):
     """
-    Spatiotemporal Video Backbone based on MobileViT-XS (Mehta & Rastegari, ICLR 2022).
-    Tailored for 7-channel kinematic video inputs across T frames (T=4):
-      - Channels 0-2 : Spatial RGB appearance (initialized with 100% Pretrained ImageNet weights)
-      - Channels 3-4 : Optical Flow (u, v) swimming velocity
-      - Channel 5    : Fluid Vorticity omega (swirling turbulence from feeding strike)
-      - Channel 6    : Deceleration Delta|V| = |V_t| - |V_{t-1}| (temporal boundary transition signal)
+    ConvNeXt Block (Liu et al., CVPR 2022).
+    - Depthwise Conv 7x7
+    - LayerNorm (across channels)
+    - Pointwise Conv / Linear (dim -> 4*dim)
+    - GELU activation
+    - Pointwise Conv / Linear (4*dim -> dim)
+    - Residual Connection
+    """
+    def __init__(self, dim: int, drop_path: float = 0.0) -> None:
+        super().__init__()
+        self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim)
+        self.norm = nn.LayerNorm(dim, eps=1e-6)
+        self.pwconv1 = nn.Linear(dim, 4 * dim)
+        self.act = nn.GELU()
+        self.pwconv2 = nn.Linear(4 * dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        shortcut = x
+        x = self.dwconv(x)
+        # Permute for LayerNorm & Linear: [B, C, H, W] -> [B, H, W, C]
+        x = x.permute(0, 2, 3, 1)
+        x = self.norm(x)
+        x = self.pwconv1(x)
+        x = self.act(x)
+        x = self.pwconv2(x)
+        x = x.permute(0, 3, 1, 2)  # [B, C, H, W]
+        return shortcut + x
+
+
+class ConvNeXtNanoVideoBackbone(nn.Module):
+    """
+    Streamlined ConvNeXt-Nano Video Backbone tailored for 7-channel kinematic inputs across T=2 frames.
+    Channels:
+      - 0, 1, 2: Spatial RGB appearance
+      - 3, 4:    Optical Flow (u, v) swimming velocity
+      - 5:       Velocity Magnitude |V| = sqrt(u^2 + v^2)
+      - 6:       Fluid Vorticity omega = dv/dx - du/dy
 
     Architecture:
-      - Lightweight MobileViT-XS (~1.93M base backbone)
-      - Dual Token Extraction:
-          * f_spatial: Static appearance token (shoal clustering, white water foam, pellets)
-          * f_motion: Dynamic transition token (inter-frame flow and vorticity delta)
-      - Temporal Transformer Encoder Layer (models dynamic evolution across T frames)
-      - Residual Spatiotemporal Normalization
-      - Total parameters: ~2.42M params.
+      - Stem: Conv 4x4 (7 -> 48) + LayerNorm
+      - Stage 1: 48ch  x 1 block
+      - Stage 2: 96ch  x 1 block
+      - Stage 3: 192ch x 3 blocks
+      - Stage 4: 384ch x 1 block
+      - Total parameters: ~2.70M params.
     """
     def __init__(
         self,
         embed_dim: int = 224,
-        pretrained: bool = True,
-        num_frames: int = 4,
-        in_chans: int = 7
+        in_chans: int = 7,
+        dims: Tuple[int, ...] = (48, 96, 192, 384),
+        depths: Tuple[int, ...] = (1, 1, 3, 1),
+        num_frames: int = 2,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
-        self.num_frames = num_frames
         self.in_chans = in_chans
+        self.num_frames = num_frames
 
-        # Create MobileViT-XS with in_chans input channels (default 7)
-        try:
-            import timm
-            # Grab 3-channel pretrained weights if requested
-            if pretrained:
-                try:
-                    m_rgb = timm.create_model('mobilevit_xs', pretrained=True, num_classes=0)
-                    rgb_stem_weight = None
-                    for module in m_rgb.modules():
-                        if isinstance(module, nn.Conv2d) and module.in_channels == 3:
-                            rgb_stem_weight = module.weight.clone().detach()
-                            break
-                    del m_rgb
-                except Exception as exc:
-                    logger.warning(f"Could not load online pretrained weights: {exc}. Using random initialization.")
-                    rgb_stem_weight = None
-            else:
-                rgb_stem_weight = None
+        # 1. Stem: Patchify 4x4
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_chans, dims[0], kernel_size=4, stride=4),
+            nn.GroupNorm(1, dims[0], eps=1e-6)  # Equivalent to LayerNorm over [C, H, W]
+        )
 
-            # Create in_chans-channel MobileViT-XS
-            self.backbone = timm.create_model(
-                'mobilevit_xs',
-                pretrained=False,
-                in_chans=self.in_chans,
-                num_classes=0
+        # 2. Downsample layers between stages
+        self.downsample_layers = nn.ModuleList()
+        for i in range(3):
+            downsample = nn.Sequential(
+                nn.GroupNorm(1, dims[i], eps=1e-6),
+                nn.Conv2d(dims[i], dims[i + 1], kernel_size=2, stride=2)
             )
+            self.downsample_layers.append(downsample)
 
-            # Weight Inflation: First 3 channels get ImageNet pretrained weights, remaining channels are zero-init
-            if rgb_stem_weight is not None:
-                stem_conv = None
-                for module in self.backbone.modules():
-                    if isinstance(module, nn.Conv2d) and module.in_channels == self.in_chans:
-                        stem_conv = module
-                        break
-                if stem_conv is not None:
-                    with torch.no_grad():
-                        stem_conv.weight.zero_()
-                        if rgb_stem_weight.shape == stem_conv.weight[:, :3].shape:
-                            stem_conv.weight[:, :3] = rgb_stem_weight
-                        logger.info(f"Successfully inflated 3-channel ImageNet weights into {self.in_chans}-channel stem conv.")
-        except Exception as exc:
-            raise ImportError(f"timm library is required for MobileViTVideoBackbone: {exc}")
+        # 3. Stages
+        self.stages = nn.ModuleList()
+        for i in range(4):
+            stage = nn.Sequential(
+                *[ConvNeXtBlock(dim=dims[i]) for _ in range(depths[i])]
+            )
+            self.stages.append(stage)
 
-        backbone_dim = getattr(self.backbone, 'num_features', 384)
-
-        # Spatial projection to unified multimodal embedding space
-        self.spatial_proj = nn.Sequential(
-            nn.Linear(backbone_dim, embed_dim),
+        # 4. Final normalization & projection
+        self.norm_final = nn.LayerNorm(dims[-1], eps=1e-6)
+        self.proj = nn.Sequential(
+            nn.Linear(dims[-1], embed_dim),
             nn.LayerNorm(embed_dim)
         )
 
-        # Temporal Transformer Encoder to capture inter-frame transitions (4 frames -> 3 transitions)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=4,
-            dim_feedforward=embed_dim * 2,
-            dropout=0.1,
-            batch_first=True
-        )
-        self.temporal_encoder = nn.TransformerEncoder(encoder_layer, num_layers=1)
+        # Residual normalization
         self.norm_video = nn.LayerNorm(embed_dim)
 
-    def forward(self, frames: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass.
+        Extract spatial feature vector from [B * T, C, H, W].
+        """
+        x = self.stem(x)
+        for i in range(4):
+            if i > 0:
+                x = self.downsample_layers[i - 1](x)
+            x = self.stages[i](x)
 
+        # Global Average Pooling: [B * T, 384, H', W'] -> [B * T, 384]
+        x = x.mean(dim=[-2, -1])
+        x = self.norm_final(x)
+        x = self.proj(x)  # [B * T, embed_dim]
+        return x
+
+    def forward(
+        self, frames_7ch: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
         Args:
-            frames: [B, T, C, H, W] 7-channel kinematic video tensor
+            frames_7ch: [B, T, 7, H, W] tensor (T=2)
 
         Returns:
             f_video: Joint spatiotemporal video embedding [B, embed_dim]
             f_spatial: Pure spatial visual appearance feature [B, embed_dim]
-            f_motion: Motion dynamics feature across consecutive frame transitions [B, embed_dim]
-            f_burst_v: Peak-to-Average dynamic contrast [B, embed_dim] (burst strike intensity)
-            tokens_video: Sequence of frame tokens [B, T, embed_dim] for Bi-CA Multimodal Fusion
+            f_motion: Motion dynamics feature between frames [B, embed_dim]
+            f_burst_v: Peak-to-Average dynamic contrast [B, embed_dim]
+            tokens_video: Sequence of frame tokens [B, T, embed_dim]
         """
-        B, T, C, H, W = frames.shape
+        B, T, C, H, W = frames_7ch.shape
 
-        # Process all T frames through MobileViT-XS: [B * T, C, H, W] -> [B * T, 384]
-        flat_frames = frames.reshape(B * T, C, H, W)
-        flat_feats = self.backbone(flat_frames)  # [B * T, 384]
-        flat_tokens = self.spatial_proj(flat_feats)  # [B * T, embed_dim]
+        # Process all T frames: [B * T, 7, H, W] -> [B * T, embed_dim]
+        flat_frames = frames_7ch.reshape(B * T, C, H, W)
+        flat_tokens = self.forward_features(flat_frames)  # [B * T, embed_dim]
 
         # Reshape to temporal sequence of frame tokens: [B, T, embed_dim]
-        frame_tokens = flat_tokens.view(B, T, self.embed_dim)
+        tokens_video = flat_tokens.view(B, T, self.embed_dim)
 
         # 1. Pure Spatial feature from the final frame (appearance of fish & water surface)
-        f_spatial = frame_tokens[:, -1]  # [B, embed_dim]
+        f_spatial = tokens_video[:, -1]  # [B, embed_dim]
 
-        # 2. Inter-frame temporal dynamics via Transformer Encoder
-        temporal_tokens = self.temporal_encoder(frame_tokens)  # [B, T, embed_dim]
-
-        # Motion dynamics between frame transitions (T=4 -> 3 transitions)
+        # 2. Inter-frame motion dynamics
         if T >= 2:
-            f_motion = torch.mean(torch.abs(temporal_tokens[:, 1:] - temporal_tokens[:, :-1]), dim=1)  # [B, embed_dim]
+            f_motion = torch.abs(tokens_video[:, 1] - tokens_video[:, 0])  # [B, embed_dim]
         else:
-            f_motion = temporal_tokens[:, 0]
+            f_motion = tokens_video[:, 0]
 
         # 3. Peak-to-Average Dynamic Contrast (Burst feeding strike intensity)
-        f_mean_v = temporal_tokens.mean(dim=1)
-        f_peak_v, _ = torch.max(temporal_tokens, dim=1)
+        f_mean_v = tokens_video.mean(dim=1)
+        f_peak_v, _ = torch.max(tokens_video, dim=1)
         f_burst_v = f_peak_v - f_mean_v  # [B, embed_dim]
 
-        # 4. Joint Spatiotemporal Video Embedding incorporating burst contrast
+        # 4. Joint Spatiotemporal Video Embedding
         f_video = self.norm_video(f_spatial + f_motion + f_burst_v)  # [B, embed_dim]
 
-        return f_video, f_spatial, f_motion, f_burst_v, temporal_tokens
+        return f_video, f_spatial, f_motion, f_burst_v, tokens_video
 
+
+# Backward compatibility alias
+MobileViTVideoBackbone = ConvNeXtNanoVideoBackbone
+VideoBackbone = ConvNeXtNanoVideoBackbone

@@ -46,6 +46,9 @@ class AudioFeaturesConfig(BaseModel):
     time_stripes_num: int = Field(default=2, description="SpecAugment number of time stripes.")
     freq_drop_width: int = Field(default=16, description="SpecAugment max freq mask width.")
     freq_stripes_num: int = Field(default=2, description="SpecAugment number of freq stripes.")
+    use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
+    alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
+    beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
 
 
 class ModelConfig(BaseModel):
@@ -131,9 +134,12 @@ class TrainConfig(BaseModel):
     early_stopping: bool = Field(default=True, description="Enable early stopping mechanism.")
     patience: int = Field(default=80, ge=1, description="Early stopping patience in epochs.")
     min_delta: float = Field(default=0.0005, ge=0.0, description="Minimum change threshold in monitored metric.")
-    lr_scheduler: str = Field(default="cosine", description="Learning rate scheduler: 'cosine' or 'plateau'.")
-    warmup_epochs: int = Field(default=5, ge=0, description="Number of linear warmup epochs.")
+    lr_scheduler: str = Field(default="onecycle", description="Learning rate scheduler: 'onecycle', 'cosine' or 'plateau'.")
+    use_onecycle: bool = Field(default=True, description="Enable OneCycleLR scheduler.")
+    warmup_epochs: int = Field(default=20, ge=0, description="Number of linear warmup epochs.")
     min_lr: float = Field(default=1e-6, gt=0, description="Minimum learning rate.")
+    lambda_emd: float = Field(default=0.5, ge=0.0, description="Weight for Squared Earth Mover's Distance loss.")
+    lambda_align: float = Field(default=0.2, ge=0.0, description="Weight for Cross-Modal Boundary Alignment loss.")
     num_frames: int = Field(default=4, ge=2, description="Number of frames per video input.")
     image_size: int = Field(default=224, gt=0, description="Video image spatial resolution.")
     sample_rate: int = Field(default=64000, gt=0, description="Audio sampling rate in Hz.")

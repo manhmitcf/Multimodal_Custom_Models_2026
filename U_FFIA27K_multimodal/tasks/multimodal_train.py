@@ -17,6 +17,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
+from scipy.optimize import minimize
+from sklearn.metrics import cohen_kappa_score
 
 from config import MultimodalTrainConfig
 from utils import (
@@ -25,7 +27,7 @@ from utils import (
     MultimodalEvaluator,
     InferenceTimer,
     ClipCELoss,
-    OrdinalWassersteinEvidentialLoss,
+    BilateralBoundaryLoss,
 )
 
 # Logging configuration
@@ -39,8 +41,7 @@ logger = logging.getLogger(__name__)
 class MultimodalTrainer:
     """
     Unified Trainer class for Multimodal Fish Feeding Intensity Classification.
-    Identical OOP structure with VideoTrainer and AudioTrainer: supports HistoryLogger,
-    EarlyStopping, InferenceTimer, and automatic experiment checkpointing.
+    Supports Bilateral Boundary Loss, OneCycleLR, QWK monitoring, and Nelder-Mead post-calibration.
     """
     def __init__(
         self,
@@ -61,38 +62,48 @@ class MultimodalTrainer:
         self.config = config
         self.train_config_path = train_config_path
 
-        # Setup Loss and Optimizer
-        loss_type = getattr(self.config, "loss_type", "ordinal_wasserstein")
-        if loss_type == "ordinal_wasserstein":
-            self.loss_fn = OrdinalWassersteinEvidentialLoss(
-                classes_num=getattr(self.config.model, "classes_num", 4),
-                sigma=getattr(self.config, "ordinal_sigma", 0.5),
-                lambda_ord_start=getattr(self.config, "lambda_ord_start", 0.2),
-                lambda_ord_end=getattr(self.config, "lambda_ord_end", 2.0),
-                total_epochs=self.config.epochs,
-                annealing_epochs=max(10, getattr(self.config, "warmup_epochs", 5) * 5)
+        # Setup Loss
+        loss_type = getattr(self.config, "loss_type", "bilateral_boundary")
+        if loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
+            self.loss_fn = BilateralBoundaryLoss(
+                lambda_emd=getattr(self.config, "lambda_emd", 0.5),
+                lambda_align=getattr(self.config, "lambda_align", 0.2),
             ).to(self.device)
-            logger.info(
-                f"Configured OrdinalWassersteinEvidentialLoss: sigma={getattr(self.config, 'ordinal_sigma', 0.5)}, "
-                f"lambda_ord=[{getattr(self.config, 'lambda_ord_start', 0.2)} -> {getattr(self.config, 'lambda_ord_end', 2.0)}], "
-                f"total_epochs={self.config.epochs}."
-            )
+            logger.info("Configured BilateralBoundaryLoss (CORAL + EMD + Alignment).")
         else:
             self.loss_fn = ClipCELoss()
             logger.info("Configured standard ClipCELoss.")
 
+        # Optimizer: AdamW
+        weight_decay = getattr(self.config, "weight_decay", 0.05)
         self.optimizer = optimizer if optimizer is not None else optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay
+            weight_decay=weight_decay
         )
 
-        # Learning Rate Scheduler
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer,
-            T_max=self.config.epochs,
-            eta_min=1e-6
-        )
+        # Scheduler: OneCycleLR with 5% warmup and cosine annealing
+        self.use_onecycle = getattr(self.config, "use_onecycle", True)
+        steps_per_epoch = max(1, len(self.train_loader))
+        if self.use_onecycle:
+            self.scheduler = optim.lr_scheduler.OneCycleLR(
+                self.optimizer,
+                max_lr=self.config.learning_rate,
+                epochs=self.config.epochs,
+                steps_per_epoch=steps_per_epoch,
+                pct_start=0.05,
+                anneal_strategy='cos',
+                div_factor=25,
+                final_div_factor=1000
+            )
+            logger.info(f"Configured OneCycleLR: max_lr={self.config.learning_rate}, epochs={self.config.epochs}, pct_start=0.05.")
+        else:
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=self.config.epochs,
+                eta_min=1e-6
+            )
+            logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min=1e-6.")
 
         # Evaluator and Timer
         self.evaluator = MultimodalEvaluator(model=self.model, loss_fn=self.loss_fn)
@@ -103,15 +114,14 @@ class MultimodalTrainer:
             patience=getattr(self.config, "patience", 80),
             delta=getattr(self.config, "delta", 0.0),
             verbose=True
-        )
+        ) if getattr(self.config, "early_stopping", False) else None
 
         self._init_logging_and_checkpoints()
 
     def _init_logging_and_checkpoints(self) -> None:
         model_name = getattr(self.model, "model_name", self.model.__class__.__name__.lower())
         self.run_dir = os.path.join(self.config.ckpt_dir, model_name)
-        
-        # Handle cross-validation fold subdirectories
+
         if self.config.dataset_splitter.evaluation_mode == "cross_validation" and self.config.dataset_splitter.fold_index is not None:
             self.run_dir = os.path.join(self.run_dir, f"fold_{self.config.dataset_splitter.fold_index}")
 
@@ -127,10 +137,12 @@ class MultimodalTrainer:
         logger.info(f"  - Max Epochs:               {self.config.epochs}")
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
+        logger.info(f"  - Monitor Metric:           {self.config.monitor}")
+        logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
 
-    def _train_epoch(self, epoch: int) -> Tuple[float, float, float]:
+    def _train_epoch(self, epoch: int) -> Tuple[float, float, float, float]:
         self.model.train()
         total_loss = 0.0
         train_preds = []
@@ -150,10 +162,12 @@ class MultimodalTrainer:
             except TypeError:
                 loss = self.loss_fn(outputs, {'target': targets})
             loss.backward()
-            
-            # Gradient clipping to ensure stable training
+
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
+
+            if self.use_onecycle:
+                self.scheduler.step()
 
             loss_val = loss.item()
             total_loss += loss_val
@@ -172,7 +186,6 @@ class MultimodalTrainer:
         pred_acc_labels = np.argmax(train_preds, axis=1)
         train_acc = float(np.mean(target_acc_labels == pred_acc_labels))
 
-        # Ordinal rank MAE (0: none, 1: strong -> 3, 2: medium -> 2, 3: weak -> 1)
         rank_map = np.array([0, 3, 2, 1])
         try:
             train_mae = float(np.mean(np.abs(rank_map[pred_acc_labels] - rank_map[target_acc_labels])))
@@ -187,43 +200,134 @@ class MultimodalTrainer:
 
         return epoch_loss, train_acc, train_mAP, train_mae
 
+    def nelder_mead_calibrate(self) -> Dict[str, Any]:
+        """
+        Nelder-Mead Post-Calibration on Validation split to optimize cutoffs without gradients.
+        """
+        logger.info("Starting Nelder-Mead post-training calibration on validation set...")
+        self.model.eval()
+
+        s_v_list, s_a_list, g_list, y_list = [], [], [], []
+        with torch.no_grad():
+            for batch in self.val_loader:
+                video = batch['video_form'].to(self.device)
+                audio = batch['audio_form'].to(self.device)
+                targets = batch['target'].to(self.device)
+                outputs = self.model(video, audio)
+
+                s_v_list.append(outputs['score_v'].cpu().numpy())
+                s_a_list.append(outputs['score_a'].cpu().numpy())
+                g_list.append(outputs['gate'].squeeze(-1).cpu().numpy())
+                y_raw = targets.argmax(dim=-1) if targets.ndim > 1 else targets
+                y_list.append(y_raw.cpu().numpy())
+
+        s_v = np.concatenate(s_v_list)
+        s_a = np.concatenate(s_a_list)
+        g = np.concatenate(g_list)
+        y = np.concatenate(y_list)
+
+        raw_to_rank = np.array([0, 3, 2, 1])
+        y_rank = raw_to_rank[y]
+
+        b_v_init = [c.item() for c in self.model.fusion.head_v.get_cutoffs()]
+        b_a_init = [c.item() for c in self.model.fusion.head_a.get_cutoffs()]
+        x0 = np.array(b_v_init + b_a_init, dtype=float)
+
+        def objective(params):
+            bv = params[:3]
+            ba = params[3:]
+            if bv[1] <= bv[0] + 0.1 or bv[2] <= bv[1] + 0.1:
+                return 10.0
+            if ba[1] <= ba[0] + 0.1 or ba[2] <= ba[1] + 0.1:
+                return 10.0
+
+            s = g * s_v + (1.0 - g) * s_a
+            b1 = g * bv[0] + (1.0 - g) * ba[0]
+            b2 = g * bv[1] + (1.0 - g) * ba[1]
+            b3 = g * bv[2] + (1.0 - g) * ba[2]
+
+            pred_rank = np.zeros_like(s, dtype=int)
+            pred_rank[s >= b1] = 1
+            pred_rank[s >= b2] = 2
+            pred_rank[s >= b3] = 3
+
+            qwk = cohen_kappa_score(y_rank, pred_rank, weights='quadratic')
+            return -float(qwk)
+
+        init_qwk = -objective(x0)
+        res = minimize(objective, x0, method='Nelder-Mead', options={'maxiter': 500, 'xatol': 1e-3})
+        opt_qwk = -res.fun
+
+        logger.info(f"Nelder-Mead Calibration: Initial Val QWK = {init_qwk:.4f} -> Calibrated Val QWK = {opt_qwk:.4f} (+{opt_qwk - init_qwk:.4f})")
+
+        calibrated_cutoffs = {
+            "initial_cutoffs_v": b_v_init,
+            "initial_cutoffs_a": b_a_init,
+            "calibrated_cutoffs_v": [float(x) for x in res.x[:3]],
+            "calibrated_cutoffs_a": [float(x) for x in res.x[3:]],
+            "initial_qwk": float(init_qwk),
+            "calibrated_qwk": float(opt_qwk),
+        }
+
+        calibrated_path = os.path.join(self.run_dir, 'calibrated_cutoffs.json')
+        with open(calibrated_path, 'w', encoding='utf-8') as f:
+            json.dump(calibrated_cutoffs, f, indent=2)
+        logger.info(f"Saved calibrated cutoffs to: '{calibrated_path}'")
+
+        # Update model cutoffs with calibrated values
+        try:
+            self.model.fusion.head_v.set_cutoffs(tuple(res.x[:3]))
+            self.model.fusion.head_a.set_cutoffs(tuple(res.x[3:]))
+            logger.info("Updated model boundary heads with calibrated cutoffs.")
+        except Exception as exc:
+            logger.warning(f"Could not directly update head cutoffs: {exc}")
+
+        return calibrated_cutoffs
+
     def train(self) -> Dict[str, Any]:
         logger.info(f"Starting training pipeline (Monitor metric: {self.config.monitor})...")
         training_start_time = time.perf_counter()
 
         best_acc = 0.0
+        best_qwk = -1.0
         best_mAP = 0.0
         best_loss = float('inf')
         best_epoch = 1
         best_val_statistics = None
 
-        if self.config.monitor == 'accuracy':
-            best_val_metric = 0.0
+        if self.config.monitor in ('accuracy', 'qwk'):
+            best_val_metric = -1.0
         else:
             best_val_metric = float('inf')
 
         for epoch in range(1, self.config.epochs + 1):
             train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
-            self.scheduler.step()
+            if not self.use_onecycle:
+                self.scheduler.step()
 
             # Evaluate on validation split
             self.model.eval()
             val_stats = self.evaluator.evaluate(self.val_loader)
             val_loss = float(val_stats.get('loss', 0.0))
             val_acc = float(np.mean(val_stats['accuracy']))
+            val_qwk = float(val_stats.get('qwk', 0.0))
             val_mAP = float(np.mean(val_stats['average_precision']))
             val_mae = float(val_stats.get('ordinal_mae', 0.0))
 
-            # Print epoch summary metrics identical to audio and video trainers
             logger.info(
                 f"Epoch {epoch:03d}: "
                 f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | "
-                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val MAE = {val_mae:.4f} | Val mAP = {val_mAP:.4f}"
+                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
             )
 
             # Determine if this is the best checkpoint
             is_best = False
-            if self.config.monitor == 'accuracy':
+            if self.config.monitor == 'qwk':
+                score = val_qwk
+                if val_qwk > best_val_metric:
+                    best_val_metric = val_qwk
+                    is_best = True
+            elif self.config.monitor == 'accuracy':
                 score = val_acc
                 if val_acc > best_val_metric:
                     best_val_metric = val_acc
@@ -237,14 +341,15 @@ class MultimodalTrainer:
             if is_best:
                 best_epoch = epoch
                 best_acc = val_acc
+                best_qwk = val_qwk
                 best_mAP = val_mAP
                 best_loss = val_loss
                 best_val_statistics = val_stats
                 torch.save(self.model.state_dict(), self.best_checkpoint_path)
-                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {val_acc if self.config.monitor == 'accuracy' else val_loss:.5f})")
+                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {best_val_metric:.5f})")
 
             logger.info(
-                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | mAP: {best_mAP:.4f}"
+                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f}"
             )
 
             # Always save last checkpoint
@@ -261,8 +366,8 @@ class MultimodalTrainer:
                 is_best=is_best
             )
 
-            # Early stopping check
-            if self.config.early_stopping and self.early_stopping is not None:
+            # Early stopping check (only if enabled)
+            if self.early_stopping is not None:
                 if self.early_stopping.step(score):
                     logger.info(f"Early stopping condition satisfied at epoch {epoch:03d}. Stopping training.")
                     break
@@ -274,6 +379,12 @@ class MultimodalTrainer:
             self.logger.plot_history()
         except Exception as exc:
             logger.warning(f"Failed to generate learning curves plot: {exc}")
+
+        # Post-training Nelder-Mead calibration
+        try:
+            self.nelder_mead_calibrate()
+        except Exception as exc:
+            logger.warning(f"Nelder-Mead calibration encountered an error: {exc}")
 
         # Final evaluation on Test split
         logger.info("==================================================")
@@ -287,8 +398,9 @@ class MultimodalTrainer:
         final_test_stats = self.evaluator.evaluate(self.test_loader)
 
         test_acc = float(np.mean(final_test_stats['accuracy']))
+        test_qwk = float(final_test_stats.get('qwk', 0.0))
         test_mAP = float(np.mean(final_test_stats['average_precision']))
-        logger.info(f"TEST Results -> Accuracy: {test_acc:.4f} | mAP: {test_mAP:.4f}")
+        logger.info(f"TEST Results -> Accuracy: {test_acc:.4f} | QWK: {test_qwk:.4f} | mAP: {test_mAP:.4f}")
         logger.info(f"Detailed Classification Report:\n{final_test_stats.get('message', '')}")
         if 'confu_matrix' in final_test_stats:
             logger.info(f"Confusion Matrix:\n{final_test_stats['confu_matrix']}")

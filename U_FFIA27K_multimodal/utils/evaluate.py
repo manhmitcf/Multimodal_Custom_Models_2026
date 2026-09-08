@@ -145,13 +145,19 @@ class MultimodalEvaluator(BaseEvaluator):
             pred_ranks = rank_map[clipwise_output_acc]
             target_ranks = rank_map[target_acc]
             ordinal_mae = float(np.mean(np.abs(pred_ranks - target_ranks)))
+            try:
+                qwk = float(metrics.cohen_kappa_score(target_ranks, pred_ranks, weights='quadratic'))
+            except Exception:
+                qwk = 0.0
         else:
             ordinal_mae = float(np.mean(np.abs(clipwise_output_acc - target_acc)))
+            qwk = 0.0
 
         statistics = {
             'loss': mean_loss,
             'average_precision': average_precision,
             'accuracy': acc,
+            'qwk': qwk,
             'ordinal_mae': ordinal_mae,
             'auc': auc,
             'message': message,

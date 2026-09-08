@@ -4,31 +4,29 @@ from typing import Dict, Any, Optional
 
 from features.motion_kinematics import FishMotionKinematics7Ch, FishMotionKinematics10Ch
 from features.audio_frontend import AudioFrontend
-from .video_backbone import MobileViTVideoBackbone
-from .audio_backbone import EfficientATAudioBackbone
-from .multimodal_fusion import MultimodalBoundaryAwareFusion, SOTAMultimodalFusion
+from .video_backbone import ConvNeXtNanoVideoBackbone, MobileViTVideoBackbone
+from .audio_backbone import PANNSCNN6AudioBackbone, EfficientATAudioBackbone
+from .multimodal_fusion import GatedBilateralBoundaryFusion, MultimodalBoundaryAwareFusion, SOTAMultimodalFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Boundary-Aware Network (MultimodalBoundaryAwareNet) (~4.78M Total Parameters).
+    Multimodal Bilateral Boundary Network (BBN-4.5M) (~4.54M Total Parameters).
     Specifically architected to resolve continuous temporal boundary transition ambiguity
     between adjacent fish feeding intensity classes (Strong <-> Medium <-> Weak <-> None):
 
-      1. Visual-Kinematic Stream:
-         7-Channel MobileViT-XS (Spatial RGB + Flow (u,v) + Fluid Vorticity omega + Deceleration Delta|V|)
-         Dual token output (f_spatial + f_motion) (~2.42M params).
-      2. Acoustic Time-Frequency Stream:
-         Time-Frequency factorized EfficientAT with Frequency Squeeze-and-Excitation (isolating 2-8 kHz splashes)
-         and Temporal Rhythm Depthwise Conv (~1.82M params).
-      3. Boundary Transition Multimodal Fusion:
-         - Bidirectional Cross-Attention (Bi-CA) across temporal tokens.
-         - Boundary Discrepancy Gate (BDG) measuring cross-modal asynchrony Delta_{trans} = |f'_V - f'_A|.
-         - Boundary-Aware Channel Routing (BACA) partitioning 224 channels into 128 Core + 96 Boundary.
-         - Strictly Monotonic Cumulative Ordinal Decision Head (b_1 < b_2 < b_3) eliminating 50/50 flips (~0.54M params).
+      1. Visual-Kinematic Stream (~2.70M params):
+         7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
+         for T=2 frames.
+      2. Acoustic Time-Frequency Stream (~1.76M params):
+         TKEO Adaptive Pre-Emphasis + Learnable Frequency Attention + PANNS-CNN6-Pro 4-stage 5x5 Conv
+         with Dual Pooling (max+avg).
+      3. Gated Bilateral Boundary Fusion (~0.10M params):
+         - Dynamic Gated Fusion: g = sigma(W[f_V || f_A]).
+         - Bilateral Monotonic CORAL Decision Heads (s_V, b_V & s_A, b_A).
+         - Blended Decision: s_final = g*s_V + (1-g)*s_A with strictly monotonic cutoffs.
 
-    Total Parameters: ~4.78M (Strictly < 5.0M parameter constraint).
-    Zero components borrowed from Meng Cui et al. / U-FFIA / AV-FFIA.
+    Total Parameters: ~4.54M (Strictly < 5.0M parameter constraint).
     """
     def __init__(
         self,
@@ -36,10 +34,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
         embed_dim: int = 224,
         num_bottlenecks: int = 4,  # Kept for config compatibility
         num_heads: int = 4,
-        pretrained_video: bool = True,
+        pretrained_video: bool = False,
         audio_frontend: Optional[AudioFrontend] = None,
         image_size: int = 224,
-        num_frames: int = 4,
+        num_frames: int = 2,
         in_chans: int = 7,
     ) -> None:
         super().__init__()
@@ -53,24 +51,21 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~4.24M)
-        self.video_backbone = MobileViTVideoBackbone(
+        # 2. Backbones (~4.46M)
+        self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
-            pretrained=pretrained_video,
-            num_frames=num_frames,
-            in_chans=in_chans
+            in_chans=in_chans,
+            num_frames=num_frames
         )
-        self.audio_backbone = EfficientATAudioBackbone(
+        self.audio_backbone = PANNSCNN6AudioBackbone(
             embed_dim=embed_dim,
-            pretrained=False,
             num_tokens=num_frames
         )
 
-        # 3. Streamlined Boundary-Aware Fusion Engine (~0.54M)
-        self.fusion = MultimodalBoundaryAwareFusion(
+        # 3. Gated Bilateral Boundary Fusion (~0.10M)
+        self.fusion = GatedBilateralBoundaryFusion(
             dim=embed_dim,
-            num_heads=num_heads,
-            classes_num=classes_num
+            dropout=0.1
         )
 
     def forward(
@@ -85,7 +80,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
 
         Returns:
             Dictionary containing clipwise_output (logits), probabilities, uncertainties,
-            modality weights, boundary weights, and continuous intensity scores.
+            modality weights, bilateral scores & cutoffs, and continuous intensity scores.
         """
         # Step 1: Preprocessing & Frontend Extraction
         if video_input.ndim == 5 and video_input.size(2) == 3:
@@ -103,7 +98,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_7ch)
         f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(mel_spec)
 
-        # Step 3: Multimodal Boundary-Aware Fusion & Ordinal Decision (with Burst Contrast)
+        # Step 3: Gated Bilateral Boundary Fusion
         fusion_outputs = self.fusion(
             f_video=f_video,
             f_audio=f_audio,
@@ -119,14 +114,21 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "logits": fusion_outputs["logits"],
             "probabilities": fusion_outputs["probabilities"],
             "uncertainty": fusion_outputs["uncertainty"],
-            "uncertainty_video": fusion_outputs["uncertainty_video"],
-            "uncertainty_audio": fusion_outputs["uncertainty_audio"],
             "modality_weights": fusion_outputs["modality_weights"],
-            "boundary_weights": fusion_outputs["boundary_weights"],
             "intensity_score": fusion_outputs["intensity_score"],
             "expected_intensity": fusion_outputs["expected_intensity"],
-            "cutoffs": fusion_outputs["cutoffs"],
+            "cutoffs": fusion_outputs["b_final"],
+            "b_final": fusion_outputs["b_final"],
+            "cutoffs_v": fusion_outputs["cutoffs_v"],
+            "cutoffs_a": fusion_outputs["cutoffs_a"],
+            "score_v": fusion_outputs["score_v"],
+            "score_a": fusion_outputs["score_a"],
+            "gate": fusion_outputs["gate"],
             "cum_probs": fusion_outputs["cum_probs"],
+            "cum_probs_v": fusion_outputs["cum_probs_v"],
+            "cum_probs_a": fusion_outputs["cum_probs_a"],
+            "probabilities_v": fusion_outputs["probabilities_v"],
+            "probabilities_a": fusion_outputs["probabilities_a"],
             "kinematics_summary": kinematics_summary,
             "f_spatial": f_spatial,
             "f_motion": f_motion,
@@ -134,13 +136,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "f_frequency": f_frequency,
             "f_rhythm": f_rhythm,
             "f_burst_a": f_burst_a,
-            "delta_burst": fusion_outputs["delta_burst"],
             "f_fused": fusion_outputs["f_fused"],
         }
         return outputs
 
 
-
 # Aliases for 100% backwards compatibility with training & evaluation pipelines
 MultimodalSOTANet = MultimodalBoundaryAwareNet
-
