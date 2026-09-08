@@ -17,19 +17,22 @@ class SandwichBoundaryTournamentHead(nn.Module):
         p_feeding = sigmoid(w_act^T * f_video) in (0, 1)
         p_none = 1 - p_feeding
 
-    Level 2: 2-Boundary Sandwich (B12 & B23) + Audio Tie-Breaker
+    Level 2: 2-Boundary Sandwich (B12 & B23) + Dual Audio STFT Tie-Breaker
       - Boundary B12 (Weak vs Medium):
-        Controlled by video kinematics:
-        s_12 = Head_12(f_video)
+        Visual-Acoustic Joint Disambiguation:
+        Video proposal: s_12^V = Head_12^V(f_video)
+        Uncertainty: u_tie_12 = exp(-|s_12^V|)
+        Audio STFT tie-breaker: s_12^A = Head_12^A(f_audio) (rhythm / flock wave splash)
+        Combined logit: s_12 = s_12^V + gamma_12 * u_tie_12 * s_12^A
         P(W > M) = sigmoid(s_12)
         P(M > W) = 1 - P(W > M)
 
       - Boundary B23 (Medium vs Strong):
         Visual-Acoustic Joint Disambiguation:
         Video proposal: s_23^V = Head_23^V(f_video)
-        Uncertainty / Tie metric: u_tie = exp(-|s_23^V|)  [peaks at 1 when video is indecisive]
-        Audio STFT tie-breaker: s_23^A = Head_23^A(f_audio)
-        Combined logit: s_23 = s_23^V + gamma * u_tie * s_23^A   (gamma is learnable parameter)
+        Uncertainty: u_tie_23 = exp(-|s_23^V|)
+        Audio STFT tie-breaker: s_23^A = Head_23^A(f_audio) (high-frequency bubble bursts)
+        Combined logit: s_23 = s_23^V + gamma_23 * u_tie_23 * s_23^A
         P(M > S) = sigmoid(s_23)
         P(S > M) = 1 - P(M > S)
 
@@ -55,9 +58,18 @@ class SandwichBoundaryTournamentHead(nn.Module):
             nn.Linear(64, 1)
         )
 
-        # Level 2: 2 Specialized Boundary Subspace Heads
-        # B12: Weak vs Medium (Video Stream)
-        self.head_b12 = nn.Sequential(
+        # Level 2: Dual Boundary Subspace Heads
+        # B12 Video Head: Weak vs Medium (Video Stream)
+        self.head_b12_v = nn.Sequential(
+            nn.Linear(dim, 112),
+            nn.GELU(),
+            nn.LayerNorm(112),
+            nn.Linear(112, 1)
+        )
+        self.head_b12 = self.head_b12_v  # Alias for backward compatibility
+
+        # B12 Audio Tie-Breaker Head: Weak vs Medium (Audio STFT Stream)
+        self.head_b12_a = nn.Sequential(
             nn.Linear(dim, 112),
             nn.GELU(),
             nn.LayerNorm(112),
@@ -80,8 +92,10 @@ class SandwichBoundaryTournamentHead(nn.Module):
             nn.Linear(112, 1)
         )
 
-        # Learnable tie-breaker influence factor gamma (initialized to 0.5)
-        self.gamma = nn.Parameter(torch.tensor(0.5))
+        # Learnable tie-breaker influence factors (initialized to 0.5)
+        self.gamma_12 = nn.Parameter(torch.tensor(0.5))
+        self.gamma_23 = nn.Parameter(torch.tensor(0.5))
+        self.gamma = self.gamma_23  # Alias for backward compatibility
 
     def forward(
         self,
@@ -98,21 +112,20 @@ class SandwichBoundaryTournamentHead(nn.Module):
         p_feeding = torch.sigmoid(logit_act)                   # [B] in (0, 1)
         p_none = torch.clamp(1.0 - p_feeding, min=1e-6)        # [B]
 
-        # 2. Level 2: 2 Boundaries B12 and B23
+        # 2. Level 2: Dual Boundaries B12 and B23 with Audio Tie-Breakers
         # Boundary B12: Weak (Positive) vs Medium (Negative)
-        logit_12 = self.head_b12(f_video).squeeze(-1)          # [B]
+        logit_12_v = self.head_b12_v(f_video).squeeze(-1)      # [B] (Video proposal)
+        logit_12_a = self.head_b12_a(f_audio).squeeze(-1)      # [B] (Audio tie-breaker)
+        u_tie_12 = torch.exp(-torch.abs(logit_12_v))           # [B] in (0, 1]
+        logit_12 = logit_12_v + self.gamma_12 * u_tie_12 * logit_12_a # [B]
         p_w_over_m = torch.sigmoid(logit_12)                  # P(W > M)
         p_m_over_w = 1.0 - p_w_over_m                         # P(M > W)
 
         # Boundary B23: Medium (Positive) vs Strong (Negative)
         logit_23_v = self.head_b23_v(f_video).squeeze(-1)      # [B] (Video proposal)
         logit_23_a = self.head_b23_a(f_audio).squeeze(-1)      # [B] (Audio tie-breaker)
-        
-        # Uncertainty metric: u_tie = exp(-|logit_23_v|). High when logit_23_v is close to 0 (boundary ambiguity)
-        u_tie = torch.exp(-torch.abs(logit_23_v))              # [B] in (0, 1]
-        
-        # Dynamic Tie-breaker integration
-        logit_23 = logit_23_v + self.gamma * u_tie * logit_23_a # [B]
+        u_tie_23 = torch.exp(-torch.abs(logit_23_v))           # [B] in (0, 1]
+        logit_23 = logit_23_v + self.gamma_23 * u_tie_23 * logit_23_a # [B]
         p_m_over_s = torch.sigmoid(logit_23)                  # P(M > S)
         p_s_over_m = 1.0 - p_m_over_s                         # P(S > M)
 
@@ -160,11 +173,17 @@ class SandwichBoundaryTournamentHead(nn.Module):
             "logit_act": logit_act,
             "p_feeding": p_feeding,
             "logit_12": logit_12,
+            "logit_12_v": logit_12_v,
+            "logit_12_a": logit_12_a,
+            "u_tie_12": u_tie_12,
+            "gamma_12": self.gamma_12,
             "logit_23": logit_23,
             "logit_23_v": logit_23_v,
             "logit_23_a": logit_23_a,
-            "u_tie": u_tie,
-            "gamma": self.gamma,
+            "u_tie_23": u_tie_23,
+            "gamma_23": self.gamma_23,
+            "u_tie": u_tie_23,        # Backward compatibility alias
+            "gamma": self.gamma_23,    # Backward compatibility alias
             "p_w_over_m": p_w_over_m,
             "p_m_over_s": p_m_over_s,
             "v_voting": v_voting
@@ -177,10 +196,10 @@ PairwiseBoundaryTournamentHead = SandwichBoundaryTournamentHead
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Sandwich Boundary Tournament & Audio STFT Tie-Breaker (~91K params).
+    Multimodal Fusion with Sandwich Boundary Tournament & Dual Audio STFT Tie-Breakers (~116K params).
     - Level 1: Activity Gate (Video) -> None vs Feeding
     - Level 2: 2-Boundary Sandwich:
-        * B12: Weak vs Medium (Video stream)
+        * B12: Weak vs Medium (Video proposal + Audio STFT Tie-Breaker)
         * B23: Medium vs Strong (Video proposal + Audio STFT Tie-Breaker)
     - Level 3: Sandwich Borda Voting protecting Medium from both sides.
     """
@@ -196,13 +215,15 @@ class MultimodalTournamentFusion(nn.Module):
         f_audio: torch.Tensor,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        # Sandwich Boundary Tournament with Video proposal & Audio Tie-Breaker
+        # Sandwich Boundary Tournament with Video proposal & Dual Audio Tie-Breakers
         out = self.tournament_head(f_video=f_video, f_audio=f_audio)
 
         # Multi-modal diagnostics
-        u_tie = out["u_tie"].unsqueeze(-1)  # [B, 1]
-        weight_video = 1.0 - 0.5 * u_tie
-        weight_audio = 0.5 * u_tie
+        u_tie_12 = out["u_tie_12"].unsqueeze(-1)  # [B, 1]
+        u_tie_23 = out["u_tie_23"].unsqueeze(-1)  # [B, 1]
+        u_tie_mean = 0.5 * (u_tie_12 + u_tie_23)
+        weight_video = 1.0 - 0.5 * u_tie_mean
+        weight_audio = 0.5 * u_tie_mean
         out["gate"] = weight_video
         out["modality_weights"] = torch.cat([weight_video, weight_audio], dim=-1)
         out["f_fused"] = (f_video + f_audio) / 2.0

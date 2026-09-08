@@ -163,10 +163,13 @@ def mode_dry_run(args: argparse.Namespace) -> None:
         p_act = out["p_feeding"].mean().item()
         p_12 = out["p_w_over_m"].mean().item()
         p_23 = out["p_m_over_s"].mean().item()
-        u_tie_val = out["u_tie"].mean().item() if "u_tie" in out else 0.0
-        gamma_val = out["gamma"].item() if "gamma" in out else 0.0
+        u12 = out["u_tie_12"].mean().item() if "u_tie_12" in out else 0.0
+        g12 = out["gamma_12"].item() if "gamma_12" in out else 0.0
+        u23 = out["u_tie_23"].mean().item() if "u_tie_23" in out else 0.0
+        g23 = out["gamma_23"].item() if "gamma_23" in out else 0.0
         print(f"    - Level 1 Activity Gate: P(Feeding)={p_act:.4f}")
-        print(f"    - Sandwich Boundaries: P(W>M)={p_12:.4f}, P(M>S)={p_23:.4f} [Audio Tie-Breaker u_tie={u_tie_val:.4f}, gamma={gamma_val:.4f}]")
+        print(f"    - Sandwich B12 (Weak vs Med): P(W>M)={p_12:.4f} [Audio Tie u_tie12={u12:.4f}, gamma12={g12:.4f}]")
+        print(f"    - Sandwich B23 (Med vs Str):  P(M>S)={p_23:.4f} [Audio Tie u_tie23={u23:.4f}, gamma23={g23:.4f}]")
     elif "cutoffs" in out:
         b_1, b_2, b_3 = out["cutoffs"][0].item(), out["cutoffs"][1].item(), out["cutoffs"][2].item()
         print(f"    - Cutoffs: b_1={b_1:.4f} < b_2={b_2:.4f} < b_3={b_3:.4f}")

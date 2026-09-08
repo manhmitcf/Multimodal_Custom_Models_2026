@@ -57,20 +57,25 @@ def test_tournament_forward_and_pairwise():
     print(f"Level 1 Feeding Activity Probabilities: {p_feeding.tolist()}")
     assert (p_feeding >= 0.0).all() and (p_feeding <= 1.0).all(), "p_feeding out of [0, 1] range"
 
-    # 2. Check Level 2 Boundaries B12, B23, Tie-Breaker u_tie and gamma
+    # 2. Check Level 2 Boundaries B12, B23, Dual Tie-Breakers u_tie and gamma
     p_w_over_m = out["p_w_over_m"]
     p_m_over_s = out["p_m_over_s"]
-    u_tie = out["u_tie"]
-    gamma = out["gamma"]
+    u_tie_12 = out["u_tie_12"]
+    gamma_12 = out["gamma_12"]
+    u_tie_23 = out["u_tie_23"]
+    gamma_23 = out["gamma_23"]
 
-    print(f"Boundary B12 P(Weak > Medium) [Video]:       {p_w_over_m.tolist()}")
+    print(f"Boundary B12 P(Weak > Medium) [Joint]:       {p_w_over_m.tolist()}")
+    print(f"  - Audio Tie-Breaker B12 u_tie_12:          {u_tie_12.tolist()}")
+    print(f"  - Audio Tie-Breaker B12 gamma_12:          {gamma_12.item():.4f}")
     print(f"Boundary B23 P(Medium > Strong) [Joint]:     {p_m_over_s.tolist()}")
-    print(f"Audio Tie-Breaker Uncertainty u_tie:         {u_tie.tolist()}")
-    print(f"Audio Tie-Breaker Learnable Gamma:           {gamma.item():.4f}")
+    print(f"  - Audio Tie-Breaker B23 u_tie_23:          {u_tie_23.tolist()}")
+    print(f"  - Audio Tie-Breaker B23 gamma_23:          {gamma_23.item():.4f}")
 
     assert (p_w_over_m >= 0.0).all() and (p_w_over_m <= 1.0).all()
     assert (p_m_over_s >= 0.0).all() and (p_m_over_s <= 1.0).all()
-    assert (u_tie >= 0.0).all() and (u_tie <= 1.0).all(), "u_tie must be in [0, 1]"
+    assert (u_tie_12 >= 0.0).all() and (u_tie_12 <= 1.0).all(), "u_tie_12 must be in [0, 1]"
+    assert (u_tie_23 >= 0.0).all() and (u_tie_23 <= 1.0).all(), "u_tie_23 must be in [0, 1]"
 
     # 3. Check Sandwich Borda Voting scores
     v_voting = out["v_voting"]
@@ -86,7 +91,7 @@ def test_tournament_forward_and_pairwise():
     prob_sums = probs.sum(dim=-1)
     assert torch.allclose(prob_sums, torch.ones_like(prob_sums), atol=1e-5), f"Probabilities do not sum to 1: {prob_sums}"
 
-    print("[PASSED] 2-Boundary Sandwich hierarchy, Audio Tie-Breaker, and Borda voting verified!")
+    print("[PASSED] 2-Boundary Sandwich hierarchy, Dual Audio Tie-Breakers (B12 & B23), and Borda voting verified!")
 
 
 def test_gradient_flow_tournament_loss():
