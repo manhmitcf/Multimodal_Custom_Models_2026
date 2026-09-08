@@ -40,7 +40,7 @@ from config import MultimodalTrainConfig, TrainConfig
 from models import MultimodalBoundaryAwareNet, MultimodalSOTANet
 from features.audio_frontend import AudioFrontend
 from utils.profile_model import count_parameters, measure_flops, measure_latency
-from utils.losses import OrdinalWassersteinEvidentialLoss, ClipCELoss
+from utils.losses import OrdinalWassersteinEvidentialLoss, ClipCELoss, PairwiseTournamentLoss
 
 # Ensure clean UTF-8 console output on Windows
 if hasattr(sys.stdout, 'reconfigure'):
@@ -96,9 +96,9 @@ def mode_profile(args: argparse.Namespace) -> None:
     # 1. Parameter Breakdown
     stats = count_parameters(model)
     print("\n[1] DETAILED PARAMETER BREAKDOWN:")
-    print(f"  - Video Backbone (MobileViT-XS 7-ch)  : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-    print(f"  - Audio Backbone (T-F EfficientAT)    : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-    print(f"  - Multimodal Fusion (Bi-CA+BACA+CORAL): {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+    print(f"  - Video Backbone (ConvNeXt-Nano 7-ch) : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+    print(f"  - Audio Backbone (PANNS-CNN6-Pro)     : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+    print(f"  - Pairwise Tournament Fusion          : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
     print(f"  - Kinematics Extractor (Sobel/P-free) : {stats['kinematics']:,}")
     print(f"  ===============================================================")
     print(f"  * CORE ARCHITECTURE TOTAL             : {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
@@ -157,21 +157,37 @@ def mode_dry_run(args: argparse.Namespace) -> None:
     # Check outputs
     assert "clipwise_output" in out and out["clipwise_output"].shape == (2, 4), "Logits output shape mismatch!"
     assert "probabilities" in out and out["probabilities"].shape == (2, 4), "Probabilities shape mismatch!"
-    assert "cutoffs" in out, "Missing monotonic cutoffs!"
 
-    b_1, b_2, b_3 = out["cutoffs"][0].item(), out["cutoffs"][1].item(), out["cutoffs"][2].item()
-    print(f"    - Cutoffs: b_1={b_1:.4f} < b_2={b_2:.4f} < b_3={b_3:.4f}")
-    assert b_1 < b_2 < b_3, "Cutoff monotonicity violated!"
+    if "p_w_over_m" in out:
+        p_act = out["p_feeding"].mean().item()
+        p_12 = out["p_w_over_m"].mean().item()
+        p_23 = out["p_m_over_s"].mean().item()
+        p_13 = out["p_w_over_s"].mean().item()
+        print(f"    - Tournament Gate: P(Feeding)={p_act:.4f}")
+        print(f"    - Pairwise Boundaries: P(W>M)={p_12:.4f}, P(M>S)={p_23:.4f}, P(W>S)={p_13:.4f}")
+    elif "cutoffs" in out:
+        b_1, b_2, b_3 = out["cutoffs"][0].item(), out["cutoffs"][1].item(), out["cutoffs"][2].item()
+        print(f"    - Cutoffs: b_1={b_1:.4f} < b_2={b_2:.4f} < b_3={b_3:.4f}")
+        assert b_1 < b_2 < b_3, "Cutoff monotonicity violated!"
 
     # 2. Backward Pass & Gradient Flow
-    print("[*] Running backward pass with OrdinalWassersteinEvidentialLoss...")
-    loss_fn = OrdinalWassersteinEvidentialLoss(
-        classes_num=config.model.classes_num,
-        sigma=getattr(config, "ordinal_sigma", 0.5),
-        lambda_ord_start=getattr(config, "lambda_ord_start", 0.2),
-        lambda_ord_end=getattr(config, "lambda_ord_end", 2.0),
-        total_epochs=config.epochs
-    ).to(device)
+    loss_type = getattr(config, "loss_type", "pairwise_tournament")
+    if loss_type == "pairwise_tournament" or "p_w_over_m" in out:
+        print("[*] Running backward pass with PairwiseTournamentLoss...")
+        loss_fn = PairwiseTournamentLoss(
+            weight_act=getattr(config, "weight_act", 0.5),
+            weight_pairwise=getattr(config, "weight_pairwise", 0.5),
+            weight_ce=getattr(config, "weight_ce", 1.0)
+        ).to(device)
+    else:
+        print("[*] Running backward pass with OrdinalWassersteinEvidentialLoss...")
+        loss_fn = OrdinalWassersteinEvidentialLoss(
+            classes_num=config.model.classes_num,
+            sigma=getattr(config, "ordinal_sigma", 0.5),
+            lambda_ord_start=getattr(config, "lambda_ord_start", 0.2),
+            lambda_ord_end=getattr(config, "lambda_ord_end", 2.0),
+            total_epochs=config.epochs
+        ).to(device)
 
     loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
     loss.backward()
