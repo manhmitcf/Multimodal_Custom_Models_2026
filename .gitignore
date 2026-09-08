@@ -29,3 +29,5 @@ run_*.txt
 cli.txt
 cli_*.txt
 *.secret
+teachers/
+*.zip
