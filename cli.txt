@@ -1,0 +1,80 @@
+﻿# ==============================================================================
+# 1. TẢI DATA VỀ VÀ CẤU HÌNH BAN ĐẦU TRÊN MÁY CHỦ (MARIMO / GPU SERVER)
+# ==============================================================================
+export HF_TOKEN="${HF_TOKEN:-your_hf_token_here}"
+huggingface-cli login --token $HF_TOKEN || hf auth login --token $HF_TOKEN
+sudo apt update && sudo apt install git-lfs -y
+git lfs install
+git config --global lfs.concurrenttransfers 64
+cd /marimo && nohup git clone https://huggingface.co/datasets/manhmitcf/Fish_Feeding_Intensity_Dataset > /marimo/clone.log 2>&1 &
+tail -n +1 -f /marimo/clone.log
+
+# ==============================================================================
+# 2. SẮP XẾP LẠI THƯ MỤC DATASET
+# ==============================================================================
+mv /marimo/Fish_Feeding_Intensity_Dataset/audio/audio/* /marimo/Fish_Feeding_Intensity_Dataset/audio/
+mv /marimo/Fish_Feeding_Intensity_Dataset/video/video/* /marimo/Fish_Feeding_Intensity_Dataset/video/
+rm -rf /marimo/Fish_Feeding_Intensity_Dataset/audio/audio
+rm -rf /marimo/Fish_Feeding_Intensity_Dataset/video/video
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
+
+# ==============================================================================
+# 3. HUẤN LUYỆN NHÁNH: U_FFIA27K_multimodal_tournament_cross_bnd
+#    (Two-Phase Warmup Training Strategy + Gated Pairwise Cross-Boundary Tournament)
+#    - Phase 1 (Epoch 1 -> 200): Backbones Warmup
+#        + Video: ConvNeXt-Nano 7-ch (2.701M params)
+#        + Audio: PANNS-CNN6-Pro (1.827M params, no TKEO, no Frequency Attention)
+#        + Fusion module: [FROZEN]
+#        + Loss: Cross-Entropy cho từng nhánh riêng biệt
+#    - Phase 2 (Epoch 201 -> 400): Tournament Fusion Unfreeze
+#        + Mở đóng băng toàn bộ mạng (Unfreeze All)
+#        + Bộ hợp nhất: Gated Pairwise Cross-Boundary Tournament Network (B12, B23, B13)
+#        + Loss: Pairwise Tournament Loss + Boundary Regularization + CE Loss
+#        + Bộ lập lịch OneCycleLR reset cho chu kỳ hội tụ tối ưu
+#    - Tổng số tham số deploy: 4,673,541 (~4.674M < 5.0M strict limit) | Monitor QWK
+#    - KHÔNG CẦN tải Teachers Offline (Huấn luyện Two-Phase trực tiếp)
+# ==============================================================================
+if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
+    git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
+fi
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity
+git fetch origin
+git checkout U_FFIA27K_multimodal_tournament_cross_bnd
+git pull origin U_FFIA27K_multimodal_tournament_cross_bnd
+
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# --- BƯỚC 3.1: CHẾ ĐỘ TEST & KIỂM TOÁN MÔ HÌNH (< 5 giây) ---
+# 1. Chạy unit test kiểm toán kiến trúc Tournament và số lượng tham số (< 5.0M):
+python test_tournament_architecture.py
+
+# 2. Kiểm thử Pre-flight Fast Check trước khi load RAM:
+python main.py --dry-run
+python cli.py --mode dry-run --device cuda
+
+# --- BƯỚC 3.2: CHẠY HUẤN LUYỆN CHÍNH THỨC TRÊN GPU (BACKGROUND) ---
+pkill -f "python main.py" || true
+
+# Huấn luyện Two-Phase (Phase 1 Warmup 200 epochs -> Phase 2 Tournament Unfreeze 200 epochs):
+nohup python main.py > main.log 2>&1 &
+tail -n +1 -f main.log
+
+# ==============================================================================
+# 4. THEO DÕI TIẾN ĐỘ TRAINING BẤT CỨ LÚC NÀO
+# ==============================================================================
+# cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal && tail -n +1 -f main.log
+# nvidia-smi
+
+# ==============================================================================
+# 5. TỰ ĐỘNG & THỦ CÔNG UPLOAD KẾT QUẢ LÊN HUGGING FACE
+# ==============================================================================
+# Ghi chú: main.py đã TỰ ĐỘNG nén và upload kết quả lên repo Hugging Face:
+#   https://huggingface.co/datasets/manhmitcf/Results_U_FFIA27K_multimodal
+# ngay sau khi hoàn thành 400 epochs!
+#
+# Nếu muốn chủ động nén và upload thủ công bất kỳ lúc nào:
+# cd /marimo && zip -r -q Capstone_2026_Fish_Feeding_Intensity.zip Capstone_2026_Fish_Feeding_Intensity -x "*.git*" "*/__pycache__/*"
+# huggingface-cli upload manhmitcf/Results_U_FFIA27K_multimodal /marimo/Capstone_2026_Fish_Feeding_Intensity.zip Capstone_2026_Fish_Feeding_Intensity.zip --repo-type dataset

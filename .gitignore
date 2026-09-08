@@ -21,11 +21,10 @@ papers/
 checkpoint/
 video_checkpoint/
 audio_checkpoint/
+teachers/
 *.pt
 *.pth
 *.log
 run_marimo.txt
 run_*.txt
-cli.txt
-cli_*.txt
 *.secret
