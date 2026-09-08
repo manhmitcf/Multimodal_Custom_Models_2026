@@ -29,13 +29,13 @@ class ClipCELoss(BaseLoss):
 
 class PairwiseTournamentLoss(BaseLoss):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Loss.
+    2-Boundary Sandwich Tournament Loss.
     Optimizes 2-level tournament decision:
       Level 1: Activity Gating Loss (None vs Active Feeding).
-      Level 2: 3 Pairwise Cross-Boundary Losses:
-               - B12: Weak vs Medium
-               - B23: Medium vs Strong
-               - B13: Weak vs Strong (Cross-boundary jumping protection)
+      Level 2: 2 Boundary Sandwich Losses:
+               - B12: Weak vs Medium (Video stream)
+               - B23: Medium vs Strong (Video proposal + Audio STFT Tie-Breaker)
+               (Medium is protected from both sides; B13 is redundant and discarded)
       Level 3: End-to-End Multi-Class Cross Entropy on final tournament voting probabilities.
     """
     def __init__(
@@ -87,10 +87,9 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             loss_act = torch.tensor(0.0, device=targets.device)
 
-        # 2. Level 2: 3 Pairwise Cross-Boundary Head Losses
+        # 2. Level 2: 2 Boundary Sandwich Losses (B12 and B23)
         logit_12 = output_dict.get("logit_12")  # Positive -> Weak, Negative -> Medium
         logit_23 = output_dict.get("logit_23")  # Positive -> Medium, Negative -> Strong
-        logit_13 = output_dict.get("logit_13")  # Positive -> Weak, Negative -> Strong
 
         # B12: Weak (3) vs Medium (2)
         mask_12 = (y_raw == 3) | (y_raw == 2)
@@ -100,7 +99,7 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             loss_12 = torch.tensor(0.0, device=targets.device)
 
-        # B23: Medium (2) vs Strong (1)
+        # B23: Medium (2) vs Strong (1) with Audio Tie-Breaker
         mask_23 = (y_raw == 2) | (y_raw == 1)
         if mask_23.sum() > 0 and logit_23 is not None:
             target_23 = (y_raw[mask_23] == 2).float()  # 1.0 if Medium, 0.0 if Strong
@@ -108,15 +107,8 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             loss_23 = torch.tensor(0.0, device=targets.device)
 
-        # B13: Weak (3) vs Strong (1) [Cross-Protection Boundary]
-        mask_13 = (y_raw == 3) | (y_raw == 1)
-        if mask_13.sum() > 0 and logit_13 is not None:
-            target_13 = (y_raw[mask_13] == 3).float()  # 1.0 if Weak, 0.0 if Strong
-            loss_13 = F.binary_cross_entropy_with_logits(logit_13[mask_13], target_13)
-        else:
-            loss_13 = torch.tensor(0.0, device=targets.device)
-
-        loss_pairwise = (loss_12 + loss_23 + loss_13) / 3.0
+        # 2-Boundary Sandwich loss (B13 is dropped; Medium is bounded from both sides)
+        loss_pairwise = (loss_12 + loss_23) / 2.0
 
         # 3. Level 3: Multi-class Cross Entropy on Final Logits
         logits = output_dict.get("clipwise_output", output_dict.get("logits"))

@@ -163,9 +163,10 @@ def mode_dry_run(args: argparse.Namespace) -> None:
         p_act = out["p_feeding"].mean().item()
         p_12 = out["p_w_over_m"].mean().item()
         p_23 = out["p_m_over_s"].mean().item()
-        p_13 = out["p_w_over_s"].mean().item()
-        print(f"    - Tournament Gate: P(Feeding)={p_act:.4f}")
-        print(f"    - Pairwise Boundaries: P(W>M)={p_12:.4f}, P(M>S)={p_23:.4f}, P(W>S)={p_13:.4f}")
+        u_tie_val = out["u_tie"].mean().item() if "u_tie" in out else 0.0
+        gamma_val = out["gamma"].item() if "gamma" in out else 0.0
+        print(f"    - Level 1 Activity Gate: P(Feeding)={p_act:.4f}")
+        print(f"    - Sandwich Boundaries: P(W>M)={p_12:.4f}, P(M>S)={p_23:.4f} [Audio Tie-Breaker u_tie={u_tie_val:.4f}, gamma={gamma_val:.4f}]")
     elif "cutoffs" in out:
         b_1, b_2, b_3 = out["cutoffs"][0].item(), out["cutoffs"][1].item(), out["cutoffs"][2].item()
         print(f"    - Cutoffs: b_1={b_1:.4f} < b_2={b_2:.4f} < b_3={b_3:.4f}")

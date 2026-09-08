@@ -7,39 +7,56 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class PairwiseBoundaryTournamentHead(nn.Module):
+class SandwichBoundaryTournamentHead(nn.Module):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Head (~80K params).
+    2-Boundary Sandwich Tournament Head with Audio STFT Tie-Breaker (~91K params).
     
     Level 1: Feeding Activity Gating
       - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
-      - p_feeding = sigmoid(w_act^T * f) in (0, 1)
-      - p_none = 1 - p_feeding
+      - Controlled by visual motion / surface activity:
+        p_feeding = sigmoid(w_act^T * f_video) in (0, 1)
+        p_none = 1 - p_feeding
 
-    Level 2: 3-Way Pairwise Cross-Boundary Tournament
-      - B12: Weak <-> Medium    -> P(W > M) = sigmoid(s_12)
-      - B23: Medium <-> Strong  -> P(M > S) = sigmoid(s_23)
-      - B13: Weak <-> Strong    -> P(W > S) = sigmoid(s_13)  [Cross-skipping protection boundary]
+    Level 2: 2-Boundary Sandwich (B12 & B23) + Audio Tie-Breaker
+      - Boundary B12 (Weak vs Medium):
+        Controlled by video kinematics:
+        s_12 = Head_12(f_video)
+        P(W > M) = sigmoid(s_12)
+        P(M > W) = 1 - P(W > M)
 
-    Tournament Scoring (Borda count):
-      - V_Weak   = P(W > M) + P(W > S)
-      - V_Medium = (1 - P(W > M)) + P(M > S)
-      - V_Strong = (1 - P(W > S)) + (1 - P(M > S))
+      - Boundary B23 (Medium vs Strong):
+        Visual-Acoustic Joint Disambiguation:
+        Video proposal: s_23^V = Head_23^V(f_video)
+        Uncertainty / Tie metric: u_tie = exp(-|s_23^V|)  [peaks at 1 when video is indecisive]
+        Audio STFT tie-breaker: s_23^A = Head_23^A(f_audio)
+        Combined logit: s_23 = s_23^V + gamma * u_tie * s_23^A   (gamma is learnable parameter)
+        P(M > S) = sigmoid(s_23)
+        P(S > M) = 1 - P(M > S)
+
+    Level 3: Sandwich Borda Voting (Protecting Medium from both sides!):
+      - V_Weak   = P(W > M)
+      - V_Medium = P(M > W) + P(M > S) = (1 - P(W > M)) + P(M > S)
+      - V_Strong = P(S > M) = 1 - P(M > S)
+      
+      P_active = Softmax([V_Weak, V_Medium, V_Strong] * temperature)
+      
+    Final Output:
+      P = [p_none, p_feeding * P_active] -> mapped to [None, Strong, Medium, Weak]
     """
     def __init__(self, dim: int = 224, temperature: float = 2.0) -> None:
         super().__init__()
         self.dim = dim
         self.temperature = temperature
 
-        # Level 1: Feeding Activity Gate (None vs Feeding)
+        # Level 1: Feeding Activity Gate (None vs Active Feeding) from Video
         self.activity_head = nn.Sequential(
             nn.Linear(dim, 64),
             nn.GELU(),
             nn.Linear(64, 1)
         )
 
-        # Level 2: 3 Specialized Pairwise Subspace Expert Heads
-        # B12: Weak vs Medium
+        # Level 2: 2 Specialized Boundary Subspace Heads
+        # B12: Weak vs Medium (Video Stream)
         self.head_b12 = nn.Sequential(
             nn.Linear(dim, 112),
             nn.GELU(),
@@ -47,56 +64,69 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             nn.Linear(112, 1)
         )
 
-        # B23: Medium vs Strong
-        self.head_b23 = nn.Sequential(
+        # B23 Video Head: Medium vs Strong (Video Stream)
+        self.head_b23_v = nn.Sequential(
             nn.Linear(dim, 112),
             nn.GELU(),
             nn.LayerNorm(112),
             nn.Linear(112, 1)
         )
 
-        # B13: Weak vs Strong (Direct cross-boundary protection)
-        self.head_b13 = nn.Sequential(
+        # B23 Audio Tie-Breaker Head: Medium vs Strong (Audio STFT Stream)
+        self.head_b23_a = nn.Sequential(
             nn.Linear(dim, 112),
             nn.GELU(),
             nn.LayerNorm(112),
             nn.Linear(112, 1)
         )
 
-    def forward(self, f: torch.Tensor) -> Dict[str, torch.Tensor]:
-        B = f.size(0)
+        # Learnable tie-breaker influence factor gamma (initialized to 0.5)
+        self.gamma = nn.Parameter(torch.tensor(0.5))
+
+    def forward(
+        self,
+        f_video: torch.Tensor,
+        f_audio: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
+        if f_audio is None:
+            f_audio = f_video
+
+        B = f_video.size(0)
 
         # 1. Level 1: Feeding Activity Gate
-        logit_act = self.activity_head(f).squeeze(-1)       # [B]
-        p_feeding = torch.sigmoid(logit_act)                # [B] in (0, 1)
-        p_none = torch.clamp(1.0 - p_feeding, min=1e-6)     # [B]
+        logit_act = self.activity_head(f_video).squeeze(-1)    # [B]
+        p_feeding = torch.sigmoid(logit_act)                   # [B] in (0, 1)
+        p_none = torch.clamp(1.0 - p_feeding, min=1e-6)        # [B]
 
-        # 2. Level 2: 3 Pairwise Cross-Boundary Logits & Probabilities
-        logit_12 = self.head_b12(f).squeeze(-1)            # [B] (Positive -> Weak, Negative -> Medium)
-        logit_23 = self.head_b23(f).squeeze(-1)            # [B] (Positive -> Medium, Negative -> Strong)
-        logit_13 = self.head_b13(f).squeeze(-1)            # [B] (Positive -> Weak, Negative -> Strong)
+        # 2. Level 2: 2 Boundaries B12 and B23
+        # Boundary B12: Weak (Positive) vs Medium (Negative)
+        logit_12 = self.head_b12(f_video).squeeze(-1)          # [B]
+        p_w_over_m = torch.sigmoid(logit_12)                  # P(W > M)
+        p_m_over_w = 1.0 - p_w_over_m                         # P(M > W)
 
-        # Head-to-head pairwise winning probabilities
-        p_w_over_m = torch.sigmoid(logit_12)               # P(W > M)
-        p_m_over_w = 1.0 - p_w_over_m                      # P(M > W)
+        # Boundary B23: Medium (Positive) vs Strong (Negative)
+        logit_23_v = self.head_b23_v(f_video).squeeze(-1)      # [B] (Video proposal)
+        logit_23_a = self.head_b23_a(f_audio).squeeze(-1)      # [B] (Audio tie-breaker)
+        
+        # Uncertainty metric: u_tie = exp(-|logit_23_v|). High when logit_23_v is close to 0 (boundary ambiguity)
+        u_tie = torch.exp(-torch.abs(logit_23_v))              # [B] in (0, 1]
+        
+        # Dynamic Tie-breaker integration
+        logit_23 = logit_23_v + self.gamma * u_tie * logit_23_a # [B]
+        p_m_over_s = torch.sigmoid(logit_23)                  # P(M > S)
+        p_s_over_m = 1.0 - p_m_over_s                         # P(S > M)
 
-        p_m_over_s = torch.sigmoid(logit_23)               # P(M > S)
-        p_s_over_m = 1.0 - p_m_over_s                      # P(S > M)
-
-        p_w_over_s = torch.sigmoid(logit_13)               # P(W > S)
-        p_s_over_w = 1.0 - p_w_over_s                      # P(S > W)
-
-        # 3. Tournament Borda Count Voting
-        # Weak wins if it beats Medium AND beats Strong
-        v_weak = p_w_over_m + p_w_over_s                   # [B] in [0, 2]
-        # Medium wins if it beats Weak AND beats Strong
-        v_medium = p_m_over_w + p_m_over_s                 # [B] in [0, 2]
-        # Strong wins if it beats Weak AND beats Medium
-        v_strong = p_s_over_w + p_s_over_m                 # [B] in [0, 2]
+        # 3. Sandwich Borda Count Voting:
+        # Weak is bounded on the right by B12
+        v_weak = p_w_over_m                                   # [B] in [0, 1]
+        # Medium is SANDWICHED from both sides: beats Weak (from left) AND beats Strong (from right)
+        v_medium = p_m_over_w + p_m_over_s                    # [B] in [0, 2]
+        # Strong is bounded on the left by B23
+        v_strong = p_s_over_m                                 # [B] in [0, 1]
 
         v_voting = torch.stack([v_weak, v_medium, v_strong], dim=-1)  # [B, 3]
 
-        # Softmax over normalized tournament votes (Rank order: Weak=1, Med=2, Strong=3)
+        # Softmax over tournament votes (Rank order: Weak=1, Med=2, Strong=3)
         p_feeding_ranks = F.softmax(v_voting * self.temperature, dim=-1)  # [B, 3]
         p_weak_given_feed = p_feeding_ranks[:, 0]
         p_med_given_feed = p_feeding_ranks[:, 1]
@@ -114,7 +144,6 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         logits_raw = torch.log(torch.clamp(p_raw, min=1e-7))
 
         # Expected physical intensity on 0..3 ordinal scale
-        # None=0, Weak=1, Medium=2, Strong=3
         expected_intensity = (
             p_final_none * 0.0 +
             p_final_weak * 1.0 +
@@ -132,41 +161,34 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             "p_feeding": p_feeding,
             "logit_12": logit_12,
             "logit_23": logit_23,
-            "logit_13": logit_13,
+            "logit_23_v": logit_23_v,
+            "logit_23_a": logit_23_a,
+            "u_tie": u_tie,
+            "gamma": self.gamma,
             "p_w_over_m": p_w_over_m,
             "p_m_over_s": p_m_over_s,
-            "p_w_over_s": p_w_over_s,
             "v_voting": v_voting
         }
 
 
+# Backward compatibility alias
+PairwiseBoundaryTournamentHead = SandwichBoundaryTournamentHead
+
+
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~80K params).
-    1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
-    2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament.
+    Multimodal Fusion with Sandwich Boundary Tournament & Audio STFT Tie-Breaker (~91K params).
+    - Level 1: Activity Gate (Video) -> None vs Feeding
+    - Level 2: 2-Boundary Sandwich:
+        * B12: Weak vs Medium (Video stream)
+        * B23: Medium vs Strong (Video proposal + Audio STFT Tie-Breaker)
+    - Level 3: Sandwich Borda Voting protecting Medium from both sides.
     """
-    def __init__(self, dim: int = 224, dropout: float = 0.1, **kwargs) -> None:
+    def __init__(self, dim: int = 224, temperature: float = 2.0, **kwargs) -> None:
         super().__init__()
         self.dim = dim
-
-        # 1. Gated Reliability Fusion
-        self.gate = nn.Sequential(
-            nn.Linear(dim * 2, 1),
-            nn.Sigmoid()
-        )
-        self.norm_fused = nn.LayerNorm(dim)
-
-        # 2. Residual refinement
-        self.proj_joint = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.LayerNorm(dim)
-        )
-
-        # 3. Pairwise Boundary Tournament Decision Head
-        self.tournament_head = PairwiseBoundaryTournamentHead(dim=dim, temperature=2.0)
+        # Sandwich Boundary Tournament Decision Head
+        self.tournament_head = SandwichBoundaryTournamentHead(dim=dim, temperature=temperature)
 
     def forward(
         self,
@@ -174,19 +196,16 @@ class MultimodalTournamentFusion(nn.Module):
         f_audio: torch.Tensor,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        # Step 1: Cross-modal adaptive reliability gating
-        combined = torch.cat([f_video, f_audio], dim=-1)  # [B, dim * 2]
-        g = self.gate(combined)                            # [B, 1]
-        f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)
-        f_joint = self.proj_joint(f_fused)
+        # Sandwich Boundary Tournament with Video proposal & Audio Tie-Breaker
+        out = self.tournament_head(f_video=f_video, f_audio=f_audio)
 
-        # Step 2: Pairwise Boundary Tournament
-        out = self.tournament_head(f_joint)
-
-        # Step 3: Package metrics
-        out["f_fused"] = f_fused
-        out["gate"] = g
-        out["modality_weights"] = torch.cat([g, 1.0 - g], dim=-1)
+        # Multi-modal diagnostics
+        u_tie = out["u_tie"].unsqueeze(-1)  # [B, 1]
+        weight_video = 1.0 - 0.5 * u_tie
+        weight_audio = 0.5 * u_tie
+        out["gate"] = weight_video
+        out["modality_weights"] = torch.cat([weight_video, weight_audio], dim=-1)
+        out["f_fused"] = (f_video + f_audio) / 2.0
 
         # Shannon entropy uncertainty
         entropy = -torch.sum(out["probabilities"] * torch.log(torch.clamp(out["probabilities"], min=1e-7)), dim=-1, keepdim=True)

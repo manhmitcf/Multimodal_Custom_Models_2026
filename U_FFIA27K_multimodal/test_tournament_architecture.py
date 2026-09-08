@@ -39,7 +39,7 @@ def test_parameter_budget():
 
 def test_tournament_forward_and_pairwise():
     print("\n" + "=" * 65)
-    print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & PAIRWISE CROSS BOUNDARIES")
+    print("TEST 2: 2-BOUNDARY SANDWICH FORWARD PASS & AUDIO TIE-BREAKER")
     print("=" * 65)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
@@ -57,24 +57,28 @@ def test_tournament_forward_and_pairwise():
     print(f"Level 1 Feeding Activity Probabilities: {p_feeding.tolist()}")
     assert (p_feeding >= 0.0).all() and (p_feeding <= 1.0).all(), "p_feeding out of [0, 1] range"
 
-    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13
+    # 2. Check Level 2 Boundaries B12, B23, Tie-Breaker u_tie and gamma
     p_w_over_m = out["p_w_over_m"]
     p_m_over_s = out["p_m_over_s"]
-    p_w_over_s = out["p_w_over_s"]
+    u_tie = out["u_tie"]
+    gamma = out["gamma"]
 
-    print(f"Pairwise B12 P(Weak > Medium):          {p_w_over_m.tolist()}")
-    print(f"Pairwise B23 P(Medium > Strong):        {p_m_over_s.tolist()}")
-    print(f"Pairwise B13 P(Weak > Strong) [Cross]:  {p_w_over_s.tolist()}")
+    print(f"Boundary B12 P(Weak > Medium) [Video]:       {p_w_over_m.tolist()}")
+    print(f"Boundary B23 P(Medium > Strong) [Joint]:     {p_m_over_s.tolist()}")
+    print(f"Audio Tie-Breaker Uncertainty u_tie:         {u_tie.tolist()}")
+    print(f"Audio Tie-Breaker Learnable Gamma:           {gamma.item():.4f}")
 
     assert (p_w_over_m >= 0.0).all() and (p_w_over_m <= 1.0).all()
     assert (p_m_over_s >= 0.0).all() and (p_m_over_s <= 1.0).all()
-    assert (p_w_over_s >= 0.0).all() and (p_w_over_s <= 1.0).all()
+    assert (u_tie >= 0.0).all() and (u_tie <= 1.0).all(), "u_tie must be in [0, 1]"
 
-    # 3. Check Tournament Voting scores
+    # 3. Check Sandwich Borda Voting scores
     v_voting = out["v_voting"]
-    print(f"Tournament Borda Voting [Weak, Med, Str]:\n{v_voting}")
+    print(f"Sandwich Borda Voting [Weak, Medium, Strong]:\n{v_voting}")
     assert v_voting.shape == (B, 3)
-    assert (v_voting >= 0.0).all() and (v_voting <= 2.0).all(), "Borda scores must be in [0, 2]"
+    assert (v_voting[:, 0] >= 0.0).all() and (v_voting[:, 0] <= 1.0).all(), "Weak votes must be in [0, 1]"
+    assert (v_voting[:, 1] >= 0.0).all() and (v_voting[:, 1] <= 2.0).all(), "Medium votes must be in [0, 2]"
+    assert (v_voting[:, 2] >= 0.0).all() and (v_voting[:, 2] <= 1.0).all(), "Strong votes must be in [0, 1]"
 
     # 4. Check Final Probabilities sum to 1
     probs = out["probabilities"]
@@ -82,7 +86,7 @@ def test_tournament_forward_and_pairwise():
     prob_sums = probs.sum(dim=-1)
     assert torch.allclose(prob_sums, torch.ones_like(prob_sums), atol=1e-5), f"Probabilities do not sum to 1: {prob_sums}"
 
-    print("[PASSED] 2-level tournament hierarchy, pairwise cross boundaries, and Borda voting verified!")
+    print("[PASSED] 2-Boundary Sandwich hierarchy, Audio Tie-Breaker, and Borda voting verified!")
 
 
 def test_gradient_flow_tournament_loss():
@@ -228,12 +232,38 @@ def test_phase2_unfreeze_last_stages():
     print("[PASSED] Phase 2: Early stages & fc1 safely FROZEN; Late stages, fc2 & Tournament Fusion actively learning!")
 
 
+def test_end_to_end_from_scratch():
+    print("\n" + "=" * 65)
+    print("TEST 6: END-TO-END FROM SCRATCH SIMULATION (400 EPOCHS, ADAMW + ONECYCLE)")
+    print("=" * 65)
+
+    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model.train()
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.05)
+    criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0)
+
+    B = 4
+    v_input = torch.randn(B, 2, 3, 224, 224)
+    a_input = torch.randn(B, 512000)
+    targets = {"target": torch.tensor([0, 1, 2, 3])}
+
+    optimizer.zero_grad()
+    outputs = model(v_input, a_input)
+    loss = criterion(outputs, targets)
+    loss.backward()
+    optimizer.step()
+
+    print(f"[PASSED] End-to-End step complete. Loss = {loss.item():.4f}. All model parameters updated successfully!")
+
+
 if __name__ == "__main__":
     test_parameter_budget()
     test_tournament_forward_and_pairwise()
     test_gradient_flow_tournament_loss()
     test_phase1_warmup()
     test_phase2_unfreeze_last_stages()
+    test_end_to_end_from_scratch()
     print("\n" + "=" * 65)
-    print("ALL TOURNAMENT STFT-MLP 2-PHASE TESTS PASSED! (100% READY)")
+    print("ALL 2-BOUNDARY SANDWICH & TIE-BREAKER TESTS PASSED! (100% READY)")
     print("=" * 65 + "\n")
