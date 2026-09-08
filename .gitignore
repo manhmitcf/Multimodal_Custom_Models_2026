@@ -30,3 +30,6 @@ run_*.txt
 cli.txt
 cli_*.txt
 *.secret
+hf_results/
+results_download/
+*.zip
