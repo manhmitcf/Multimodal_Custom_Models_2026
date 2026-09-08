@@ -386,7 +386,7 @@ def run_training_session(
             data_loader = FishMultimodalDataLoader(
                 batch_size=fold_config.batch_size,
                 dataloader_workers=fold_config.dataloader_workers,
-                prefetch_factor=fold_config.prefetch_factor,
+                prefetch_factor=getattr(fold_config, "prefetch_factor", 2),
                 cache_mode=fold_config.cache_mode,
                 image_size=fold_config.image_size,
                 num_frames=fold_config.num_frames,
@@ -415,7 +415,7 @@ def run_training_session(
         data_loader = FishMultimodalDataLoader(
             batch_size=config.batch_size,
             dataloader_workers=config.dataloader_workers,
-            prefetch_factor=config.prefetch_factor,
+            prefetch_factor=getattr(config, "prefetch_factor", 2),
             cache_mode=config.cache_mode,
             image_size=config.image_size,
             num_frames=config.num_frames,

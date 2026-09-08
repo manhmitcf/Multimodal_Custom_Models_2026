@@ -139,6 +139,7 @@ class TrainConfig(BaseModel):
     sample_rate: int = Field(default=64000, gt=0, description="Audio sampling rate in Hz.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
     dataloader_workers: int = Field(default=-1, description="Number of worker processes for DataLoader (-1 = auto).")
+    prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
     save_best_only: bool = Field(default=True, description="Save only the best checkpoint.")
     loss_type: str = Field(default="ordinal_wasserstein", description="Loss function: 'ordinal_wasserstein' or 'clip_ce'.")
     ordinal_sigma: float = Field(default=0.5, gt=0.0, description="Gaussian bandwidth sigma for ordinal soft label smoothing.")

@@ -16,6 +16,7 @@
   "sample_rate": 64000,
   "cache_mode": "ram",
   "dataloader_workers": -1,
+  "prefetch_factor": 2,
   "ckpt_dir": "checkpoint",
   "save_best_only": true,
   "loss_type": "ordinal_wasserstein",
