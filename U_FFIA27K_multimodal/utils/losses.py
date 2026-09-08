@@ -116,7 +116,10 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             loss_13 = torch.tensor(0.0, device=targets.device)
 
-        loss_pairwise = (loss_12 + loss_23 + loss_13) / 3.0
+        # Dual-border Medium supervision (0.4 on B12, 0.4 on B23) + B13 anchor protection (0.2)
+        loss_pairwise = 0.4 * loss_12 + 0.4 * loss_23 + 0.2 * loss_13
+
+
 
         # 3. Level 3: Multi-class Cross Entropy on Final Logits
         logits = output_dict.get("clipwise_output", output_dict.get("logits"))

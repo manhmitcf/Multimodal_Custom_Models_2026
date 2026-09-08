@@ -47,7 +47,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             nn.Linear(112, 1)
         )
 
-        # B23: Medium vs Strong
+        # B23: Medium vs Strong (Base Joint Representation Head)
         self.head_b23 = nn.Sequential(
             nn.Linear(dim, 112),
             nn.GELU(),
@@ -55,7 +55,16 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             nn.Linear(112, 1)
         )
 
-        # B13: Weak vs Strong (Direct cross-boundary protection)
+        # B23 Audio STFT Tie-Breaker Head (Ultrasonic Bubble Bursts Specialist)
+        self.head_b23_a = nn.Sequential(
+            nn.Linear(dim, 112),
+            nn.GELU(),
+            nn.LayerNorm(112),
+            nn.Linear(112, 1)
+        )
+        self.gamma_23 = nn.Parameter(torch.tensor(0.5))
+
+        # B13: Weak vs Strong (Direct cross-boundary anchor protection)
         self.head_b13 = nn.Sequential(
             nn.Linear(dim, 112),
             nn.GELU(),
@@ -63,7 +72,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             nn.Linear(112, 1)
         )
 
-    def forward(self, f: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(self, f: torch.Tensor, f_audio: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         B = f.size(0)
 
         # 1. Level 1: Feeding Activity Gate
@@ -73,8 +82,19 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
         # 2. Level 2: 3 Pairwise Cross-Boundary Logits & Probabilities
         logit_12 = self.head_b12(f).squeeze(-1)            # [B] (Positive -> Weak, Negative -> Medium)
-        logit_23 = self.head_b23(f).squeeze(-1)            # [B] (Positive -> Medium, Negative -> Strong)
         logit_13 = self.head_b13(f).squeeze(-1)            # [B] (Positive -> Weak, Negative -> Strong)
+
+        # B23 Base proposal on f_joint + Audio STFT Tie-Breaker
+        logit_23_base = self.head_b23(f).squeeze(-1)       # [B] (Positive -> Medium, Negative -> Strong)
+        if f_audio is not None:
+            logit_23_a = self.head_b23_a(f_audio).squeeze(-1)
+            u_tie_23 = torch.exp(-torch.abs(logit_23_base))  # peaks when base proposal is indecisive
+            logit_23 = logit_23_base + self.gamma_23 * u_tie_23 * logit_23_a
+        else:
+            logit_23 = logit_23_base
+            logit_23_a = logit_23_base
+            u_tie_23 = torch.zeros_like(logit_23_base)
+
 
         # Head-to-head pairwise winning probabilities
         p_w_over_m = torch.sigmoid(logit_12)               # P(W > M)
@@ -132,6 +152,12 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             "p_feeding": p_feeding,
             "logit_12": logit_12,
             "logit_23": logit_23,
+            "logit_23_base": logit_23_base,
+            "logit_23_a": logit_23_a,
+            "u_tie_23": u_tie_23,
+            "u_tie": u_tie_23,
+            "gamma_23": self.gamma_23,
+            "gamma": self.gamma_23,
             "logit_13": logit_13,
             "p_w_over_m": p_w_over_m,
             "p_m_over_s": p_m_over_s,
@@ -142,9 +168,10 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~80K params).
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~105K params).
     1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
-    2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament.
+    2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
+       with Audio STFT Tie-Breaker on B23 (Medium vs Strong).
     """
     def __init__(self, dim: int = 224, dropout: float = 0.1, **kwargs) -> None:
         super().__init__()
@@ -180,8 +207,8 @@ class MultimodalTournamentFusion(nn.Module):
         f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)
         f_joint = self.proj_joint(f_fused)
 
-        # Step 2: Pairwise Boundary Tournament
-        out = self.tournament_head(f_joint)
+        # Step 2: Pairwise Boundary Tournament with Audio STFT Tie-Breaker on B23
+        out = self.tournament_head(f_joint, f_audio=f_audio)
 
         # Step 3: Package metrics
         out["f_fused"] = f_fused
@@ -193,6 +220,7 @@ class MultimodalTournamentFusion(nn.Module):
         out["uncertainty"] = entropy / 1.386294
 
         return out
+
 
 
 # Backward compatibility aliases
