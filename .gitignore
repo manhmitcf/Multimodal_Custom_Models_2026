@@ -27,8 +27,6 @@ teachers/
 *.log
 run_marimo.txt
 run_*.txt
-cli.txt
-cli_*.txt
 *.secret
 hf_results/
 results_download/
