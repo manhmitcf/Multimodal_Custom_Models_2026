@@ -1,0 +1,92 @@
+# ==============================================================================
+# 1. TẢI DATA VỀ VÀ CẤU HÌNH BAN ĐẦU TRÊN MÁY CHỦ (MARIMO / GPU SERVER)
+# ==============================================================================
+export HF_TOKEN="${HF_TOKEN:-your_hf_token_here}"
+huggingface-cli login --token $HF_TOKEN || hf auth login --token $HF_TOKEN
+sudo apt update && sudo apt install git-lfs -y
+git lfs install
+git config --global lfs.concurrenttransfers 64
+cd /marimo && nohup git clone https://huggingface.co/datasets/manhmitcf/Fish_Feeding_Intensity_Dataset > /marimo/clone.log 2>&1 &
+tail -n +1 -f /marimo/clone.log
+
+# ==============================================================================
+# 2. SẮP XẾP LẠI THƯ MỤC DATASET
+# ==============================================================================
+mv /marimo/Fish_Feeding_Intensity_Dataset/audio/audio/* /marimo/Fish_Feeding_Intensity_Dataset/audio/
+mv /marimo/Fish_Feeding_Intensity_Dataset/video/video/* /marimo/Fish_Feeding_Intensity_Dataset/video/
+rm -rf /marimo/Fish_Feeding_Intensity_Dataset/audio/audio
+rm -rf /marimo/Fish_Feeding_Intensity_Dataset/video/video
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
+
+# ==============================================================================
+# 3. HUẤN LUYỆN NHÁNH MỚI: U_FFIA27K_multimodal_kd_tournament
+#    (Dual-Teacher Offline Knowledge Distillation: ConvNeXt-Tiny [Video] + PANNS-CNN6 [Audio])
+#    Tích hợp Pairwise Cross-Boundary Tournament Network (B12, B23, B13)
+#    End-to-End 400 Epochs (Tỷ lệ 40% nhãn thật CE + 60% Soft Target Teacher KD):
+#      - Video Teacher: ConvNeXt-Tiny Holdout (Val Acc 91.07%) -> kèm cặp ConvNeXt-Nano (2.7M)
+#      - Audio Teacher: PANNS_Cnn6 Holdout (Val Acc 85.57%) -> kèm cặp PANNS-CNN6-Pro (1.8M)
+#      - Audio Feature Matching: Không TKEO, Không Freq Attention (đồng nhất chuẩn Log-Mel với Teacher)
+#      - Tournament Fusion: Học trực tiếp từ Epoch 1 -> 400 (Discriminative LR: Fusion 1e-3, Backbones 3e-4)
+#    Total Deployed Parameters: 4,673,541 (~4.674M < 5.0M strict limit) | Monitor QWK
+# ==============================================================================
+if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
+    git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
+fi
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity
+git fetch origin
+git checkout U_FFIA27K_multimodal_kd_tournament
+git pull origin U_FFIA27K_multimodal_kd_tournament
+
+# [LƯU Ý]: Code Python đã TỰ ĐỘNG tải & giải nén 2 Teacher checkpoints từ Hugging Face nếu thiếu!
+# Nếu bạn muốn tải thủ công trước (dự phòng), có thể chạy 2 lệnh sau:
+# mkdir -p teachers
+# if [ ! -f "teachers/ConvNeXtTiny/DL_video/checkpoint/convnext_tiny/video_best.pt" ]; then
+#     curl -L "https://huggingface.co/datasets/hoangphihung442004/Results_U_FFIA27K_video/resolve/main/ConvNeXtTiny_holdout_random_sample_20260729_153012.zip?download=true" -o teachers/ConvNeXtTiny.zip
+#     unzip -q teachers/ConvNeXtTiny.zip -d teachers/ConvNeXtTiny && rm teachers/ConvNeXtTiny.zip
+# fi
+# if [ ! -f "teachers/PANNS_Cnn6/DL_audio/checkpoint/panns_cnn6/audio_best.pt" ]; then
+#     curl -L "https://huggingface.co/datasets/hoangphihung442004/Results_U_FFIA27K_audio/resolve/main/PANNS_Cnn6_holdout_random_sample_20260729_153012.zip?download=true" -o teachers/PANNS_Cnn6.zip
+#     unzip -q teachers/PANNS_Cnn6.zip -d teachers/PANNS_Cnn6 && rm teachers/PANNS_Cnn6.zip
+# fi
+
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# --- BƯỚC 3.1: CHẾ ĐỘ TEST & KIỂM TOÁN MÔ HÌNH (< 5 giây) ---
+# 1. Chạy toàn bộ Test Suite kiểm toán KD, Teachers & Tham số (< 5.0M):
+python test_kd_tournament_pipeline.py
+
+# 2. Kiểm thử Pre-flight Fast Check trước khi load RAM:
+python main.py --dry-run
+python cli.py --mode dry-run --device cuda
+
+# --- BƯỚC 3.2: CHẠY HUẤN LUYỆN CHÍNH THỨC TRÊN GPU (BACKGROUND) ---
+pkill -f "python main.py" || true
+
+# LỰA CHỌN 1 (MẶC ĐỊNH - KHUYẾN NGHỊ): Bật Knowledge Distillation (KD) End-to-End từ Epoch 1 đến 400:
+nohup python main.py > main.log 2>&1 &
+tail -n +1 -f main.log
+
+# LỰA CHỌN 2 (NẾU MUỐN DÙNG CLI):
+# nohup python cli.py --mode train --config config/train_config.json > train.log 2>&1 &
+# tail -n +1 -f train.log
+
+# ==============================================================================
+# 4. THEO DÕI TIẾN ĐỘ TRAINING BẤT CỨ LÚC NÀO
+# ==============================================================================
+# cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal && tail -n +1 -f main.log
+# nvidia-smi
+
+# ==============================================================================
+# 5. TỰ ĐỘNG & THỦ CÔNG UPLOAD KẾT QUẢ LÊN HUGGING FACE
+# ==============================================================================
+# Ghi chú: main.py đã TỰ ĐỘNG nén và upload kết quả lên repo Hugging Face:
+#   https://huggingface.co/datasets/manhmitcf/Results_U_FFIA27K_multimodal
+# ngay sau khi hoàn thành 400 epochs!
+#
+# Nếu muốn chủ động nén và upload thủ công bất kỳ lúc nào:
+# cd /marimo && zip -r -q Capstone_2026_Fish_Feeding_Intensity.zip Capstone_2026_Fish_Feeding_Intensity -x "*.git*" "*/__pycache__/*"
+# huggingface-cli upload manhmitcf/Results_U_FFIA27K_multimodal /marimo/Capstone_2026_Fish_Feeding_Intensity.zip Capstone_2026_Fish_Feeding_Intensity.zip --repo-type dataset
+

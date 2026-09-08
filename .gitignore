@@ -24,10 +24,6 @@ audio_checkpoint/
 *.pt
 *.pth
 *.log
-run_marimo.txt
-run_*.txt
-cli.txt
-cli_*.txt
 *.secret
 teachers/
 *.zip
