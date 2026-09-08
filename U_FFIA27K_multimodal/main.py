@@ -19,7 +19,7 @@ import torch
 
 from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
-from models import MultimodalBoundaryAwareNet, MultimodalSOTANet
+from models import MultimodalBoundaryAwareNet, MultimodalSOTANet, VideoConvNeXtNanoNet
 from tasks import MultimodalTrainer
 from utils.profile_model import count_parameters
 
@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 MODEL_REGISTRY = {
     "MultimodalBoundaryAwareNet": MultimodalBoundaryAwareNet,
     "MultimodalSOTANet": MultimodalSOTANet,
+    "VideoConvNeXtNanoNet": VideoConvNeXtNanoNet,
 }
 
 
@@ -51,6 +52,15 @@ def validate_model_config(config: TrainConfig) -> None:
 def build_model(config: TrainConfig) -> torch.nn.Module:
     validate_model_config(config)
     model_cls = MODEL_REGISTRY[config.model.backbone]
+    if config.model.backbone == "VideoConvNeXtNanoNet":
+        return model_cls(
+            classes_num=config.model.classes_num,
+            embed_dim=config.model.embed_dim,
+            image_size=config.image_size,
+            num_frames=config.num_frames,
+            in_chans=getattr(config.video_features, "num_channels", 7),
+        )
+
     from features.audio_frontend import AudioFrontend
     frontend = AudioFrontend(config.audio_features)
 
@@ -90,11 +100,17 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     try:
         # 1. Parameter audit
         stats = count_parameters(model)
-        logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+        if stats.get('video_backbone', 0) > 0:
+            logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+        if stats.get('classifier', 0) > 0:
+            logger.info(f"  - Linear Classifier Head                     : {stats['classifier']:,} ({stats['classifier']/1e6:.3f} M)")
+        if stats.get('audio_backbone', 0) > 0:
+            logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+        if stats.get('fusion', 0) > 0:
+            logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
         logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
         logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+
 
         if stats['total'] >= 5_000_000:
             raise ValueError(f"Model parameters ({stats['total']:,}) exceed 5.0M budget!")
@@ -409,6 +425,7 @@ def run_training_session(
                 num_frames=fold_config.num_frames,
                 sample_rate=fold_config.sample_rate,
                 splitter_config=fold_config.dataset_splitter,
+                load_audio=getattr(fold_config, "load_audio", fold_config.model.backbone != "VideoConvNeXtNanoNet"),
             )
 
             model = build_model(fold_config).to(device)
@@ -438,7 +455,9 @@ def run_training_session(
             num_frames=config.num_frames,
             sample_rate=config.sample_rate,
             splitter_config=config.dataset_splitter,
+            load_audio=getattr(config, "load_audio", config.model.backbone != "VideoConvNeXtNanoNet"),
         )
+
 
         model = preflight_model
 

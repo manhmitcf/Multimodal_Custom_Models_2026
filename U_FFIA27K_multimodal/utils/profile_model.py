@@ -10,24 +10,27 @@ except ImportError:
 
 
 def count_parameters(model: nn.Module) -> Dict[str, Any]:
-    """Calculate detailed parameter breakdown for MultimodalSOTANet."""
+    """Calculate detailed parameter breakdown for Video or Multimodal models."""
     total_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     video_params = sum(p.numel() for p in model.video_backbone.parameters() if p.requires_grad) if hasattr(model, "video_backbone") else 0
     audio_params = sum(p.numel() for p in model.audio_backbone.parameters() if p.requires_grad) if hasattr(model, "audio_backbone") else 0
     fusion_params = sum(p.numel() for p in model.fusion.parameters() if p.requires_grad) if hasattr(model, "fusion") else 0
+    classifier_params = sum(p.numel() for p in model.classifier.parameters() if p.requires_grad) if hasattr(model, "classifier") else 0
     kinematics_params = sum(p.numel() for p in model.motion_kinematics.parameters() if p.requires_grad) if hasattr(model, "motion_kinematics") else 0
 
     breakdown = {
         "video_backbone": video_params,
         "audio_backbone": audio_params,
         "fusion": fusion_params,
+        "classifier": classifier_params,
         "kinematics": kinematics_params,
-        "core_total": video_params + audio_params + fusion_params,
+        "core_total": video_params + audio_params + fusion_params + classifier_params,
         "total": total_trainable,
         "total_million": total_trainable / 1e6
     }
     return breakdown
+
 
 
 def measure_flops(model: nn.Module, device: str = "cpu", num_frames: int = 4) -> float:

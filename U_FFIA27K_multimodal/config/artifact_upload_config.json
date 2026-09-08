@@ -2,7 +2,7 @@
   "enabled": true,
   "source_dir": "/marimo/Capstone_2026_Fish_Feeding_Intensity",
   "zip_path": "/marimo/Capstone_2026_Fish_Feeding_Intensity.zip",
-  "repo_id": "manhmitcf/Results_U_FFIA27K_multimodal",
+  "repo_id": "manhmitcf/Results_U_FFIA27K_video_convnext_nano_4frames",
   "repo_type": "dataset",
   "path_in_repo": "Capstone_2026_Fish_Feeding_Intensity.zip",
   "create_repo": true

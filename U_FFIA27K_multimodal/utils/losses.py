@@ -20,11 +20,14 @@ class ClipCELoss(BaseLoss):
     Standard Multi-class Cross Entropy Loss at the clip level.
     """
     def forward(self, output_dict: dict, target_dict: dict, epoch: int = 1) -> torch.Tensor:
-        logits = output_dict['clipwise_output']
+        logits = output_dict.get('clipwise_output', output_dict.get('logits'))
         targets = target_dict['target']
         if targets.ndim > 1 and targets.size(-1) > 1:
-            return F.cross_entropy(logits, targets)
-        return F.cross_entropy(logits, targets.long())
+            y_raw = targets.argmax(dim=-1)
+        else:
+            y_raw = targets.long()
+        return F.cross_entropy(logits, y_raw)
+
 
 
 class PairwiseTournamentLoss(BaseLoss):

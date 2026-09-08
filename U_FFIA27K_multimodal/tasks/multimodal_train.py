@@ -351,8 +351,8 @@ class MultimodalTrainer:
         """
         Nelder-Mead Post-Calibration on Validation split to optimize cutoffs without gradients.
         """
-        if not hasattr(self.model.fusion, 'head_v') or not hasattr(self.model.fusion.head_v, 'get_cutoffs'):
-            logger.info("Tournament architecture uses direct Pairwise Voting (no 1D cutoffs needed). Skipping Nelder-Mead.")
+        if not hasattr(self.model, 'fusion') or not hasattr(self.model.fusion, 'head_v') or not hasattr(self.model.fusion.head_v, 'get_cutoffs'):
+            logger.info("Direct Classification Head (no 1D cutoffs needed). Skipping Nelder-Mead.")
             return {}
 
         logger.info("Starting Nelder-Mead post-training calibration on validation set...")
