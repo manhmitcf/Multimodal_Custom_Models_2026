@@ -82,36 +82,82 @@ class MultimodalTrainer:
             self.loss_fn = ClipCELoss()
             logger.info("Configured standard ClipCELoss.")
 
-        # Optimizer: AdamW
-        weight_decay = getattr(self.config, "weight_decay", 0.05)
-        self.optimizer = optimizer if optimizer is not None else optim.AdamW(
-            self.model.parameters(),
-            lr=self.config.learning_rate,
-            weight_decay=weight_decay
-        )
-
-        # Scheduler: OneCycleLR with 5% warmup and cosine annealing
+        # Two-Phase Warmup settings
+        self.enable_two_phase_warmup = getattr(self.config, "enable_two_phase_warmup", True)
+        self.phase1_warmup_epochs = getattr(self.config, "phase1_warmup_epochs", 200)
+        self.aux_loss_weight = getattr(self.config, "aux_loss_weight", 0.3)
+        self.weight_decay = getattr(self.config, "weight_decay", 0.05)
+        self.steps_per_epoch = max(1, len(self.train_loader))
         self.use_onecycle = getattr(self.config, "use_onecycle", True)
-        steps_per_epoch = max(1, len(self.train_loader))
-        if self.use_onecycle:
-            self.scheduler = optim.lr_scheduler.OneCycleLR(
-                self.optimizer,
-                max_lr=self.config.learning_rate,
-                epochs=self.config.epochs,
-                steps_per_epoch=steps_per_epoch,
-                pct_start=0.05,
-                anneal_strategy='cos',
-                div_factor=25,
-                final_div_factor=1000
+
+        if self.enable_two_phase_warmup and self.phase1_warmup_epochs > 0:
+            self.current_phase = 1
+            if hasattr(self.loss_fn, "only_backbones"):
+                self.loss_fn.only_backbones = True
+
+            # Freeze fusion head for Phase 1
+            if hasattr(self.model, "fusion"):
+                for p in self.model.fusion.parameters():
+                    p.requires_grad = False
+            logger.info(f"Phase 1 Warmup active: Multimodal Fusion FROZEN for first {self.phase1_warmup_epochs} epochs.")
+
+            # Optimizer for Phase 1: only trainable params (backbones + aux heads)
+            trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+            self.optimizer = optimizer if optimizer is not None else optim.AdamW(
+                trainable_params,
+                lr=self.config.learning_rate,
+                weight_decay=self.weight_decay
             )
-            logger.info(f"Configured OneCycleLR: max_lr={self.config.learning_rate}, epochs={self.config.epochs}, pct_start=0.05.")
+
+            # Scheduler for Phase 1
+            if self.use_onecycle:
+                self.scheduler = optim.lr_scheduler.OneCycleLR(
+                    self.optimizer,
+                    max_lr=self.config.learning_rate,
+                    epochs=self.phase1_warmup_epochs,
+                    steps_per_epoch=self.steps_per_epoch,
+                    pct_start=0.05,
+                    anneal_strategy='cos',
+                    div_factor=25,
+                    final_div_factor=1000
+                )
+                logger.info(f"Phase 1 OneCycleLR configured: max_lr={self.config.learning_rate}, epochs={self.phase1_warmup_epochs}.")
+            else:
+                self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                    self.optimizer,
+                    T_max=self.phase1_warmup_epochs,
+                    eta_min=1e-6
+                )
         else:
-            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=self.config.epochs,
-                eta_min=1e-6
+            self.current_phase = 2
+            if hasattr(self.loss_fn, "only_backbones"):
+                self.loss_fn.only_backbones = False
+
+            self.optimizer = optimizer if optimizer is not None else optim.AdamW(
+                self.model.parameters(),
+                lr=self.config.learning_rate,
+                weight_decay=self.weight_decay
             )
-            logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min=1e-6.")
+
+            if self.use_onecycle:
+                self.scheduler = optim.lr_scheduler.OneCycleLR(
+                    self.optimizer,
+                    max_lr=self.config.learning_rate,
+                    epochs=self.config.epochs,
+                    steps_per_epoch=self.steps_per_epoch,
+                    pct_start=0.05,
+                    anneal_strategy='cos',
+                    div_factor=25,
+                    final_div_factor=1000
+                )
+                logger.info(f"Configured OneCycleLR: max_lr={self.config.learning_rate}, epochs={self.config.epochs}, pct_start=0.05.")
+            else:
+                self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                    self.optimizer,
+                    T_max=self.config.epochs,
+                    eta_min=1e-6
+                )
+                logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min=1e-6.")
 
         # Evaluator and Timer
         self.evaluator = MultimodalEvaluator(model=self.model, loss_fn=self.loss_fn)
@@ -136,6 +182,7 @@ class MultimodalTrainer:
         os.makedirs(self.run_dir, exist_ok=True)
         self.logger = HistoryLogger(log_dir=self.run_dir)
         self.best_checkpoint_path = os.path.join(self.run_dir, 'best_model.pth')
+        self.phase1_checkpoint_path = os.path.join(self.run_dir, 'best_phase1_backbone.pth')
         self.last_checkpoint_path = os.path.join(self.run_dir, 'last_model.pth')
 
         logger.info("==================================================")
@@ -146,6 +193,7 @@ class MultimodalTrainer:
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
         logger.info(f"  - Monitor Metric:           {self.config.monitor}")
+        logger.info(f"  - Two-Phase Warmup:         {self.enable_two_phase_warmup} (Phase 1: {self.phase1_warmup_epochs} epochs)")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
@@ -180,7 +228,10 @@ class MultimodalTrainer:
             loss_val = loss.item()
             total_loss += loss_val
 
-            logits = outputs['clipwise_output']
+            if self.current_phase == 1 and 'logits_video' in outputs and 'logits_audio' in outputs:
+                logits = (outputs['logits_video'] + outputs['logits_audio']) / 2.0
+            else:
+                logits = outputs['clipwise_output']
             train_preds.append(logits.detach().cpu().numpy())
             train_targets.append(targets.detach().cpu().numpy())
 
@@ -312,7 +363,54 @@ class MultimodalTrainer:
         else:
             best_val_metric = float('inf')
 
+        best_phase1_metric = -1.0
         for epoch in range(1, self.config.epochs + 1):
+            # Check for transition to Phase 2
+            if self.enable_two_phase_warmup and self.phase1_warmup_epochs > 0:
+                if epoch == self.phase1_warmup_epochs + 1 and self.current_phase == 1:
+                    logger.info("==================================================")
+                    logger.info(f">>> TRANSITION TO PHASE 2 (EPOCH {epoch:03d}): UNFREEZING MULTIMODAL FUSION & RE-INITIALIZING OPTIMIZER...")
+                    self.current_phase = 2
+                    if hasattr(self.loss_fn, "only_backbones"):
+                        self.loss_fn.only_backbones = False
+
+                    # Unfreeze fusion parameters
+                    if hasattr(self.model, "fusion"):
+                        for p in self.model.fusion.parameters():
+                            p.requires_grad = True
+
+                    # Setup Discriminative LR optimizer:
+                    # Fusion: max_lr = config.learning_rate (1e-3)
+                    # Backbones: max_lr = config.learning_rate * 0.2 (2e-4)
+                    fusion_params = list(self.model.fusion.parameters()) if hasattr(self.model, "fusion") else []
+                    other_params = [p for n, p in self.model.named_parameters() if not n.startswith("fusion.")]
+                    param_groups = [
+                        {"params": fusion_params, "lr": self.config.learning_rate},
+                        {"params": other_params, "lr": self.config.learning_rate * 0.2}
+                    ]
+                    self.optimizer = optim.AdamW(param_groups, weight_decay=self.weight_decay)
+
+                    remaining_epochs = max(1, self.config.epochs - self.phase1_warmup_epochs)
+                    if self.use_onecycle:
+                        self.scheduler = optim.lr_scheduler.OneCycleLR(
+                            self.optimizer,
+                            max_lr=[self.config.learning_rate, self.config.learning_rate * 0.2],
+                            epochs=remaining_epochs,
+                            steps_per_epoch=self.steps_per_epoch,
+                            pct_start=0.05,
+                            anneal_strategy='cos',
+                            div_factor=25,
+                            final_div_factor=1000
+                        )
+                    else:
+                        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                            self.optimizer,
+                            T_max=remaining_epochs,
+                            eta_min=1e-6
+                        )
+                    logger.info(f">>> Discriminative LR configured: Fusion={self.config.learning_rate}, Backbones={self.config.learning_rate * 0.2} (Remaining: {remaining_epochs} epochs)")
+                    logger.info("==================================================")
+
             train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
             if not self.use_onecycle:
                 self.scheduler.step()
@@ -325,44 +423,62 @@ class MultimodalTrainer:
             val_qwk = float(val_stats.get('qwk', 0.0))
             val_mAP = float(np.mean(val_stats['average_precision']))
             val_mae = float(val_stats.get('ordinal_mae', 0.0))
+            val_acc_v = float(val_stats.get('acc_video', 0.0))
+            val_acc_a = float(val_stats.get('acc_audio', 0.0))
+            val_mean_backbone = float(val_stats.get('mean_backbone_acc', (val_acc_v + val_acc_a) / 2.0))
 
-            logger.info(
-                f"Epoch {epoch:03d}: "
-                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | "
-                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
-            )
+            if self.current_phase == 1:
+                logger.info(
+                    f"Epoch {epoch:03d} [PHASE 1 - BACKBONES WARMUP]: "
+                    f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | "
+                    f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} | Val Acc Audio = {val_acc_a:.4f} | "
+                    f"Val Mean Acc = {val_mean_backbone:.4f} | Fusion: [FROZEN]"
+                )
+            else:
+                logger.info(
+                    f"Epoch {epoch:03d} [PHASE 2 - MULTIMODAL TOURNAMENT]: "
+                    f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | "
+                    f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} | Val Acc Audio = {val_acc_a:.4f} | "
+                    f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
+                )
 
             # Determine if this is the best checkpoint
             is_best = False
-            if self.config.monitor == 'qwk':
-                score = val_qwk
-                if val_qwk > best_val_metric:
-                    best_val_metric = val_qwk
-                    is_best = True
-            elif self.config.monitor == 'accuracy':
-                score = val_acc
-                if val_acc > best_val_metric:
-                    best_val_metric = val_acc
-                    is_best = True
+            if self.current_phase == 1:
+                if val_mean_backbone > best_phase1_metric:
+                    best_phase1_metric = val_mean_backbone
+                    torch.save(self.model.state_dict(), self.phase1_checkpoint_path)
+                    logger.info(f"[*] New best Phase-1 Backbones performance! Saved: '{self.phase1_checkpoint_path}' (Mean Acc = {best_phase1_metric:.5f})")
             else:
-                score = -val_loss
-                if val_loss < best_val_metric:
-                    best_val_metric = val_loss
-                    is_best = True
+                if self.config.monitor == 'qwk':
+                    score = val_qwk
+                    if val_qwk > best_val_metric:
+                        best_val_metric = val_qwk
+                        is_best = True
+                elif self.config.monitor == 'accuracy':
+                    score = val_acc
+                    if val_acc > best_val_metric:
+                        best_val_metric = val_acc
+                        is_best = True
+                else:
+                    score = -val_loss
+                    if val_loss < best_val_metric:
+                        best_val_metric = val_loss
+                        is_best = True
 
-            if is_best:
-                best_epoch = epoch
-                best_acc = val_acc
-                best_qwk = val_qwk
-                best_mAP = val_mAP
-                best_loss = val_loss
-                best_val_statistics = val_stats
-                torch.save(self.model.state_dict(), self.best_checkpoint_path)
-                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {best_val_metric:.5f})")
+                if is_best:
+                    best_epoch = epoch
+                    best_acc = val_acc
+                    best_qwk = val_qwk
+                    best_mAP = val_mAP
+                    best_loss = val_loss
+                    best_val_statistics = val_stats
+                    torch.save(self.model.state_dict(), self.best_checkpoint_path)
+                    logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {best_val_metric:.5f})")
 
-            logger.info(
-                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f}"
-            )
+                logger.info(
+                    f"Current best (Phase 2): Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f}"
+                )
 
             # Always save last checkpoint
             torch.save(self.model.state_dict(), self.last_checkpoint_path)

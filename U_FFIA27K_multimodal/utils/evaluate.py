@@ -88,6 +88,12 @@ class MultimodalEvaluator(BaseEvaluator):
                 batch_logits.detach().float().cpu().numpy()
             )
 
+            if isinstance(batch_output, dict):
+                if 'logits_video' in batch_output and batch_output['logits_video'] is not None:
+                    self._append_to_dict(output_dict, 'logits_video', batch_output['logits_video'].detach().float().cpu().numpy())
+                if 'logits_audio' in batch_output and batch_output['logits_audio'] is not None:
+                    self._append_to_dict(output_dict, 'logits_audio', batch_output['logits_audio'].detach().float().cpu().numpy())
+
             if 'target' in batch_data_dict:
                 tgt = batch_data_dict['target']
                 if hasattr(tgt, 'detach'):
@@ -153,10 +159,23 @@ class MultimodalEvaluator(BaseEvaluator):
             ordinal_mae = float(np.mean(np.abs(clipwise_output_acc - target_acc)))
             qwk = 0.0
 
+        acc_video = 0.0
+        acc_audio = 0.0
+        if 'logits_video' in output_dict:
+            pred_v = np.argmax(output_dict['logits_video'], axis=1)
+            acc_video = float(accuracy_score(target_acc, pred_v))
+        if 'logits_audio' in output_dict:
+            pred_a = np.argmax(output_dict['logits_audio'], axis=1)
+            acc_audio = float(accuracy_score(target_acc, pred_a))
+        mean_backbone_acc = float((acc_video + acc_audio) / 2.0)
+
         statistics = {
             'loss': mean_loss,
             'average_precision': average_precision,
             'accuracy': acc,
+            'acc_video': acc_video,
+            'acc_audio': acc_audio,
+            'mean_backbone_acc': mean_backbone_acc,
             'qwk': qwk,
             'ordinal_mae': ordinal_mae,
             'auc': auc,

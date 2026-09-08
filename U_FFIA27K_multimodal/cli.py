@@ -211,6 +211,10 @@ def mode_train(args: argparse.Namespace) -> None:
     ]
     if args.dry_run:
         sys.argv.append("--dry-run")
+    if getattr(args, "no_two_phase", False):
+        sys.argv.append("--no-two-phase")
+    if getattr(args, "phase1_epochs", None) is not None:
+        sys.argv.extend(["--phase1-epochs", str(args.phase1_epochs)])
     run_main()
 
 
@@ -287,6 +291,17 @@ def main() -> None:
         "--dry-run",
         action="store_true",
         help="Perform pre-flight verification only without running full training."
+    )
+    parser.add_argument(
+        "--no-two-phase",
+        action="store_true",
+        help="Disable two-phase warmup and train end-to-end directly."
+    )
+    parser.add_argument(
+        "--phase1-epochs",
+        type=int,
+        default=None,
+        help="Number of epochs for Phase 1 backbone warmup (default: 200)."
     )
 
     args = parser.parse_args()

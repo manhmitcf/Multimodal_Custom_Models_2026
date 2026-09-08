@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Dict, Any, Optional
 
 from features.motion_kinematics import FishMotionKinematics7Ch, FishMotionKinematics10Ch
@@ -62,11 +63,16 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Gated Bilateral Boundary Fusion (~0.10M)
+        # 3. Gated Bilateral Boundary Fusion (~0.14M)
         self.fusion = GatedBilateralBoundaryFusion(
             dim=embed_dim,
             dropout=0.1
         )
+
+        # 4. Auxiliary Unimodal Classifier Heads (~1.8K params)
+        # Allows independent supervision, accuracy tracking, and two-phase warmup
+        self.aux_head_video = nn.Linear(embed_dim, classes_num)
+        self.aux_head_audio = nn.Linear(embed_dim, classes_num)
 
     def forward(
         self,
@@ -98,6 +104,12 @@ class MultimodalBoundaryAwareNet(nn.Module):
         f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_7ch)
         f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(mel_spec)
 
+        # Auxiliary Unimodal Logits & Probabilities (for standalone evaluation & Phase 1 warmup)
+        logits_video = self.aux_head_video(f_video)
+        logits_audio = self.aux_head_audio(f_audio)
+        prob_video = F.softmax(logits_video, dim=-1)
+        prob_audio = F.softmax(logits_audio, dim=-1)
+
         # Step 3: Gated Bilateral Boundary Fusion
         fusion_outputs = self.fusion(
             f_video=f_video,
@@ -113,6 +125,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "clipwise_output": fusion_outputs["logits"],
             "logits": fusion_outputs["logits"],
             "probabilities": fusion_outputs["probabilities"],
+            "logits_video": logits_video,
+            "logits_audio": logits_audio,
+            "prob_video": prob_video,
+            "prob_audio": prob_audio,
             "uncertainty": fusion_outputs.get("uncertainty"),
             "modality_weights": fusion_outputs.get("modality_weights"),
             "intensity_score": fusion_outputs.get("intensity_score"),

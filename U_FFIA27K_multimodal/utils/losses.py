@@ -43,12 +43,16 @@ class PairwiseTournamentLoss(BaseLoss):
         weight_act: float = 0.5,
         weight_pairwise: float = 0.5,
         weight_ce: float = 1.0,
+        aux_loss_weight: float = 0.3,
+        only_backbones: bool = False,
         **kwargs
     ) -> None:
         super().__init__()
         self.weight_act = float(kwargs.get("weight_act", weight_act))
         self.weight_pairwise = float(kwargs.get("weight_pairwise", weight_pairwise))
         self.weight_ce = float(kwargs.get("weight_ce", weight_ce))
+        self.aux_loss_weight = float(kwargs.get("aux_loss_weight", aux_loss_weight))
+        self.only_backbones = bool(kwargs.get("only_backbones", only_backbones))
 
     def _get_raw_targets(self, targets: torch.Tensor) -> torch.Tensor:
         if targets.ndim > 1 and targets.size(-1) > 1:
@@ -62,6 +66,16 @@ class PairwiseTournamentLoss(BaseLoss):
     def forward(self, output_dict: dict, target_dict: dict, epoch: int = 1) -> torch.Tensor:
         targets = target_dict['target']
         y_raw = self._get_raw_targets(targets)  # [B]: 0=None, 1=Strong, 2=Medium, 3=Weak
+
+        # Auxiliary Unimodal Backbone Losses
+        logits_v = output_dict.get("logits_video")
+        logits_a = output_dict.get("logits_audio")
+        loss_v = F.cross_entropy(logits_v, y_raw) if logits_v is not None else torch.tensor(0.0, device=targets.device)
+        loss_a = F.cross_entropy(logits_a, y_raw) if logits_a is not None else torch.tensor(0.0, device=targets.device)
+
+        if self.only_backbones:
+            # Phase 1: train only unimodal backbones with clean auxiliary supervision
+            return loss_v + loss_a
 
         # 1. Level 1: Feeding Activity Gating Loss (None=0 vs Feeding=1)
         # Active feeding: Strong (1), Medium (2), Weak (3) -> Label 1.0
@@ -111,11 +125,12 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             loss_ce = torch.tensor(0.0, device=targets.device)
 
-        # Total Composite Tournament Loss
+        # Total Composite Tournament Loss + Auxiliary Regularization
         total_loss = (
             self.weight_ce * loss_ce +
             self.weight_act * loss_act +
-            self.weight_pairwise * loss_pairwise
+            self.weight_pairwise * loss_pairwise +
+            self.aux_loss_weight * (loss_v + loss_a)
         )
 
         return total_loss

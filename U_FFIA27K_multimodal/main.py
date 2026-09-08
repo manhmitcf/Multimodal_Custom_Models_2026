@@ -115,19 +115,17 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
             raise ValueError(f"Expected output shape (2, 4), got {out['clipwise_output'].shape}")
 
         # 3. Test backward pass & gradient flow
-        loss_type = getattr(config, "loss_type", "ordinal_wasserstein")
-        if loss_type == "ordinal_wasserstein":
-            from utils.losses import OrdinalWassersteinEvidentialLoss
-            loss_fn = OrdinalWassersteinEvidentialLoss(
-                classes_num=config.model.classes_num,
-                sigma=getattr(config, "ordinal_sigma", 0.5),
-                lambda_ord_start=getattr(config, "lambda_ord_start", 0.2),
-                lambda_ord_end=getattr(config, "lambda_ord_end", 2.0),
-                total_epochs=config.epochs
+        loss_type = getattr(config, "loss_type", "pairwise_tournament")
+        from utils.losses import PairwiseTournamentLoss, ClipCELoss
+        if loss_type in ("pairwise_tournament", "bilateral_boundary", "ordinal_wasserstein"):
+            loss_fn = PairwiseTournamentLoss(
+                weight_act=getattr(config, "weight_act", 0.5),
+                weight_pairwise=getattr(config, "weight_pairwise", 0.5),
+                weight_ce=getattr(config, "weight_ce", 1.0),
+                aux_loss_weight=getattr(config, "aux_loss_weight", 0.3)
             ).to(device)
             loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
         else:
-            from utils.losses import ClipCELoss
             loss_fn = ClipCELoss()
             loss = loss_fn(out, {"target": dummy_targets})
         loss.backward()
@@ -353,6 +351,8 @@ def run_training_session(
     artifact_upload_config_path: Optional[str] = None,
     dry_run: bool = False,
     device_str: Optional[str] = None,
+    enable_two_phase_warmup: Optional[bool] = None,
+    phase1_warmup_epochs: Optional[int] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -361,6 +361,11 @@ def run_training_session(
         artifact_upload_config_path = str(pkg_dir / "config" / "artifact_upload_config.json")
 
     config = TrainConfig.from_json(train_config_path)
+    if enable_two_phase_warmup is not None:
+        config.enable_two_phase_warmup = enable_two_phase_warmup
+    if phase1_warmup_epochs is not None:
+        config.phase1_warmup_epochs = phase1_warmup_epochs
+
     if device_str is not None:
         device = torch.device(device_str)
     else:
@@ -459,13 +464,19 @@ def main() -> None:
     parser.add_argument("--upload-config", type=str, default=None, help="Path to artifact_upload_config.json")
     parser.add_argument("--device", type=str, default=None, help="Target compute device (cuda or cpu)")
     parser.add_argument("--dry-run", action="store_true", help="Run pre-flight check only without training")
+    parser.add_argument("--no-two-phase", action="store_true", help="Disable two-phase warmup and train end-to-end directly")
+    parser.add_argument("--phase1-epochs", type=int, default=None, help="Number of epochs for Phase 1 backbone warmup")
     args = parser.parse_args()
+
+    enable_two_phase = False if args.no_two_phase else None
 
     run_training_session(
         train_config_path=args.config,
         artifact_upload_config_path=args.upload_config,
         dry_run=args.dry_run,
         device_str=args.device,
+        enable_two_phase_warmup=enable_two_phase,
+        phase1_warmup_epochs=args.phase1_epochs,
     )
 
 

@@ -24,6 +24,9 @@
   "weight_act": 0.5,
   "weight_pairwise": 0.5,
   "weight_ce": 1.0,
+  "enable_two_phase_warmup": true,
+  "phase1_warmup_epochs": 200,
+  "aux_loss_weight": 0.3,
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,

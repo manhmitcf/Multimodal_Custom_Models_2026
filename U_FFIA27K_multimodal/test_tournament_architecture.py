@@ -119,10 +119,60 @@ def test_gradient_flow_tournament_loss():
     print(f"  Composite Tournament Loss: {loss.item():.4f}")
 
 
+def test_two_phase_warmup_isolation_and_unfreeze():
+    print("\n" + "=" * 65)
+    print("TEST 4: TWO-PHASE WARMUP ISOLATION & UNFREEZE VERIFICATION")
+    print("=" * 65)
+
+    model = MultimodalBoundaryAwareNet(num_frames=2)
+    B = 4
+    v_input = torch.randn(B, 2, 3, 224, 224)
+    a_input = torch.randn(B, 64000)
+    targets = {"target": torch.tensor([0, 1, 2, 3])}
+
+    # --- Phase 1: Fusion FROZEN, Backbones TRAINABLE ---
+    for p in model.fusion.parameters():
+        p.requires_grad = False
+
+    criterion_phase1 = PairwiseTournamentLoss(only_backbones=True)
+    outputs_phase1 = model(v_input, a_input)
+
+    assert "logits_video" in outputs_phase1 and outputs_phase1["logits_video"].shape == (B, 4)
+    assert "logits_audio" in outputs_phase1 and outputs_phase1["logits_audio"].shape == (B, 4)
+
+    loss_phase1 = criterion_phase1(outputs_phase1, targets)
+    loss_phase1.backward()
+
+    # Check that fusion parameters received ZERO gradients
+    fusion_grads = [p.grad for p in model.fusion.parameters()]
+    assert all(g is None for g in fusion_grads), "Phase 1 violation: Fusion parameters received gradients while frozen!"
+
+    # Check that backbones and auxiliary heads received healthy gradients
+    backbone_params = [p for n, p in model.named_parameters() if not n.startswith("fusion.")]
+    assert all(p.grad is not None for p in backbone_params), "Phase 1 violation: Backbones did not receive gradients!"
+    print("[PASSED] Phase 1 Isolation: Fusion 100% frozen, Video/Audio backbones 100% trained via auxiliary heads!")
+
+    # --- Phase 2: Fusion UNFROZEN, Full End-to-End Joint Training ---
+    model.zero_grad()
+    for p in model.fusion.parameters():
+        p.requires_grad = True
+
+    criterion_phase2 = PairwiseTournamentLoss(only_backbones=False, aux_loss_weight=0.3)
+    outputs_phase2 = model(v_input, a_input)
+    loss_phase2 = criterion_phase2(outputs_phase2, targets)
+    loss_phase2.backward()
+
+    all_tensors = sum(1 for _ in model.parameters())
+    all_grads = sum(1 for p in model.parameters() if p.grad is not None)
+    assert all_grads == all_tensors, f"Phase 2 violation: only {all_grads}/{all_tensors} got gradients!"
+    print(f"[PASSED] Phase 2 Joint Training: All {all_grads}/{all_tensors} parameters receive healthy gradients!")
+
+
 if __name__ == "__main__":
     test_parameter_budget()
     test_tournament_forward_and_pairwise()
     test_gradient_flow_tournament_loss()
+    test_two_phase_warmup_isolation_and_unfreeze()
     print("\n" + "=" * 65)
-    print("ALL TOURNAMENT ARCHITECTURE TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("ALL TOURNAMENT & TWO-PHASE TESTS PASSED SUCCESSFULLY! (100% READY)")
     print("=" * 65 + "\n")
