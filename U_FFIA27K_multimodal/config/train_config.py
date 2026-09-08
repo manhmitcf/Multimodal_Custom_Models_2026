@@ -176,5 +176,13 @@ class TrainConfig(BaseModel):
             data = json.load(f)
         return cls(**data)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary compatible with Pydantic v1 and v2."""
+        if hasattr(self, "model_dump") and callable(self.model_dump):
+            return self.model_dump()
+        elif hasattr(self, "dict") and callable(self.dict):
+            return self.dict()
+        return dict(self)
+
 
 MultimodalTrainConfig = TrainConfig

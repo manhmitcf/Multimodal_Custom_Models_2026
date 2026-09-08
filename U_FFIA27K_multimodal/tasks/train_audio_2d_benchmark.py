@@ -48,6 +48,22 @@ def parse_targets(target_tensor: torch.Tensor) -> torch.Tensor:
     return target_tensor.long()
 
 
+def _config_to_dict(cfg: Any) -> Dict[str, Any]:
+    """Serialize config to dictionary across Pydantic v1, v2, dataclasses and dicts."""
+    if hasattr(cfg, "model_dump") and callable(cfg.model_dump):
+        return cfg.model_dump()
+    if hasattr(cfg, "dict") and callable(cfg.dict):
+        return cfg.dict()
+    if hasattr(cfg, "to_dict") and callable(cfg.to_dict):
+        return cfg.to_dict()
+    if hasattr(cfg, "__dict__"):
+        return cfg.__dict__
+    try:
+        return dict(cfg)
+    except Exception:
+        return {"raw_config": str(cfg)}
+
+
 def evaluate_model(
     model: nn.Module,
     audio_frontend: AudioFrontend,
@@ -312,7 +328,7 @@ def run_audio_2d_benchmark(
                     'model_state_dict': model.state_dict(),
                     'test_acc': test_metrics['accuracy'],
                     'test_qwk': test_metrics['qwk'],
-                    'config': config.to_dict()
+                    'config': _config_to_dict(config)
                 }, item['ckpt_file'])
 
             best_marker = "(*BEST*)" if is_best else ""
