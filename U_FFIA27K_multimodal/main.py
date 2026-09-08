@@ -122,9 +122,19 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
                 weight_act=getattr(config, "weight_act", 0.5),
                 weight_pairwise=getattr(config, "weight_pairwise", 0.5),
                 weight_ce=getattr(config, "weight_ce", 1.0),
-                aux_loss_weight=getattr(config, "aux_loss_weight", 0.3)
+                weight_video_loss=getattr(config, "weight_video_loss", 0.3),
+                weight_audio_loss=getattr(config, "weight_audio_loss", 0.3),
+                enable_kd=getattr(config, "enable_kd", True),
+                kd_temperature_video=getattr(config, "kd_temperature_video", 3.0),
+                kd_temperature_audio=getattr(config, "kd_temperature_audio", 2.0),
+                kd_alpha_video=getattr(config, "kd_alpha_video", 0.5),
+                kd_alpha_audio=getattr(config, "kd_alpha_audio", 0.5),
             ).to(device)
-            loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
+            target_dict = {"target": dummy_targets}
+            if getattr(config, "enable_kd", True):
+                target_dict["teacher_logits_video"] = torch.randn(2, 4, device=device)
+                target_dict["teacher_logits_audio"] = torch.randn(2, 4, device=device)
+            loss = loss_fn(out, target_dict, epoch=1)
         else:
             loss_fn = ClipCELoss()
             loss = loss_fn(out, {"target": dummy_targets})
@@ -353,6 +363,9 @@ def run_training_session(
     device_str: Optional[str] = None,
     enable_two_phase_warmup: Optional[bool] = None,
     phase1_warmup_epochs: Optional[int] = None,
+    enable_kd: Optional[bool] = None,
+    teacher_video_ckpt: Optional[str] = None,
+    teacher_audio_ckpt: Optional[str] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -365,6 +378,12 @@ def run_training_session(
         config.enable_two_phase_warmup = enable_two_phase_warmup
     if phase1_warmup_epochs is not None:
         config.phase1_warmup_epochs = phase1_warmup_epochs
+    if enable_kd is not None:
+        config.enable_kd = enable_kd
+    if teacher_video_ckpt is not None:
+        config.teacher_video_ckpt = teacher_video_ckpt
+    if teacher_audio_ckpt is not None:
+        config.teacher_audio_ckpt = teacher_audio_ckpt
 
     if device_str is not None:
         device = torch.device(device_str)
@@ -466,6 +485,10 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Run pre-flight check only without training")
     parser.add_argument("--no-two-phase", action="store_true", help="Disable two-phase warmup and train end-to-end directly")
     parser.add_argument("--phase1-epochs", type=int, default=None, help="Number of epochs for Phase 1 backbone warmup")
+    parser.add_argument("--enable-kd", dest="enable_kd", action="store_true", default=None, help="Enable dual-teacher knowledge distillation")
+    parser.add_argument("--no-kd", dest="enable_kd", action="store_false", help="Disable dual-teacher knowledge distillation")
+    parser.add_argument("--teacher-video-ckpt", type=str, default=None, help="Path to Video Teacher (DenseNet121) checkpoint")
+    parser.add_argument("--teacher-audio-ckpt", type=str, default=None, help="Path to Audio Teacher (PANNS_Cnn6) checkpoint")
     args = parser.parse_args()
 
     enable_two_phase = False if args.no_two_phase else None
@@ -477,6 +500,9 @@ def main() -> None:
         device_str=args.device,
         enable_two_phase_warmup=enable_two_phase,
         phase1_warmup_epochs=args.phase1_epochs,
+        enable_kd=args.enable_kd,
+        teacher_video_ckpt=args.teacher_video_ckpt,
+        teacher_audio_ckpt=args.teacher_audio_ckpt,
     )
 
 

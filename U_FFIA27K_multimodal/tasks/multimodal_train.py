@@ -64,14 +64,41 @@ class MultimodalTrainer:
         self.train_config_path = train_config_path
 
         # Setup Loss
+        # Setup Knowledge Distillation (KD) Dual-Teacher Ensemble
+        self.enable_kd = getattr(self.config, "enable_kd", True)
+        self.teachers = None
+        if self.enable_kd:
+            try:
+                from models.teacher_loader import OfflineTeacherEnsemble
+                v_ckpt = getattr(self.config, "teacher_video_ckpt", "teachers/DenseNet121/DL_video/checkpoint/densenet121/fold_00/video_best.pt")
+                a_ckpt = getattr(self.config, "teacher_audio_ckpt", "teachers/PANNS_Cnn6/DL_audio/checkpoint/panns_cnn6/audio_best.pt")
+                self.teachers = OfflineTeacherEnsemble(
+                    video_ckpt_path=v_ckpt,
+                    audio_ckpt_path=a_ckpt,
+                    classes_num=getattr(self.config.model, "classes_num", 4),
+                    device=self.device
+                )
+                logger.info("Offline Dual-Teacher Ensemble loaded successfully: Distillation active throughout training.")
+            except Exception as exc:
+                logger.warning(f"Could not load teacher ensemble: {exc}. Disabling Knowledge Distillation.")
+                self.enable_kd = False
+
+        # Setup Loss
         loss_type = getattr(self.config, "loss_type", "pairwise_tournament")
         if loss_type == "pairwise_tournament":
             self.loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(self.config, "weight_act", 0.5),
                 weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
                 weight_ce=getattr(self.config, "weight_ce", 1.0),
+                weight_video_loss=getattr(self.config, "weight_video_loss", 0.3),
+                weight_audio_loss=getattr(self.config, "weight_audio_loss", 0.3),
+                enable_kd=self.enable_kd,
+                kd_temperature_video=getattr(self.config, "kd_temperature_video", 3.0),
+                kd_temperature_audio=getattr(self.config, "kd_temperature_audio", 2.0),
+                kd_alpha_video=getattr(self.config, "kd_alpha_video", 0.5),
+                kd_alpha_audio=getattr(self.config, "kd_alpha_audio", 0.5),
             ).to(self.device)
-            logger.info("Configured PairwiseTournamentLoss (Activity Gate + 3 Pairwise Cross Boundaries B12, B23, B13).")
+            logger.info(f"Configured PairwiseTournamentLoss (Activity Gate + 3 Pairwise Cross Boundaries B12, B23, B13 | KD={self.enable_kd}).")
         elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
             self.loss_fn = BilateralBoundaryLoss(
                 lambda_emd=getattr(self.config, "lambda_emd", 0.5),
@@ -83,7 +110,7 @@ class MultimodalTrainer:
             logger.info("Configured standard ClipCELoss.")
 
         # Two-Phase Warmup settings
-        self.enable_two_phase_warmup = getattr(self.config, "enable_two_phase_warmup", True)
+        self.enable_two_phase_warmup = getattr(self.config, "enable_two_phase_warmup", False)
         self.phase1_warmup_epochs = getattr(self.config, "phase1_warmup_epochs", 200)
         self.aux_loss_weight = getattr(self.config, "aux_loss_weight", 0.3)
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
@@ -133,16 +160,42 @@ class MultimodalTrainer:
             if hasattr(self.loss_fn, "only_backbones"):
                 self.loss_fn.only_backbones = False
 
+            # Discriminative LR parameter grouping: Fusion Head gets higher LR, Backbones get lower LR
+            fusion_params = []
+            backbone_params = []
+            if hasattr(self.model, "fusion"):
+                fusion_params.extend(list(self.model.fusion.parameters()))
+            if hasattr(self.model, "video_backbone"):
+                backbone_params.extend(list(self.model.video_backbone.parameters()))
+            if hasattr(self.model, "audio_backbone"):
+                backbone_params.extend(list(self.model.audio_backbone.parameters()))
+            if hasattr(self.model, "aux_head_video"):
+                backbone_params.extend(list(self.model.aux_head_video.parameters()))
+            if hasattr(self.model, "aux_head_audio"):
+                backbone_params.extend(list(self.model.aux_head_audio.parameters()))
+
+            assigned_ids = set(id(p) for p in fusion_params + backbone_params)
+            for p in self.model.parameters():
+                if id(p) not in assigned_ids:
+                    fusion_params.append(p)
+
+            lr_fusion = self.config.learning_rate
+            lr_backbones = self.config.learning_rate * 0.3
+
+            param_groups = [
+                {'params': [p for p in fusion_params if p.requires_grad], 'lr': lr_fusion, 'weight_decay': self.weight_decay},
+                {'params': [p for p in backbone_params if p.requires_grad], 'lr': lr_backbones, 'weight_decay': self.weight_decay}
+            ]
+
             self.optimizer = optimizer if optimizer is not None else optim.AdamW(
-                self.model.parameters(),
-                lr=self.config.learning_rate,
+                param_groups,
                 weight_decay=self.weight_decay
             )
 
             if self.use_onecycle:
                 self.scheduler = optim.lr_scheduler.OneCycleLR(
                     self.optimizer,
-                    max_lr=self.config.learning_rate,
+                    max_lr=[lr_fusion, lr_backbones],
                     epochs=self.config.epochs,
                     steps_per_epoch=self.steps_per_epoch,
                     pct_start=0.05,
@@ -150,7 +203,7 @@ class MultimodalTrainer:
                     div_factor=25,
                     final_div_factor=1000
                 )
-                logger.info(f"Configured OneCycleLR: max_lr={self.config.learning_rate}, epochs={self.config.epochs}, pct_start=0.05.")
+                logger.info(f"Configured OneCycleLR (Discriminative): max_lr=[Fusion: {lr_fusion:.2e}, Backbones: {lr_backbones:.2e}], epochs={self.config.epochs}, pct_start=0.05.")
             else:
                 self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                     self.optimizer,
@@ -193,6 +246,7 @@ class MultimodalTrainer:
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
         logger.info(f"  - Monitor Metric:           {self.config.monitor}")
+        logger.info(f"  - Knowledge Distillation:   {self.enable_kd} (Dual Teachers: DenseNet121 + PANNS_Cnn6)")
         logger.info(f"  - Two-Phase Warmup:         {self.enable_two_phase_warmup} (Phase 1: {self.phase1_warmup_epochs} epochs)")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
@@ -213,10 +267,16 @@ class MultimodalTrainer:
             self.optimizer.zero_grad()
             outputs = self.model(video, audio)
 
+            target_dict = {'target': targets}
+            if self.teachers is not None:
+                t_logits_v, t_logits_a = self.teachers(video, audio)
+                target_dict['teacher_logits_video'] = t_logits_v
+                target_dict['teacher_logits_audio'] = t_logits_a
+
             try:
-                loss = self.loss_fn(outputs, {'target': targets}, epoch=epoch)
+                loss = self.loss_fn(outputs, target_dict, epoch=epoch)
             except TypeError:
-                loss = self.loss_fn(outputs, {'target': targets})
+                loss = self.loss_fn(outputs, target_dict)
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
@@ -454,8 +514,9 @@ class MultimodalTrainer:
                     f"Val Mean Acc = {val_mean_backbone:.4f} | Fusion: [FROZEN]"
                 )
             else:
+                phase_tag = "KD END-TO-END" if self.enable_kd else "PHASE 2 - MULTIMODAL TOURNAMENT"
                 logger.info(
-                    f"Epoch {epoch:03d} [PHASE 2 - MULTIMODAL TOURNAMENT]: "
+                    f"Epoch {epoch:03d} [{phase_tag}]: "
                     f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | {lr_info} | "
                     f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} | Val Acc Audio = {val_acc_a:.4f} | "
                     f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
@@ -495,8 +556,9 @@ class MultimodalTrainer:
                     torch.save(self.model.state_dict(), self.best_checkpoint_path)
                     logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {best_val_metric:.5f})")
 
+                best_mode_tag = "End-to-End KD" if self.enable_kd else "Phase 2"
                 logger.info(
-                    f"Current best (Phase 2): Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f}"
+                    f"Current best ({best_mode_tag}): Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f}"
                 )
 
             # Always save last checkpoint

@@ -177,7 +177,14 @@ def mode_dry_run(args: argparse.Namespace) -> None:
         loss_fn = PairwiseTournamentLoss(
             weight_act=getattr(config, "weight_act", 0.5),
             weight_pairwise=getattr(config, "weight_pairwise", 0.5),
-            weight_ce=getattr(config, "weight_ce", 1.0)
+            weight_ce=getattr(config, "weight_ce", 1.0),
+            weight_video_loss=getattr(config, "weight_video_loss", 0.3),
+            weight_audio_loss=getattr(config, "weight_audio_loss", 0.3),
+            enable_kd=getattr(config, "enable_kd", True),
+            kd_temperature_video=getattr(config, "kd_temperature_video", 3.0),
+            kd_temperature_audio=getattr(config, "kd_temperature_audio", 2.0),
+            kd_alpha_video=getattr(config, "kd_alpha_video", 0.5),
+            kd_alpha_audio=getattr(config, "kd_alpha_audio", 0.5),
         ).to(device)
     else:
         print("[*] Running backward pass with OrdinalWassersteinEvidentialLoss...")
@@ -189,13 +196,37 @@ def mode_dry_run(args: argparse.Namespace) -> None:
             total_epochs=config.epochs
         ).to(device)
 
-    loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
+    target_dict = {"target": dummy_targets}
+    if getattr(config, "enable_kd", True):
+        target_dict["teacher_logits_video"] = torch.randn(2, 4, device=device)
+        target_dict["teacher_logits_audio"] = torch.randn(2, 4, device=device)
+
+    loss = loss_fn(out, target_dict, epoch=1)
     loss.backward()
 
     grads_ok = sum(1 for p in model.parameters() if p.requires_grad and p.grad is not None)
     total_trainable = sum(1 for p in model.parameters() if p.requires_grad)
     print(f"    - Parameters receiving gradients: {grads_ok} / {total_trainable}")
     assert grads_ok == total_trainable, f"Gradient flow broken: only {grads_ok}/{total_trainable} got gradients!"
+
+    # 3. Live Teacher Verification (if checkpoints are available)
+    if getattr(config, "enable_kd", True):
+        v_ckpt = getattr(config, "teacher_video_ckpt", "")
+        a_ckpt = getattr(config, "teacher_audio_ckpt", "")
+        if os.path.exists(v_ckpt) and os.path.exists(a_ckpt):
+            print("[*] Verifying OfflineTeacherEnsemble loading...")
+            try:
+                from models.teacher_loader import OfflineTeacherEnsemble
+                teachers = OfflineTeacherEnsemble(
+                    video_ckpt_path=v_ckpt,
+                    audio_ckpt_path=a_ckpt,
+                    classes_num=4,
+                    device=device
+                )
+                t_v, t_a = teachers(dummy_video, dummy_audio)
+                print(f"    - Teachers operational: Video Logits {tuple(t_v.shape)}, Audio Logits {tuple(t_a.shape)} on {device}")
+            except Exception as exc:
+                print(f"    - Warning during teacher check: {exc}")
 
     print("\n>>> [SUCCESS] 100% PRE-FLIGHT VERIFIED! All modules, device placement, and gradients are operational.")
     print("=================================================================")
@@ -215,6 +246,15 @@ def mode_train(args: argparse.Namespace) -> None:
         sys.argv.append("--no-two-phase")
     if getattr(args, "phase1_epochs", None) is not None:
         sys.argv.extend(["--phase1-epochs", str(args.phase1_epochs)])
+    if getattr(args, "enable_kd", None) is not None:
+        if args.enable_kd:
+            sys.argv.append("--enable-kd")
+        else:
+            sys.argv.append("--no-kd")
+    if getattr(args, "teacher_video_ckpt", None):
+        sys.argv.extend(["--teacher-video-ckpt", args.teacher_video_ckpt])
+    if getattr(args, "teacher_audio_ckpt", None):
+        sys.argv.extend(["--teacher-audio-ckpt", args.teacher_audio_ckpt])
     run_main()
 
 
@@ -302,6 +342,31 @@ def main() -> None:
         type=int,
         default=None,
         help="Number of epochs for Phase 1 backbone warmup (default: 200)."
+    )
+    parser.add_argument(
+        "--enable-kd",
+        dest="enable_kd",
+        action="store_true",
+        default=None,
+        help="Enable dual-teacher knowledge distillation."
+    )
+    parser.add_argument(
+        "--no-kd",
+        dest="enable_kd",
+        action="store_false",
+        help="Disable dual-teacher knowledge distillation."
+    )
+    parser.add_argument(
+        "--teacher-video-ckpt",
+        type=str,
+        default=None,
+        help="Path to Video Teacher (DenseNet121) checkpoint."
+    )
+    parser.add_argument(
+        "--teacher-audio-ckpt",
+        type=str,
+        default=None,
+        help="Path to Audio Teacher (PANNS_Cnn6) checkpoint."
     )
 
     args = parser.parse_args()
