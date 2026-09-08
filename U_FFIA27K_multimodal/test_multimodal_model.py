@@ -84,8 +84,10 @@ def test_multimodal_sota_net():
         "uncertainty_video", "uncertainty_audio", "modality_weights",
         "boundary_weights", "intensity_score", "expected_intensity",
         "cutoffs", "cum_probs", "kinematics_summary", "f_spatial",
-        "f_motion", "f_frequency", "f_rhythm", "f_fused"
+        "f_motion", "f_burst_v", "f_frequency", "f_rhythm",
+        "f_burst_a", "delta_burst", "f_fused"
     ]
+
     for k in expected_keys:
         assert k in out, f"Missing key in model output: '{k}'"
         print(f"  - Output '{k}': shape {list(out[k].shape)}")

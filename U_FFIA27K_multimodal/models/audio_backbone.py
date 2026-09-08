@@ -63,7 +63,7 @@ class EfficientATAudioBackbone(nn.Module):
         # Residual normalization
         self.norm_audio = nn.LayerNorm(embed_dim)
 
-    def forward(self, mel_spec: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, mel_spec: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
             mel_spec: Log-Mel Spectrogram [B, 1, Ta, 128]
@@ -72,6 +72,7 @@ class EfficientATAudioBackbone(nn.Module):
             f_audio: Joint acoustic embedding [B, embed_dim]
             f_frequency: Spectral frequency distribution feature [B, embed_dim]
             f_rhythm: Temporal rhythm cadence feature [B, embed_dim]
+            f_burst_a: Peak-to-Average splash contrast [B, embed_dim]
             tokens_audio: Sequence of temporal audio tokens [B, num_tokens, embed_dim]
         """
         # Feature extraction: [B, 1, Ta, 128] -> [B, 576, T', F'] -> conv_head -> [B, 1024, T', F']
@@ -99,7 +100,13 @@ class EfficientATAudioBackbone(nn.Module):
         tokens_audio = rhythm_pooled.transpose(1, 2)  # [B, num_tokens, embed_dim]
         f_rhythm = tokens_audio.mean(dim=1)          # [B, embed_dim]
 
-        # 3. Joint Acoustic Vector fusing frequency profile and temporal rhythm
-        f_audio = self.norm_audio(f_frequency + f_rhythm)
+        # 3. Peak-to-Average Dynamic Contrast (Peak Splash Burst Intensity)
+        f_mean_a = tokens_audio.mean(dim=1)
+        f_peak_a, _ = torch.max(tokens_audio, dim=1)
+        f_burst_a = f_peak_a - f_mean_a  # [B, embed_dim]
 
-        return f_audio, f_frequency, f_rhythm, tokens_audio
+        # 4. Joint Acoustic Vector fusing frequency profile, temporal rhythm, and burst contrast
+        f_audio = self.norm_audio(f_frequency + f_rhythm + f_burst_a)
+
+        return f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio
+

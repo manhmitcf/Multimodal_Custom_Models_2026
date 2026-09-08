@@ -100,15 +100,17 @@ class MultimodalBoundaryAwareNet(nn.Module):
             mel_spec = audio_input
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
-        f_video, f_spatial, f_motion, tokens_video = self.video_backbone(frames_7ch)
-        f_audio, f_frequency, f_rhythm, tokens_audio = self.audio_backbone(mel_spec)
+        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_7ch)
+        f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(mel_spec)
 
-        # Step 3: Multimodal Boundary-Aware Fusion & Ordinal Decision
+        # Step 3: Multimodal Boundary-Aware Fusion & Ordinal Decision (with Burst Contrast)
         fusion_outputs = self.fusion(
             f_video=f_video,
             f_audio=f_audio,
             tokens_video=tokens_video,
-            tokens_audio=tokens_audio
+            tokens_audio=tokens_audio,
+            f_burst_v=f_burst_v,
+            f_burst_a=f_burst_a
         )
 
         # Step 4: Assemble Comprehensive Output
@@ -128,11 +130,15 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "kinematics_summary": kinematics_summary,
             "f_spatial": f_spatial,
             "f_motion": f_motion,
+            "f_burst_v": f_burst_v,
             "f_frequency": f_frequency,
             "f_rhythm": f_rhythm,
+            "f_burst_a": f_burst_a,
+            "delta_burst": fusion_outputs["delta_burst"],
             "f_fused": fusion_outputs["f_fused"],
         }
         return outputs
+
 
 
 # Aliases for 100% backwards compatibility with training & evaluation pipelines

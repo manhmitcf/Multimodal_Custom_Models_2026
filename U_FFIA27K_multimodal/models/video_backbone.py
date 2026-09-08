@@ -98,7 +98,7 @@ class MobileViTVideoBackbone(nn.Module):
         self.temporal_encoder = nn.TransformerEncoder(encoder_layer, num_layers=1)
         self.norm_video = nn.LayerNorm(embed_dim)
 
-    def forward(self, frames: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, frames: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass.
 
@@ -109,6 +109,7 @@ class MobileViTVideoBackbone(nn.Module):
             f_video: Joint spatiotemporal video embedding [B, embed_dim]
             f_spatial: Pure spatial visual appearance feature [B, embed_dim]
             f_motion: Motion dynamics feature across consecutive frame transitions [B, embed_dim]
+            f_burst_v: Peak-to-Average dynamic contrast [B, embed_dim] (burst strike intensity)
             tokens_video: Sequence of frame tokens [B, T, embed_dim] for Bi-CA Multimodal Fusion
         """
         B, T, C, H, W = frames.shape
@@ -133,7 +134,13 @@ class MobileViTVideoBackbone(nn.Module):
         else:
             f_motion = temporal_tokens[:, 0]
 
-        # 3. Joint Spatiotemporal Video Embedding
-        f_video = self.norm_video(f_spatial + f_motion)  # [B, embed_dim]
+        # 3. Peak-to-Average Dynamic Contrast (Burst feeding strike intensity)
+        f_mean_v = temporal_tokens.mean(dim=1)
+        f_peak_v, _ = torch.max(temporal_tokens, dim=1)
+        f_burst_v = f_peak_v - f_mean_v  # [B, embed_dim]
 
-        return f_video, f_spatial, f_motion, temporal_tokens
+        # 4. Joint Spatiotemporal Video Embedding incorporating burst contrast
+        f_video = self.norm_video(f_spatial + f_motion + f_burst_v)  # [B, embed_dim]
+
+        return f_video, f_spatial, f_motion, f_burst_v, temporal_tokens
+

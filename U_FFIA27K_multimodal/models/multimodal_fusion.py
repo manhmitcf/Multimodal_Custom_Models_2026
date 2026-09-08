@@ -84,13 +84,15 @@ class BoundaryAwareChannelRouting(nn.Module):
         self,
         f_joint: torch.Tensor,
         delta_trans: torch.Tensor,
-        regime_weights: torch.Tensor
+        regime_weights: torch.Tensor,
+        delta_burst: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Args:
             f_joint: Joint multimodal representation [B, 224]
             delta_trans: Cross-modal discrepancy [B, 224]
             regime_weights: Softmax regime weights [B, 4]
+            delta_burst: Optional Peak-to-Average Dynamic Contrast [B, 224]
         Returns:
             f_routed: Channel-routed representation [B, 224]
         """
@@ -107,12 +109,20 @@ class BoundaryAwareChannelRouting(nn.Module):
         f_bnd_input = f_joint + delta_trans
         f_bnd_01 = self.bnd_01_proj(f_bnd_input) * (1.0 + w_bnd_01)
         f_bnd_12 = self.bnd_12_proj(f_bnd_input) * (1.0 + w_bnd_12)
-        f_bnd_23 = self.bnd_23_proj(f_bnd_input) * (1.0 + w_bnd_23)
+
+        # Subspace 2 (Medium <-> Strong): Modulated by Dynamic Burst Contrast (f_peak - f_mean)
+        if delta_burst is not None:
+            f_bnd_23_input = f_bnd_input + delta_burst
+            burst_scale = 1.0 + torch.tanh(delta_burst.mean(dim=-1, keepdim=True))
+            f_bnd_23 = self.bnd_23_proj(f_bnd_23_input) * (1.0 + w_bnd_23) * burst_scale
+        else:
+            f_bnd_23 = self.bnd_23_proj(f_bnd_input) * (1.0 + w_bnd_23)
 
         # 3. Channel Concatenation: 128 + 32 + 32 + 32 = 224 channels
         f_routed = torch.cat([f_core, f_bnd_01, f_bnd_12, f_bnd_23], dim=-1)
         f_routed = self.out_norm(f_routed)
         return f_routed
+
 
 
 class CumulativeOrdinalBoundaryHead(nn.Module):
@@ -296,7 +306,9 @@ class MultimodalBoundaryAwareFusion(nn.Module):
         f_video: torch.Tensor,
         f_audio: torch.Tensor,
         tokens_video: torch.Tensor,
-        tokens_audio: torch.Tensor
+        tokens_audio: torch.Tensor,
+        f_burst_v: Optional[torch.Tensor] = None,
+        f_burst_a: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
         """
         Args:
@@ -304,6 +316,8 @@ class MultimodalBoundaryAwareFusion(nn.Module):
             f_audio: Acoustic embedding [B, dim]
             tokens_video: Frame tokens sequence [B, T, dim]
             tokens_audio: Temporal audio tokens sequence [B, Ta, dim]
+            f_burst_v: Optional Peak-to-Average video dynamic contrast [B, dim]
+            f_burst_a: Optional Peak-to-Average audio dynamic contrast [B, dim]
 
         Returns:
             Dictionary containing logits, probabilities, uncertainty, modality_weights,
@@ -331,13 +345,23 @@ class MultimodalBoundaryAwareFusion(nn.Module):
         f_joint_raw = alpha_v * f_v_prime + alpha_a * f_a_prime
         f_joint = self.norm_fused(f_joint_raw + self.ffn(f_joint_raw))  # [B, dim]
 
+        # Synthesize Peak-to-Average Dynamic Contrast (Burst feeding strike signal)
+        if f_burst_v is not None and f_burst_a is not None:
+            delta_burst = 0.5 * (f_burst_v + f_burst_a)
+        elif f_burst_v is not None:
+            delta_burst = f_burst_v
+        elif f_burst_a is not None:
+            delta_burst = f_burst_a
+        else:
+            delta_burst = None
+
         # 2. Boundary Discrepancy Gate (BDG)
         delta_trans = torch.abs(f_v_prime - f_a_prime)
         regime_weights = self.bdg(f_joint, delta_trans)
 
         # 3. Boundary-Aware Channel Routing (BACA)
-        # Partitions into 128 Core + 96 Boundary (32 none/weak, 32 weak/medium, 32 medium/strong)
-        f_fused = self.baca(f_joint, delta_trans, regime_weights)  # [B, 224]
+        # Partitions into 128 Core + 96 Boundary with Dynamic Burst Contrast modulation
+        f_fused = self.baca(f_joint, delta_trans, regime_weights, delta_burst=delta_burst)  # [B, 224]
 
         # 4. Cumulative Ordinal Boundary Head
         head_outputs = self.ordinal_head(f_fused)
@@ -359,7 +383,9 @@ class MultimodalBoundaryAwareFusion(nn.Module):
             "cutoffs": head_outputs["cutoffs"],
             "cum_probs": head_outputs["cum_probs"],
             "f_fused": f_fused,
+            "delta_burst": delta_burst if delta_burst is not None else torch.zeros_like(f_fused),
         }
+
 
 
 
