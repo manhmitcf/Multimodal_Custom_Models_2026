@@ -74,6 +74,21 @@ class TeacherPANNS_Cnn6(nn.Module):
         logits = self.fc_audioset(x)
         return logits
 
+    def forward_with_features(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = self.conv_block1(x, pool_size=(2, 2), pool_type='avg')
+        x = self.conv_block2(x, pool_size=(2, 2), pool_type='avg')
+        x = self.conv_block3(x, pool_size=(2, 2), pool_type='avg')
+        x = self.conv_block4(x, pool_size=(2, 2), pool_type='avg')
+
+        x = torch.mean(x, dim=3)
+        (x1, _) = torch.max(x, dim=2)
+        x2 = torch.mean(x, dim=2)
+        pooled = x1 + x2
+
+        emb = F.relu(self.fc1(pooled))  # [B, 512]
+        logits = self.fc_audioset(emb)
+        return logits, emb
+
 
 class TeacherDenseNet121(nn.Module):
     """
@@ -87,6 +102,13 @@ class TeacherDenseNet121(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
+
+    def forward_with_features(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        feat_map = self.model.features(x)  # [B, 1024, 7, 7]
+        out = F.relu(feat_map, inplace=False)
+        pooled = F.adaptive_avg_pool2d(out, (1, 1)).flatten(1)  # [B, 1024]
+        logits = self.model.classifier(pooled)
+        return logits, pooled, feat_map
 
 
 class OfflineTeacherEnsemble(nn.Module):
@@ -146,6 +168,7 @@ class OfflineTeacherEnsemble(nn.Module):
         logger.info("Initialized OfflineTeacherEnsemble:")
         logger.info(f"  - Video Teacher: DenseNet121 (Loaded from '{video_ckpt_path}')")
         logger.info(f"  - Audio Teacher: PANNS_Cnn6  (Loaded from '{audio_ckpt_path}')")
+        logger.info(f"  - Multi-Level KD: Logits + Spatial Attention Map (7x7) + Penultimate Embeddings")
         logger.info(f"  - State: Frozen (requires_grad=False), Device: {self.device}")
         logger.info("==================================================")
 
@@ -192,17 +215,21 @@ class OfflineTeacherEnsemble(nn.Module):
         self,
         video_tensor: torch.Tensor,
         audio_tensor: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass through frozen teachers to generate soft targets.
+        Forward pass through frozen teachers to generate multi-level soft targets and features.
 
         Args:
             video_tensor: Student video batch [B, T, C=7, H, W] or [B, C, H, W]
             audio_tensor: Student audio batch [B, num_samples] or [B, 1, Ta, 128]
 
         Returns:
-            teacher_logits_video: [B, classes_num]
-            teacher_logits_audio: [B, classes_num]
+            Dict containing:
+              - teacher_logits_video: [B, classes_num]
+              - teacher_logits_audio: [B, classes_num]
+              - teacher_feat_video: [B, 1024]
+              - teacher_feat_audio: [B, 512]
+              - teacher_feat_map_video: [B, 1024, 7, 7]
         """
         self.video_teacher.eval()
         self.audio_teacher.eval()
@@ -230,7 +257,13 @@ class OfflineTeacherEnsemble(nn.Module):
 
         rgb_input = rgb_input.to(self.device, non_blocking=True)
 
-        teacher_logits_video = self.video_teacher(rgb_input)
-        teacher_logits_audio = self.audio_teacher(audio_mel)
+        teacher_logits_v, teacher_feat_v, teacher_map_v = self.video_teacher.forward_with_features(rgb_input)
+        teacher_logits_a, teacher_feat_a = self.audio_teacher.forward_with_features(audio_mel)
 
-        return teacher_logits_video, teacher_logits_audio
+        return {
+            "teacher_logits_video": teacher_logits_v,
+            "teacher_logits_audio": teacher_logits_a,
+            "teacher_feat_video": teacher_feat_v,
+            "teacher_feat_audio": teacher_feat_a,
+            "teacher_feat_map_video": teacher_map_v,
+        }

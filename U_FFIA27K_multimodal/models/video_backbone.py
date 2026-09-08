@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple
+from typing import Tuple, Optional, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         # Residual normalization
         self.norm_video = nn.LayerNorm(embed_dim)
 
-    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_features(self, x: torch.Tensor, return_feat_map: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Extract spatial feature vector from [B * T, C, H, W].
         """
@@ -111,31 +111,33 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
                 x = self.downsample_layers[i - 1](x)
             x = self.stages[i](x)
 
+        feat_map = x if return_feat_map else None  # [B * T, 384, 7, 7]
+
         # Global Average Pooling: [B * T, 384, H', W'] -> [B * T, 384]
         x = x.mean(dim=[-2, -1])
         x = self.norm_final(x)
         x = self.proj(x)  # [B * T, embed_dim]
-        return x
+        return x, feat_map
 
     def forward(
-        self, frames_7ch: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        self, frames_7ch: torch.Tensor, return_feat_map: bool = False
+    ) -> Any:
         """
         Args:
             frames_7ch: [B, T, 7, H, W] tensor (T=2)
+            return_feat_map: If True, also returns spatial feature map [B, 384, 7, 7] for KD
 
         Returns:
-            f_video: Joint spatiotemporal video embedding [B, embed_dim]
-            f_spatial: Pure spatial visual appearance feature [B, embed_dim]
-            f_motion: Motion dynamics feature between frames [B, embed_dim]
-            f_burst_v: Peak-to-Average dynamic contrast [B, embed_dim]
-            tokens_video: Sequence of frame tokens [B, T, embed_dim]
+            If return_feat_map is False:
+                (f_video, f_spatial, f_motion, f_burst_v, tokens_video)
+            If return_feat_map is True:
+                (f_video, f_spatial, f_motion, f_burst_v, tokens_video, feat_map_v)
         """
         B, T, C, H, W = frames_7ch.shape
 
         # Process all T frames: [B * T, 7, H, W] -> [B * T, embed_dim]
         flat_frames = frames_7ch.reshape(B * T, C, H, W)
-        flat_tokens = self.forward_features(flat_frames)  # [B * T, embed_dim]
+        flat_tokens, feat_maps = self.forward_features(flat_frames, return_feat_map=return_feat_map)  # [B * T, embed_dim]
 
         # Reshape to temporal sequence of frame tokens: [B, T, embed_dim]
         tokens_video = flat_tokens.view(B, T, self.embed_dim)
@@ -156,6 +158,11 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
 
         # 4. Joint Spatiotemporal Video Embedding
         f_video = self.norm_video(f_spatial + f_motion + f_burst_v)  # [B, embed_dim]
+
+        if return_feat_map and feat_maps is not None:
+            # Primary frame spatial feature map: [B, 384, 7, 7]
+            feat_map_v = feat_maps.view(B, T, feat_maps.size(1), feat_maps.size(2), feat_maps.size(3))[:, 0]
+            return f_video, f_spatial, f_motion, f_burst_v, tokens_video, feat_map_v
 
         return f_video, f_spatial, f_motion, f_burst_v, tokens_video
 

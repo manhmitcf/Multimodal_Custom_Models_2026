@@ -68,19 +68,23 @@ class TestKDTournamentPipeline(unittest.TestCase):
         dummy_audio_raw = torch.randn(B, 128000, device=self.device)
 
         with torch.no_grad():
-            t_logits_v, t_logits_a = teachers(dummy_video_7ch, dummy_audio_raw)
+            t_out = teachers(dummy_video_7ch, dummy_audio_raw)
 
-        self.assertEqual(t_logits_v.shape, (B, 4), "Video teacher logits must be [B, 4]")
-        self.assertEqual(t_logits_a.shape, (B, 4), "Audio teacher logits must be [B, 4]")
+        self.assertIsInstance(t_out, dict, "Teachers forward must return a dictionary of multi-level targets!")
+        self.assertEqual(t_out["teacher_logits_video"].shape, (B, 4), "Video teacher logits must be [B, 4]")
+        self.assertEqual(t_out["teacher_logits_audio"].shape, (B, 4), "Audio teacher logits must be [B, 4]")
+        self.assertEqual(t_out["teacher_feat_video"].shape, (B, 1024), "Video teacher penultimate feat must be [B, 1024]")
+        self.assertEqual(t_out["teacher_feat_audio"].shape, (B, 512), "Audio teacher penultimate feat must be [B, 512]")
+        self.assertEqual(t_out["teacher_feat_map_video"].shape, (B, 1024, 7, 7), "Video teacher feat map must be [B, 1024, 7, 7]")
 
         # Also verify with precomputed Mel Spectrogram [B, 1, 100, 128]
         dummy_audio_mel = torch.randn(B, 1, 100, 128, device=self.device)
         with torch.no_grad():
-            t_logits_v2, t_logits_a2 = teachers(dummy_video_7ch, dummy_audio_mel)
-        self.assertEqual(t_logits_a2.shape, (B, 4), "Audio teacher logits from Mel must be [B, 4]")
+            t_out2 = teachers(dummy_video_7ch, dummy_audio_mel)
+        self.assertEqual(t_out2["teacher_logits_audio"].shape, (B, 4), "Audio teacher logits from Mel must be [B, 4]")
 
     def test_03_kd_loss_and_independent_gradient_flow(self):
-        """Verify PairwiseTournamentLoss with KD produces correct gradients for aux heads."""
+        """Verify PairwiseTournamentLoss with Multi-Level KD (Logits 35/65 + Feature Cosine + Spatial AT)."""
         loss_fn = PairwiseTournamentLoss(
             weight_act=0.5,
             weight_pairwise=0.5,
@@ -90,8 +94,12 @@ class TestKDTournamentPipeline(unittest.TestCase):
             enable_kd=True,
             kd_temperature_video=3.0,
             kd_temperature_audio=2.0,
-            kd_alpha_video=0.5,
-            kd_alpha_audio=0.5,
+            kd_alpha_video=0.65,
+            kd_alpha_audio=0.65,
+            weight_feature_kd=0.2,
+            weight_at_kd=0.2,
+            enable_feature_kd=True,
+            enable_at_kd=True,
         ).to(self.device)
 
         B = 4
@@ -103,12 +111,18 @@ class TestKDTournamentPipeline(unittest.TestCase):
             'logit_13': torch.randn(B, device=self.device, requires_grad=True),
             'logits_video': torch.randn(B, 4, device=self.device, requires_grad=True),
             'logits_audio': torch.randn(B, 4, device=self.device, requires_grad=True),
+            'feat_video': torch.randn(B, 224, device=self.device, requires_grad=True),
+            'feat_audio': torch.randn(B, 224, device=self.device, requires_grad=True),
+            'feat_map_video': torch.randn(B, 384, 7, 7, device=self.device, requires_grad=True),
         }
 
         target_dict = {
             'target': torch.tensor([0, 1, 2, 3], device=self.device),
             'teacher_logits_video': torch.randn(B, 4, device=self.device),
             'teacher_logits_audio': torch.randn(B, 4, device=self.device),
+            'teacher_feat_video': torch.randn(B, 1024, device=self.device),
+            'teacher_feat_audio': torch.randn(B, 512, device=self.device),
+            'teacher_feat_map_video': torch.randn(B, 1024, 7, 7, device=self.device),
         }
 
         total_loss = loss_fn(student_out, target_dict, epoch=1)
@@ -118,6 +132,9 @@ class TestKDTournamentPipeline(unittest.TestCase):
 
         self.assertIsNotNone(student_out['logits_video'].grad, "logits_video must receive gradients!")
         self.assertIsNotNone(student_out['logits_audio'].grad, "logits_audio must receive gradients!")
+        self.assertIsNotNone(student_out['feat_video'].grad, "feat_video must receive gradients from Feature KD!")
+        self.assertIsNotNone(student_out['feat_audio'].grad, "feat_audio must receive gradients from Feature KD!")
+        self.assertIsNotNone(student_out['feat_map_video'].grad, "feat_map_video must receive gradients from AT!")
         self.assertIsNotNone(student_out['clipwise_output'].grad, "clipwise_output must receive gradients!")
 
     def test_04_student_parameter_budget_under_5m(self):

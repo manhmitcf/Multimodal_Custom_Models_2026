@@ -95,10 +95,14 @@ class MultimodalTrainer:
                 enable_kd=self.enable_kd,
                 kd_temperature_video=getattr(self.config, "kd_temperature_video", 3.0),
                 kd_temperature_audio=getattr(self.config, "kd_temperature_audio", 2.0),
-                kd_alpha_video=getattr(self.config, "kd_alpha_video", 0.5),
-                kd_alpha_audio=getattr(self.config, "kd_alpha_audio", 0.5),
+                kd_alpha_video=getattr(self.config, "kd_alpha_video", 0.65),
+                kd_alpha_audio=getattr(self.config, "kd_alpha_audio", 0.65),
+                weight_feature_kd=getattr(self.config, "weight_feature_kd", 0.2),
+                weight_at_kd=getattr(self.config, "weight_at_kd", 0.2),
+                enable_feature_kd=getattr(self.config, "enable_feature_kd", True),
+                enable_at_kd=getattr(self.config, "enable_at_kd", True),
             ).to(self.device)
-            logger.info(f"Configured PairwiseTournamentLoss (Activity Gate + 3 Pairwise Cross Boundaries B12, B23, B13 | KD={self.enable_kd}).")
+            logger.info(f"Configured PairwiseTournamentLoss with Multi-Level KD (35% CE / 65% KD, Feature Alignment, Spatial AT | KD={self.enable_kd}).")
         elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
             self.loss_fn = BilateralBoundaryLoss(
                 lambda_emd=getattr(self.config, "lambda_emd", 0.5),
@@ -173,6 +177,10 @@ class MultimodalTrainer:
                 backbone_params.extend(list(self.model.aux_head_video.parameters()))
             if hasattr(self.model, "aux_head_audio"):
                 backbone_params.extend(list(self.model.aux_head_audio.parameters()))
+
+            # Include loss_fn parameters (e.g. Feature KD projection adapters) in fusion param group
+            if hasattr(self.loss_fn, "parameters"):
+                fusion_params.extend(list(self.loss_fn.parameters()))
 
             assigned_ids = set(id(p) for p in fusion_params + backbone_params)
             for p in self.model.parameters():
@@ -269,9 +277,13 @@ class MultimodalTrainer:
 
             target_dict = {'target': targets}
             if self.teachers is not None:
-                t_logits_v, t_logits_a = self.teachers(video, audio)
-                target_dict['teacher_logits_video'] = t_logits_v
-                target_dict['teacher_logits_audio'] = t_logits_a
+                t_out = self.teachers(video, audio)
+                if isinstance(t_out, dict):
+                    target_dict.update(t_out)
+                else:
+                    t_logits_v, t_logits_a = t_out
+                    target_dict['teacher_logits_video'] = t_logits_v
+                    target_dict['teacher_logits_audio'] = t_logits_a
 
             try:
                 loss = self.loss_fn(outputs, target_dict, epoch=epoch)
@@ -279,7 +291,10 @@ class MultimodalTrainer:
                 loss = self.loss_fn(outputs, target_dict)
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+            all_train_params = list(self.model.parameters())
+            if hasattr(self.loss_fn, "parameters"):
+                all_train_params.extend(list(self.loss_fn.parameters()))
+            torch.nn.utils.clip_grad_norm_([p for p in all_train_params if p.requires_grad], max_norm=5.0)
             self.optimizer.step()
 
             if self.use_onecycle:

@@ -127,13 +127,20 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
                 enable_kd=getattr(config, "enable_kd", True),
                 kd_temperature_video=getattr(config, "kd_temperature_video", 3.0),
                 kd_temperature_audio=getattr(config, "kd_temperature_audio", 2.0),
-                kd_alpha_video=getattr(config, "kd_alpha_video", 0.5),
-                kd_alpha_audio=getattr(config, "kd_alpha_audio", 0.5),
+                kd_alpha_video=getattr(config, "kd_alpha_video", 0.65),
+                kd_alpha_audio=getattr(config, "kd_alpha_audio", 0.65),
+                weight_feature_kd=getattr(config, "weight_feature_kd", 0.2),
+                weight_at_kd=getattr(config, "weight_at_kd", 0.2),
+                enable_feature_kd=getattr(config, "enable_feature_kd", True),
+                enable_at_kd=getattr(config, "enable_at_kd", True),
             ).to(device)
             target_dict = {"target": dummy_targets}
             if getattr(config, "enable_kd", True):
                 target_dict["teacher_logits_video"] = torch.randn(2, 4, device=device)
                 target_dict["teacher_logits_audio"] = torch.randn(2, 4, device=device)
+                target_dict["teacher_feat_video"] = torch.randn(2, 1024, device=device)
+                target_dict["teacher_feat_audio"] = torch.randn(2, 512, device=device)
+                target_dict["teacher_feat_map_video"] = torch.randn(2, 1024, 7, 7, device=device)
             loss = loss_fn(out, target_dict, epoch=1)
         else:
             loss_fn = ClipCELoss()
