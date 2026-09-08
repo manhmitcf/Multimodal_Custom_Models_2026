@@ -312,6 +312,8 @@ class OfflineTeacherEnsemble(nn.Module):
             window_size=2048,
             hop_size=1024,
             mel_bins=128,
+            fmin=1,
+            fmax=32000,
             use_tkeo=False
         )
         self.audio_frontend = AudioFrontend(tea_audio_cfg)
@@ -380,13 +382,20 @@ class OfflineTeacherEnsemble(nn.Module):
         ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
         state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
 
-        # Only keep keys belonging to backbone
+        # Load frontend normalization (bn0) and backbone weights
+        frontend_state = {}
         clean_state = {}
         for k, v in state_dict.items():
-            if k.startswith('backbone.'):
+            if k.startswith('frontend.'):
+                frontend_state[k[len('frontend.'):]] = v
+            elif k.startswith('backbone.'):
                 clean_state[k[len('backbone.'):]] = v
-            elif not k.startswith('frontend.'):
+            else:
                 clean_state[k] = v
+
+        if frontend_state:
+            self.audio_frontend.load_state_dict(frontend_state, strict=False)
+            logger.info("  [*] Loaded Audio Teacher frontend normalization (bn0) parameters.")
 
         self.audio_teacher.load_state_dict(clean_state, strict=True)
         logger.info(f"  [*] Loaded Audio Teacher (PANNS_Cnn6) weights from: {ckpt_path}")
