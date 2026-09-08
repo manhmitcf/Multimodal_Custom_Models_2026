@@ -95,16 +95,16 @@ class MultimodalTrainer:
                 enable_kd=self.enable_kd,
                 kd_temperature_video=getattr(self.config, "kd_temperature_video", 3.0),
                 kd_temperature_audio=getattr(self.config, "kd_temperature_audio", 2.0),
-                kd_alpha_video=getattr(self.config, "kd_alpha_video", 0.65),
-                kd_alpha_audio=getattr(self.config, "kd_alpha_audio", 0.65),
+                kd_alpha_video=getattr(self.config, "kd_alpha_video", 0.60),
+                kd_alpha_audio=getattr(self.config, "kd_alpha_audio", 0.60),
                 weight_feature_kd=getattr(self.config, "weight_feature_kd", 0.2),
                 weight_at_kd=getattr(self.config, "weight_at_kd", 0.2),
                 enable_feature_kd=getattr(self.config, "enable_feature_kd", True),
                 enable_at_kd=getattr(self.config, "enable_at_kd", True),
-                adaptive_kd=getattr(self.config, "adaptive_kd", True),
+                adaptive_kd=getattr(self.config, "adaptive_kd", False),
                 adaptive_kd_min_alpha=getattr(self.config, "adaptive_kd_min_alpha", 0.0),
             ).to(self.device)
-            logger.info(f"Configured PairwiseTournamentLoss with Multi-Level KD (35% CE / 65% KD | Adaptive={getattr(self.config, 'adaptive_kd', True)}, Feature Alignment, Spatial AT | KD={self.enable_kd}).")
+            logger.info(f"Configured PairwiseTournamentLoss with Multi-Level KD (40% CE / 60% KD | Adaptive={getattr(self.config, 'adaptive_kd', False)}, Feature Alignment, Spatial AT | KD={self.enable_kd}).")
         elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
             self.loss_fn = BilateralBoundaryLoss(
                 lambda_emd=getattr(self.config, "lambda_emd", 0.5),

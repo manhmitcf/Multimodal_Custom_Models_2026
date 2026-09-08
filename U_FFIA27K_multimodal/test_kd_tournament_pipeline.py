@@ -94,8 +94,8 @@ class TestKDTournamentPipeline(unittest.TestCase):
             enable_kd=True,
             kd_temperature_video=3.0,
             kd_temperature_audio=2.0,
-            kd_alpha_video=0.65,
-            kd_alpha_audio=0.65,
+            kd_alpha_video=0.60,
+            kd_alpha_audio=0.60,
             weight_feature_kd=0.2,
             weight_at_kd=0.2,
             enable_feature_kd=True,
@@ -164,8 +164,8 @@ class TestKDTournamentPipeline(unittest.TestCase):
         loss_fn_adaptive = PairwiseTournamentLoss(
             enable_kd=True,
             adaptive_kd=True,
-            kd_alpha_video=0.65,
-            kd_alpha_audio=0.65,
+            kd_alpha_video=0.60,
+            kd_alpha_audio=0.60,
             adaptive_kd_min_alpha=0.0,
             enable_feature_kd=False,
             enable_at_kd=False,
@@ -199,24 +199,24 @@ class TestKDTournamentPipeline(unittest.TestCase):
         loss = loss_fn_adaptive(student_out, target_dict)
         loss.backward()
 
-        # Check that mean adaptive alpha reflects: Sample 0 (~0.65) + Sample 1 (0.0) -> mean ~0.325
-        self.assertAlmostEqual(loss_fn_adaptive.last_mean_alpha_v, 0.325, delta=0.02,
-                               msg="Mean alpha must be ~0.325 because sample 1 teacher was wrong!")
-        self.assertAlmostEqual(loss_fn_adaptive.last_mean_alpha_a, 0.325, delta=0.02,
-                               msg="Mean audio alpha must be ~0.325 because sample 1 teacher was wrong!")
+        # Check that mean adaptive alpha reflects: Sample 0 (~0.60) + Sample 1 (0.0) -> mean ~0.30
+        self.assertAlmostEqual(loss_fn_adaptive.last_mean_alpha_v, 0.30, delta=0.02,
+                               msg="Mean alpha must be ~0.30 because sample 1 teacher was wrong!")
+        self.assertAlmostEqual(loss_fn_adaptive.last_mean_alpha_a, 0.30, delta=0.02,
+                               msg="Mean audio alpha must be ~0.30 because sample 1 teacher was wrong!")
 
-        # Verify fixed KD (adaptive=False) gives strictly 0.65
+        # Verify fixed KD (adaptive=False) gives strictly 0.60 (40% CE / 60% KD)
         loss_fn_fixed = PairwiseTournamentLoss(
             enable_kd=True,
             adaptive_kd=False,
-            kd_alpha_video=0.65,
-            kd_alpha_audio=0.65,
+            kd_alpha_video=0.60,
+            kd_alpha_audio=0.60,
             enable_feature_kd=False,
             enable_at_kd=False,
         ).to(self.device)
 
         _ = loss_fn_fixed(student_out, target_dict)
-        self.assertEqual(loss_fn_fixed.last_mean_alpha_v, 0.65, "Fixed KD must yield exactly 0.65 alpha")
+        self.assertEqual(loss_fn_fixed.last_mean_alpha_v, 0.60, "Fixed KD must yield exactly 0.60 alpha (40/60 ratio)")
 
 
 if __name__ == "__main__":

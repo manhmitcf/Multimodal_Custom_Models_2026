@@ -183,13 +183,13 @@ def mode_dry_run(args: argparse.Namespace) -> None:
             enable_kd=getattr(config, "enable_kd", True),
             kd_temperature_video=getattr(config, "kd_temperature_video", 3.0),
             kd_temperature_audio=getattr(config, "kd_temperature_audio", 2.0),
-            kd_alpha_video=getattr(config, "kd_alpha_video", 0.65),
-            kd_alpha_audio=getattr(config, "kd_alpha_audio", 0.65),
+            kd_alpha_video=getattr(config, "kd_alpha_video", 0.60),
+            kd_alpha_audio=getattr(config, "kd_alpha_audio", 0.60),
             weight_feature_kd=getattr(config, "weight_feature_kd", 0.2),
             weight_at_kd=getattr(config, "weight_at_kd", 0.2),
             enable_feature_kd=getattr(config, "enable_feature_kd", True),
             enable_at_kd=getattr(config, "enable_at_kd", True),
-            adaptive_kd=getattr(config, "adaptive_kd", True),
+            adaptive_kd=getattr(config, "adaptive_kd", False),
             adaptive_kd_min_alpha=getattr(config, "adaptive_kd_min_alpha", 0.0),
         ).to(device)
     else:
