@@ -1,6 +1,7 @@
 torch
 torchvision
 torchaudio
+torchlibrosa
 opencv-python
 numpy
 pillow
