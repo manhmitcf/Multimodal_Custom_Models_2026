@@ -29,9 +29,14 @@ class HistoryLogger:
             'epoch',
             'train_loss',
             'train_accuracy',
+            'train_acc_video',
+            'train_acc_audio',
             'train_mAP',
             'val_loss',
             'val_accuracy',
+            'val_acc_video',
+            'val_acc_audio',
+            'val_qwk',
             'val_mAP',
             'val_auc_class_none', 'val_auc_class_strong', 'val_auc_class_medium', 'val_auc_class_weak',
             'val_ap_class_none', 'val_ap_class_strong', 'val_ap_class_medium', 'val_ap_class_weak',
@@ -54,8 +59,22 @@ class HistoryLogger:
             for idx, label in enumerate(labels):
                 writer.writerow([label] + list(matrix[idx]))
 
-    def log_epoch(self, epoch: int, train_loss: float, train_acc: float, train_mAP: float, val_loss: float, val_statistics: dict, is_best: bool = False) -> None:
+    def log_epoch(
+        self,
+        epoch: int,
+        train_loss: float,
+        train_acc: float,
+        train_mAP: float,
+        val_loss: float,
+        val_statistics: dict,
+        train_acc_video: float = 0.0,
+        train_acc_audio: float = 0.0,
+        is_best: bool = False
+    ) -> None:
         val_acc = np.mean(val_statistics['accuracy'])
+        val_acc_v = float(val_statistics.get('acc_video', 0.0))
+        val_acc_a = float(val_statistics.get('acc_audio', 0.0))
+        val_qwk = float(val_statistics.get('qwk', 0.0))
         val_mAP = np.mean(val_statistics['average_precision'])
         val_auc = val_statistics['auc']
         val_ap = val_statistics['average_precision']
@@ -67,9 +86,14 @@ class HistoryLogger:
             epoch,
             f"{train_loss:.6f}",
             f"{train_acc:.6f}",
+            f"{train_acc_video:.6f}",
+            f"{train_acc_audio:.6f}",
             f"{train_mAP:.6f}",
             f"{val_loss:.6f}",
             f"{val_acc:.6f}",
+            f"{val_acc_v:.6f}",
+            f"{val_acc_a:.6f}",
+            f"{val_qwk:.6f}",
             f"{val_mAP:.6f}",
             f"{val_auc[0]:.6f}", f"{val_auc[1]:.6f}", f"{val_auc[2]:.6f}", f"{val_auc[3]:.6f}",
             f"{val_ap[0]:.6f}", f"{val_ap[1]:.6f}", f"{val_ap[2]:.6f}", f"{val_ap[3]:.6f}"
@@ -93,28 +117,36 @@ class HistoryLogger:
         headers = [
             'Training Time (s)',
             'Inference Time (ms/sample)',
-            'Precision Val (Weighted)', 'Recall Val (Weighted)', 'F1-score Val (Weighted)', 'Accuracy Val', 'mAP Val',
+            'Val Acc Fusion', 'Val Acc Video', 'Val Acc Audio', 'Val QWK', 'mAP Val',
+            'Precision Val (Weighted)', 'Recall Val (Weighted)', 'F1-score Val (Weighted)',
             'Precision Val (Macro)', 'Recall Val (Macro)', 'F1-score Val (Macro)',
-            'Precision Test (Weighted)', 'Recall Test (Weighted)', 'F1-score Test (Weighted)', 'Accuracy Test', 'mAP Test',
+            'Test Acc Fusion', 'Test Acc Video', 'Test Acc Audio', 'Test QWK', 'mAP Test',
+            'Precision Test (Weighted)', 'Recall Test (Weighted)', 'F1-score Test (Weighted)',
             'Precision Test (Macro)', 'Recall Test (Macro)', 'F1-score Test (Macro)'
         ]
 
         row_data = [
             f"{training_time:.2f}",
             f"{inference_time_ms:.3f}",
+            f"{val_statistics['accuracy']:.6f}",
+            f"{val_statistics.get('acc_video', 0.0):.6f}",
+            f"{val_statistics.get('acc_audio', 0.0):.6f}",
+            f"{val_statistics.get('qwk', 0.0):.6f}",
+            f"{val_mAP:.6f}",
             f"{val_statistics['prec_weighted']:.6f}",
             f"{val_statistics['rec_weighted']:.6f}",
             f"{val_statistics['f1_weighted']:.6f}",
-            f"{val_statistics['accuracy']:.6f}",
-            f"{val_mAP:.6f}",
             f"{val_statistics['prec_macro']:.6f}",
             f"{val_statistics['rec_macro']:.6f}",
             f"{val_statistics['f1_macro']:.6f}",
+            f"{test_statistics['accuracy']:.6f}",
+            f"{test_statistics.get('acc_video', 0.0):.6f}",
+            f"{test_statistics.get('acc_audio', 0.0):.6f}",
+            f"{test_statistics.get('qwk', 0.0):.6f}",
+            f"{test_mAP:.6f}",
             f"{test_statistics['prec_weighted']:.6f}",
             f"{test_statistics['rec_weighted']:.6f}",
             f"{test_statistics['f1_weighted']:.6f}",
-            f"{test_statistics['accuracy']:.6f}",
-            f"{test_mAP:.6f}",
             f"{test_statistics['prec_macro']:.6f}",
             f"{test_statistics['rec_macro']:.6f}",
             f"{test_statistics['f1_macro']:.6f}"
@@ -135,6 +167,7 @@ class HistoryLogger:
         epochs = []
         train_losses, val_losses = [], []
         train_accs, val_accs = [], []
+        val_acc_v_list, val_acc_a_list = [], []
         train_maps, val_maps = [], []
 
         with open(self.history_csv_path, 'r', encoding='utf-8') as f:
@@ -146,6 +179,8 @@ class HistoryLogger:
                     val_losses.append(float(row['val_loss']))
                     train_accs.append(float(row['train_accuracy']))
                     val_accs.append(float(row['val_accuracy']))
+                    val_acc_v_list.append(float(row.get('val_acc_video', 0.0)))
+                    val_acc_a_list.append(float(row.get('val_acc_audio', 0.0)))
                     train_maps.append(float(row['train_mAP']))
                     val_maps.append(float(row['val_mAP']))
                 except (KeyError, ValueError):
@@ -160,7 +195,7 @@ class HistoryLogger:
         import matplotlib.pyplot as plt
 
         fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-        fig.suptitle('Multimodal Fish Feeding Intensity Model Learning History', fontsize=16, fontweight='bold', y=0.98)
+        fig.suptitle('Multimodal Fish Feeding Intensity Model Learning History (Student Backbones + Fusion)', fontsize=15, fontweight='bold', y=0.98)
 
         axes[0].plot(epochs, train_losses, label='Train Loss', color='#1f77b4', linewidth=2, linestyle='--')
         axes[0].plot(epochs, val_losses, label='Val Loss', color='#ff7f0e', linewidth=2)
@@ -170,9 +205,13 @@ class HistoryLogger:
         axes[0].grid(True, linestyle=':', alpha=0.6)
         axes[0].legend(frameon=True)
 
-        axes[1].plot(epochs, train_accs, label='Train Acc', color='#2ca02c', linewidth=2, linestyle='--')
-        axes[1].plot(epochs, val_accs, label='Val Acc', color='#d62728', linewidth=2)
-        axes[1].set_title('Accuracy Curves', fontsize=12, fontweight='bold')
+        axes[1].plot(epochs, train_accs, label='Train Acc (Fusion)', color='#2ca02c', linewidth=2, linestyle='--')
+        axes[1].plot(epochs, val_accs, label='Val Acc (Fusion)', color='#d62728', linewidth=2)
+        if any(v > 0 for v in val_acc_v_list):
+            axes[1].plot(epochs, val_acc_v_list, label='Val Acc (Video Backbone)', color='#17becf', linewidth=1.5, linestyle=':')
+        if any(a > 0 for a in val_acc_a_list):
+            axes[1].plot(epochs, val_acc_a_list, label='Val Acc (Audio Backbone)', color='#bcbd22', linewidth=1.5, linestyle=':')
+        axes[1].set_title('Accuracy Curves (Backbones + Fusion)', fontsize=12, fontweight='bold')
         axes[1].set_xlabel('Epoch')
         axes[1].set_ylabel('Accuracy')
         axes[1].grid(True, linestyle=':', alpha=0.6)
