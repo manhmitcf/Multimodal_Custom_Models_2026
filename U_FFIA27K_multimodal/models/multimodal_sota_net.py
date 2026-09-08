@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from features.motion_kinematics import FishMotionKinematics7Ch, FishMotionKinematics10Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone, MobileViTVideoBackbone
-from .audio_backbone import PANNSCNN6AudioBackbone, EfficientATAudioBackbone
+from .audio_backbone import AudioMLPBackbone, AudioBackbone, PANNSCNN6AudioBackbone, EfficientATAudioBackbone
 from .multimodal_fusion import GatedBilateralBoundaryFusion, MultimodalBoundaryAwareFusion, SOTAMultimodalFusion
 
 
@@ -60,7 +60,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
             in_chans=in_chans,
             num_frames=num_frames
         )
-        self.audio_backbone = PANNSCNN6AudioBackbone(
+        self.audio_backbone = AudioMLPBackbone(
+            in_features=2049,
             embed_dim=embed_dim,
             num_tokens=num_frames
         )
@@ -97,14 +98,14 @@ class MultimodalBoundaryAwareNet(nn.Module):
             frames_7ch = video_input
             kinematics_summary = torch.zeros(video_input.size(0), 4, device=video_input.device, dtype=video_input.dtype)
 
-        if audio_input.ndim == 2:
-            mel_spec = self.audio_frontend(audio_input)
+        if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
+            stft_feat = self.audio_frontend(audio_input)
         else:
-            mel_spec = audio_input
+            stft_feat = audio_input
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
         f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_7ch)
-        f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(mel_spec)
+        f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(stft_feat)
 
         # Auxiliary Unimodal Logits & Probabilities (for standalone evaluation & Phase 1 warmup)
         logits_video = self.aux_head_video(f_video)

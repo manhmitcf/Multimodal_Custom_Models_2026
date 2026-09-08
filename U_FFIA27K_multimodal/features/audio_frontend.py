@@ -11,27 +11,18 @@ if project_root not in sys.path:
 
 import torch
 import torch.nn as nn
-from torchlibrosa.stft import Spectrogram, LogmelFilterBank
+import torch.nn.functional as F
 
 from config.train_config import AudioFeaturesConfig
 
 logger = logging.getLogger(__name__)
 
 
-def init_bn(bn: nn.BatchNorm2d) -> None:
-    """
-    Initialize BatchNorm2d weights with default values (bias = 0, weight = 1).
-    """
-    if bn.bias is not None:
-        bn.bias.data.fill_(0.)
-    if bn.weight is not None:
-        bn.weight.data.fill_(1.)
-
-
 class AudioFrontend(nn.Module):
     """
-    GPU-based Audio Frontend extracting standard 128 Mel-frequency Filterbanks.
-    Converts raw 1D waveforms [B, num_samples] into Log-Mel Spectrograms [B, 1, T, 128].
+    GPU-based High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 frequency bins).
+    Applies Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis, cuFFT RFFT,
+    Log Magnitude, and Temporal Mean Pooling to extract a 2049-dimensional spectral vector.
     """
     def __init__(self, config: Optional[AudioFeaturesConfig] = None) -> None:
         super().__init__()
@@ -43,72 +34,76 @@ class AudioFrontend(nn.Module):
         self.sample_rate = self.config.sample_rate
         self.n_fft = self.config.window_size
         self.hop_length = self.config.hop_size
-        self.n_mels = self.config.mel_bins
-        self.f_min = self.config.fmin
-        self.f_max = min(self.config.fmax, self.sample_rate // 2)
+        self.stft_bins = self.n_fft // 2 + 1  # 2049 for n_fft=4096
+        self.alpha_max = float(getattr(self.config, 'alpha_max', 0.99))
+        self.use_tkeo = bool(getattr(self.config, 'use_tkeo', True))
 
-        # 1. Standard Amplitude Spectrogram Extractor on GPU
-        self.spectrogram_extractor = Spectrogram(
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            win_length=self.n_fft,
-            window='hann',
-            center=True,
-            pad_mode='reflect',
-            freeze_parameters=True
-        )
+        # Register Hann window buffer
+        window = torch.hann_window(self.n_fft)
+        self.register_buffer('window', window)
 
-        # 2. Logmel Filterbank Extractor on GPU using torchlibrosa
-        self.logmel_extractor = LogmelFilterBank(
-            sr=self.sample_rate,
-            n_fft=self.n_fft,
-            n_mels=self.n_mels,
-            fmin=self.f_min,
-            fmax=self.f_max,
-            ref=1.0,
-            amin=1e-10,
-            top_db=None,
-            freeze_parameters=True
-        )
+        # Normalization layer over 2049 frequency bins
+        self.norm = nn.LayerNorm(self.stft_bins)
 
-        # 3. BatchNorm normalization layer over Mel bins
-        self.bn0 = nn.BatchNorm2d(self.n_mels)
-        init_bn(self.bn0)
-
-        # 5. Convert non-trainable DFT kernels and Mel filterbanks from Parameters to Buffers
-        # so they are properly treated as constant Fourier basis functions (0 trainable parameters)
-        for _, m in self.named_modules():
-            for p_name, p in list(m.named_parameters(recurse=False)):
-                if not p.requires_grad:
-                    delattr(m, p_name)
-                    m.register_buffer(p_name, p.data)
+        logger.info("==================================================")
+        logger.info("Initialized TKEO-STFT Audio Frontend (256 kHz, Pure Spectral):")
+        logger.info(f"  - Sample Rate:        {self.sample_rate} Hz (256 kHz)")
+        logger.info(f"  - FFT Size (n_fft):   {self.n_fft}")
+        logger.info(f"  - Hop Length:         {self.hop_length}")
+        logger.info(f"  - STFT Output Bins:   {self.stft_bins} linear bins")
+        logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max})")
+        logger.info(f"  - SpecAugment:        DISABLED (Pure Log-Magnitude)")
+        logger.info("==================================================")
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         """
-        Forward Pass converting raw 1D waveforms into 2D Mel-spectrograms.
-
         Args:
-            input_tensor (torch.Tensor): Raw waveform tensor [Batch, Num_Samples].
+            input_tensor: Raw 1D audio waveform [Batch, Num_Samples].
 
         Returns:
-            torch.Tensor: Augmented Log-Mel Spectrogram [Batch, 1, Time_Steps + 2, 128].
+            torch.Tensor: Normalized STFT spectral vector [Batch, 2049].
         """
         if input_tensor.ndim == 1:
             input_tensor = input_tensor.unsqueeze(0)
 
-        # Step A: Raw 1D Waveform -> STFT 2D Spectrogram [Batch, 1, Time_Steps, Freq_Bins] via TKEO APE
-        x = self.spectrogram_extractor(input_tensor)
+        # 1. Padding for center alignment
+        pad_amt = self.n_fft // 2
+        x_padded = F.pad(input_tensor, (pad_amt, pad_amt), mode='reflect')
 
-        # Step B: Logmel filtering -> [Batch, 1, Time_Steps, Mel_Bins]
-        x = self.logmel_extractor(x)
+        # 2. Framing (sliding window) -> [Batch, Time_Steps, n_fft]
+        frames = x_padded.unfold(dimension=-1, size=self.n_fft, step=self.hop_length)
 
-        # Step C: Pad time-steps dimension by 2 rows of zeros for shape alignment
-        m = nn.ZeroPad2d((0, 0, 2, 0))
-        x = m(x)
+        # 3. Vectorized TKEO Adaptive Pre-Emphasis
+        if self.use_tkeo and self.alpha_max > 0:
+            x_mid = frames[:, :, 1:-1]
+            x_left = frames[:, :, :-2]
+            x_right = frames[:, :, 2:]
+            psi = x_mid**2 - x_left * x_right
+            psi_full = torch.cat([psi[:, :, :1], psi, psi[:, :, -1:]], dim=-1)
 
-        # Step D: Transpose for BatchNorm2d along mel bins axis
-        x = x.transpose(1, 3)
-        x = self.bn0(x)
-        x = x.transpose(1, 3)  # Result shape: [Batch, 1, Time_Steps + 2, 128]
+            mean_psi = torch.mean(torch.abs(psi_full), dim=-1, keepdim=True)
+            mean_energy = torch.mean(frames**2, dim=-1, keepdim=True)
+            ctrl = mean_psi / (mean_energy + 1e-10)
 
-        return x
+            alpha = self.alpha_max * (1.0 - torch.exp(-ctrl))
+            alpha = torch.clamp(alpha, min=0.1, max=self.alpha_max)
+
+            frames_prev = torch.cat([frames[:, :, :1], frames[:, :, :-1]], dim=-1)
+            frames = frames - alpha * frames_prev
+
+        # 4. Windowing & cuFFT Real FFT -> [Batch, Time_Steps, 2049]
+        if self.window.device != frames.device:
+            self.window = self.window.to(frames.device)
+        frames_win = frames * self.window
+        complex_spec = torch.fft.rfft(frames_win, n=self.n_fft, dim=-1)
+
+        # 5. Log Magnitude: log(|X| + 1e-8)
+        log_mag = torch.log(torch.abs(complex_spec) + 1e-8)
+
+        # 6. Mean over time axis -> [Batch, 2049]
+        spec_vector = log_mag.mean(dim=1)
+
+        # 7. Layer Normalization
+        out = self.norm(spec_vector)
+
+        return out

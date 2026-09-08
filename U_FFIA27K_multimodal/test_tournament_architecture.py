@@ -27,7 +27,7 @@ def test_parameter_budget():
 
     print(f"Total Model Parameters:               {total_params:,}")
     print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
-    print(f"  - Audio Backbone (PANNS-CNN6-Pro):    {a_params:,}")
+    print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
     print(f"  - Pairwise Tournament Fusion:         {f_params:,}")
 
     strict_limit = 5000000
@@ -46,7 +46,7 @@ def test_tournament_forward_and_pairwise():
 
     B = 4
     v_input = torch.randn(B, 2, 3, 224, 224)
-    a_input = torch.randn(B, 64000)
+    a_input = torch.randn(B, 512000)  # 2.0s @ 256 kHz
 
     with torch.no_grad():
         out = model(v_input, a_input)
@@ -96,7 +96,7 @@ def test_gradient_flow_tournament_loss():
     # Batch with all 4 classes: 0 (None), 1 (Strong), 2 (Medium), 3 (Weak)
     B = 4
     v_input = torch.randn(B, 2, 3, 224, 224)
-    a_input = torch.randn(B, 64000)
+    a_input = torch.randn(B, 512000)  # 2.0s @ 256 kHz
     targets = {"target": torch.tensor([0, 1, 2, 3])}
 
     outputs = model(v_input, a_input)
@@ -119,78 +119,44 @@ def test_gradient_flow_tournament_loss():
     print(f"  Composite Tournament Loss: {loss.item():.4f}")
 
 
-def test_two_phase_warmup_isolation_and_unfreeze():
+def test_end_to_end_from_scratch():
     print("\n" + "=" * 65)
-    print("TEST 4: TWO-PHASE WARMUP ISOLATION & UNFREEZE VERIFICATION")
+    print("TEST 4: END-TO-END FROM SCRATCH SIMULTANEOUS TRAINING")
     print("=" * 65)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
+    model.train()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
+
     B = 4
     v_input = torch.randn(B, 2, 3, 224, 224)
-    a_input = torch.randn(B, 64000)
+    a_input = torch.randn(B, 512000)
     targets = {"target": torch.tensor([0, 1, 2, 3])}
 
-    # --- Phase 1: Fusion FROZEN, Backbones TRAINABLE ---
-    for p in model.fusion.parameters():
-        p.requires_grad = False
+    optimizer.zero_grad()
+    outputs = model(v_input, a_input)
+    loss = criterion(outputs, targets)
+    loss.backward()
 
-    criterion_phase1 = PairwiseTournamentLoss(only_backbones=True)
-    outputs_phase1 = model(v_input, a_input)
+    # Verify all components received gradients
+    vb_grads = [p.grad for p in model.video_backbone.parameters() if p.requires_grad]
+    ab_grads = [p.grad for p in model.audio_backbone.parameters() if p.requires_grad]
+    f_grads = [p.grad for p in model.fusion.parameters() if p.requires_grad]
 
-    assert "logits_video" in outputs_phase1 and outputs_phase1["logits_video"].shape == (B, 4)
-    assert "logits_audio" in outputs_phase1 and outputs_phase1["logits_audio"].shape == (B, 4)
+    assert all(g is not None for g in vb_grads), "Video backbone missing gradients"
+    assert all(g is not None for g in ab_grads), "Audio MLP backbone missing gradients"
+    assert all(g is not None for g in f_grads), "Tournament fusion missing gradients"
 
-    loss_phase1 = criterion_phase1(outputs_phase1, targets)
-    loss_phase1.backward()
-
-    # Check that fusion parameters received ZERO gradients
-    fusion_grads = [p.grad for p in model.fusion.parameters()]
-    assert all(g is None for g in fusion_grads), "Phase 1 violation: Fusion parameters received gradients while frozen!"
-
-    # Check that backbones and auxiliary heads received healthy gradients
-    backbone_params = [p for n, p in model.named_parameters() if not n.startswith("fusion.")]
-    assert all(p.grad is not None for p in backbone_params), "Phase 1 violation: Backbones did not receive gradients!"
-    print("[PASSED] Phase 1 Isolation: Fusion 100% frozen, Video/Audio backbones 100% trained via auxiliary heads!")
-
-    # --- Phase 2: Mode 1 (DEFAULT) - Backbones FROZEN, Only Fusion Trained ---
-    model.zero_grad(set_to_none=True)
-    for p in model.parameters():
-        p.grad = None
-    for n, p in model.named_parameters():
-        if n.startswith("fusion."):
-            p.requires_grad = True
-        else:
-            p.requires_grad = False
-
-    criterion_phase2 = PairwiseTournamentLoss(only_backbones=False, aux_loss_weight=0.0)
-    outputs_phase2 = model(v_input, a_input)
-    loss_phase2 = criterion_phase2(outputs_phase2, targets)
-    loss_phase2.backward()
-
-    fusion_trainable = [p for p in model.fusion.parameters()]
-    backbone_frozen = [p for n, p in model.named_parameters() if not n.startswith("fusion.")]
-    assert all(p.grad is not None for p in fusion_trainable), "Phase 2 freeze_all violation: Fusion did not get gradients!"
-    assert all(p.grad is None for p in backbone_frozen), "Phase 2 freeze_all violation: Backbones got gradients while frozen!"
-    print(f"[PASSED] Phase 2 Mode 'freeze_all' (DEFAULT): Backbones 100% frozen, only Tournament Fusion ({len(fusion_trainable)} tensors) trained!")
-
-    # --- Phase 2: Mode 2 - Late Stages Fine-Tuning ---
-    model.zero_grad(set_to_none=True)
-    # Unfreeze late stages of video & audio
-    for p in model.video_backbone.stages[2:].parameters(): p.requires_grad = True
-    for p in model.audio_backbone.conv_block3.parameters(): p.requires_grad = True
-    for p in model.audio_backbone.conv_block4.parameters(): p.requires_grad = True
-    loss_phase2_stage = criterion_phase2(model(v_input, a_input), targets)
-    loss_phase2_stage.backward()
-    assert model.video_backbone.stem[0].weight.grad is None, "Early stem should stay frozen!"
-    assert model.video_backbone.stages[2][0].dwconv.weight.grad is not None, "Late stage should get gradients!"
-    print("[PASSED] Phase 2 Mode 'unfreeze_last_stages': Stem/early frozen, late stages & fusion fine-tuned!")
+    optimizer.step()
+    print(f"[PASSED] End-to-End Single Phase: All {len(list(model.parameters()))} param tensors updated simultaneously!")
 
 
 if __name__ == "__main__":
     test_parameter_budget()
     test_tournament_forward_and_pairwise()
     test_gradient_flow_tournament_loss()
-    test_two_phase_warmup_isolation_and_unfreeze()
+    test_end_to_end_from_scratch()
     print("\n" + "=" * 65)
-    print("ALL TOURNAMENT & TWO-PHASE TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("ALL TOURNAMENT STFT-MLP TESTS PASSED SUCCESSFULLY! (100% READY)")
     print("=" * 65 + "\n")

@@ -640,8 +640,9 @@ class MultimodalTrainer:
                     f"Val Mean Acc = {val_mean_backbone:.4f} | Fusion: [FROZEN]"
                 )
             else:
+                phase_tag = "PHASE 2 - MULTIMODAL TOURNAMENT" if self.enable_two_phase_warmup else "END-TO-END FROM SCRATCH"
                 logger.info(
-                    f"Epoch {epoch:03d} [PHASE 2 - MULTIMODAL TOURNAMENT]: "
+                    f"Epoch {epoch:03d} [{phase_tag}]: "
                     f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | {lr_info} | "
                     f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} | Val Acc Audio = {val_acc_a:.4f} | "
                     f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"

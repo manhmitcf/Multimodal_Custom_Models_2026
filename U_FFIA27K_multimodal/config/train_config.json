@@ -1,5 +1,5 @@
 {
-  "epochs": 450,
+  "epochs": 400,
   "batch_size": 32,
   "learning_rate": 1e-3,
   "weight_decay": 0.05,
@@ -14,7 +14,7 @@
   "min_lr": 1e-6,
   "num_frames": 2,
   "image_size": 224,
-  "sample_rate": 64000,
+  "sample_rate": 256000,
   "cache_mode": "ram",
   "dataloader_workers": -1,
   "prefetch_factor": 2,
@@ -24,8 +24,8 @@
   "weight_act": 0.5,
   "weight_pairwise": 0.5,
   "weight_ce": 1.0,
-  "enable_two_phase_warmup": true,
-  "phase1_warmup_epochs": 250,
+  "enable_two_phase_warmup": false,
+  "phase1_warmup_epochs": 0,
   "phase2_backbone_mode": "freeze_all",
   "aux_loss_weight": 0.3,
   "model": {
@@ -37,12 +37,12 @@
     "pretrained_video": false
   },
   "audio_features": {
-    "sample_rate": 64000,
-    "window_size": 2048,
-    "hop_size": 512,
-    "mel_bins": 128,
-    "fmin": 50,
-    "fmax": 32000
+    "sample_rate": 256000,
+    "window_size": 4096,
+    "hop_size": 2048,
+    "mel_bins": 2049,
+    "fmin": 0,
+    "fmax": 128000
   },
   "dataset_splitter": {
     "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",
