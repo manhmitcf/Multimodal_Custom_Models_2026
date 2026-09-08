@@ -27,7 +27,7 @@ teachers/
 *.log
 run_marimo.txt
 run_*.txt
-cli.txt
+**/U_FFIA27K_multimodal/cli.txt
 cli_*.txt
 *.secret
 hf_results/

@@ -55,13 +55,15 @@ class AudioFrontend(nn.Module):
         logger.info(f"  - SpecAugment:        DISABLED (Pure Log-Magnitude)")
         logger.info("==================================================")
 
-    def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_tensor: torch.Tensor, return_2d: bool = False) -> torch.Tensor:
         """
         Args:
             input_tensor: Raw 1D audio waveform [Batch, Num_Samples].
+            return_2d: If True, returns 2D STFT spectrogram [Batch, 1, Time_Steps, 2049] without temporal mean.
+                       If False, returns normalized STFT spectral vector [Batch, 2049] (legacy compatible).
 
         Returns:
-            torch.Tensor: Normalized STFT spectral vector [Batch, 2049].
+            torch.Tensor: [Batch, 1, Time_Steps, 2049] if return_2d else [Batch, 2049].
         """
         if input_tensor.ndim == 1:
             input_tensor = input_tensor.unsqueeze(0)
@@ -100,7 +102,13 @@ class AudioFrontend(nn.Module):
         # 5. Log Magnitude: log(|X| + 1e-8)
         log_mag = torch.log(torch.abs(complex_spec) + 1e-8)
 
-        # 6. Mean over time axis -> [Batch, 2049]
+        # Option A: Return full 2D representation [Batch, 1, Time_Steps, 2049]
+        if return_2d:
+            # Per-bin LayerNorm across frequency axis for stability
+            norm_mag = self.norm(log_mag)  # [Batch, Time_Steps, 2049]
+            return norm_mag.unsqueeze(1)    # [Batch, 1, Time_Steps, 2049]
+
+        # Option B: Mean over time axis -> [Batch, 2049]
         spec_vector = log_mag.mean(dim=1)
 
         # 7. Layer Normalization

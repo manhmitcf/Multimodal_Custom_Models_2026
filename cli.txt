@@ -1,0 +1,69 @@
+# ==============================================================================
+# 1. TẢI DATA VỀ VÀ CẤU HÌNH BAN ĐẦU TRÊN MÁY CHỦ (MARIMO / GPU SERVER)
+# ==============================================================================
+# export HF_TOKEN="your_huggingface_token_here"
+# huggingface-cli login --token $HF_TOKEN || hf auth login --token $HF_TOKEN || true
+sudo apt update && sudo apt install git-lfs -y
+git lfs install
+git config --global lfs.concurrenttransfers 64
+cd /marimo && nohup git clone https://huggingface.co/datasets/manhmitcf/Fish_Feeding_Intensity_Dataset > /marimo/clone.log 2>&1 &
+tail -n +1 -f /marimo/clone.log
+
+# ==============================================================================
+# 2. SẮP XẾP LẠI THƯ MỤC DATASET
+# ==============================================================================
+mv /marimo/Fish_Feeding_Intensity_Dataset/audio/audio/* /marimo/Fish_Feeding_Intensity_Dataset/audio/
+mv /marimo/Fish_Feeding_Intensity_Dataset/video/video/* /marimo/Fish_Feeding_Intensity_Dataset/video/
+rm -rf /marimo/Fish_Feeding_Intensity_Dataset/audio/audio
+rm -rf /marimo/Fish_Feeding_Intensity_Dataset/video/video
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
+
+# ==============================================================================
+# 3. BENCHMARK: U_FFIA27K_audio_nano_2d_stft (FROM SCRATCH 400 EPOCHS)
+#    (3 Backbone Nano Độc Lập Chạy Trên Phổ 2D STFT 256kHz + TKEO: Mục Tiêu > 89.00%)
+#    - Model 1: NanoConformer (1.64M params, 1.12 GFLOPs)
+#    - Model 2: NanoFAST (0.88M params, 1.26 GFLOPs)
+#    - Model 3: NanoUnderwaterDualBranch (1.29M params, 2.18 GFLOPs)
+#    - Độc lập 100%: 3 mạng hoàn toàn tách biệt, không chung bất kỳ tham số nào
+#    - Tổng số Epoch: 400 Epochs (From Scratch, OneCycleLR lr=1e-3, Không Early Stopping)
+#    - Tiền xử lý: TKEO STFT 256kHz (2049 linear bins, FFT=4096, Hop=2048, Pure Spectral)
+#    - Huấn luyện luân phiên (Interleaved Loop): Tối ưu VRAM đỉnh ~2.4GB / 4GB
+# ==============================================================================
+if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
+    git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
+fi
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity
+git fetch origin
+git checkout U_FFIA27K_audio_nano_2d_stft
+git pull origin U_FFIA27K_audio_nano_2d_stft
+
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# --- BƯỚC 3.1: CHẾ ĐỘ TEST & KIỂM TOÁN MÔ HÌNH (< 5 giây) ---
+# 1. Kiểm tra profile tham số và GFLOPs của cả 3 mô hình Nano:
+python cli_audio_benchmark.py --mode profile
+
+# 2. Kiểm thử Dry-run trên GPU (Kiểm tra bộ nhớ VRAM < 3.0 GB, bảo đảm an toàn cho RTX 3050 4GB):
+python cli_audio_benchmark.py --mode dry-run --device cuda
+
+# --- BƯỚC 3.2: CHẠY HUẤN LUYỆN CHÍNH THỨC 3 MÔ HÌNH NANO TRÊN GPU (BACKGROUND) ---
+pkill -f "python cli_audio_benchmark.py" || true
+
+# Huấn luyện luân phiên 3 mạng from-scratch 400 epochs:
+nohup python cli_audio_benchmark.py --mode train --device cuda > benchmark.log 2>&1 &
+tail -n +1 -f benchmark.log
+
+# ==============================================================================
+# 4. THEO DÕI TIẾN ĐỘ TRAINING BẤT CỨ LÚC NÀO
+# ==============================================================================
+# Theo dõi trực tiếp log tiến độ và so sánh với baseline 89.00%:
+# tail -n +1 -f /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal/benchmark.log
+
+# Kiểm tra bảng theo dõi lịch sử và độ chính xác của cả 3 mô hình:
+# cat /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal/checkpoint/audio_2d_benchmark/benchmark_history.csv
+
+# Kiểm tra trạng thái GPU:
+# nvidia-smi

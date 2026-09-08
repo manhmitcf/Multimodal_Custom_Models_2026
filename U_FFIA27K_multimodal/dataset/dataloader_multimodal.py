@@ -120,7 +120,7 @@ class FishMultimodalDataLoader:
     """
     def __init__(
         self,
-        batch_size: int = 32,
+        batch_size: Any = 32,
         dataloader_workers: int = -1,
         prefetch_factor: Optional[int] = None,
         cache_mode: str = "ram",
@@ -128,17 +128,33 @@ class FishMultimodalDataLoader:
         num_frames: int = 4,
         sample_rate: int = 64000,
         splitter_config: Optional[SplitterConfig] = None,
+        config: Optional[Any] = None,
+        **kwargs,
     ) -> None:
-        self.batch_size = batch_size
-        self.dataloader_workers = dataloader_workers
-        self.prefetch_factor = prefetch_factor
-        self.cache_mode = cache_mode.lower()
-        if self.cache_mode not in VALID_CACHE_MODES:
-            raise ValueError(f"Invalid cache_mode='{cache_mode}'. Expected one of {sorted(VALID_CACHE_MODES)}.")
+        cfg = config if config is not None else (batch_size if not isinstance(batch_size, (int, np.integer)) else None)
+        if cfg is not None:
+            self.batch_size = getattr(cfg, "batch_size", 32)
+            self.dataloader_workers = getattr(cfg, "dataloader_workers", -1)
+            self.prefetch_factor = getattr(cfg, "prefetch_factor", prefetch_factor)
+            self.cache_mode = str(getattr(cfg, "cache_mode", "ram")).lower()
+            self.image_size = getattr(cfg, "image_size", 224)
+            self.num_frames = getattr(cfg, "num_frames", 4)
+            audio_feat = getattr(cfg, "audio_features", None)
+            sr = getattr(audio_feat, "sample_rate", None) if audio_feat is not None else None
+            self.sample_rate = sr if sr is not None else getattr(cfg, "sample_rate", 64000)
+            self.splitter_config = getattr(cfg, "dataset_splitter", splitter_config)
+        else:
+            self.batch_size = int(batch_size)
+            self.dataloader_workers = dataloader_workers
+            self.prefetch_factor = prefetch_factor
+            self.cache_mode = cache_mode.lower()
+            self.image_size = image_size
+            self.num_frames = num_frames
+            self.sample_rate = sample_rate
+            self.splitter_config = splitter_config
 
-        self.image_size = image_size
-        self.num_frames = num_frames
-        self.sample_rate = sample_rate
+        if self.cache_mode not in VALID_CACHE_MODES:
+            raise ValueError(f"Invalid cache_mode='{self.cache_mode}'. Expected one of {sorted(VALID_CACHE_MODES)}.")
 
         if self.dataloader_workers == -1:
             max_cpu = os.cpu_count()
