@@ -38,17 +38,29 @@ git fetch origin
 git checkout U_FFIA27K_multimodal_kd_tournament
 git pull origin U_FFIA27K_multimodal_kd_tournament
 
-# [LƯU Ý]: Code Python đã TỰ ĐỘNG tải & giải nén 2 Teacher checkpoints từ Hugging Face nếu thiếu!
-# Nếu bạn muốn tải thủ công trước (dự phòng), có thể chạy 2 lệnh sau:
-# mkdir -p teachers
-# if [ ! -f "teachers/ConvNeXtTiny/DL_video/checkpoint/convnext_tiny/video_best.pt" ]; then
-#     curl -L "https://huggingface.co/datasets/hoangphihung442004/Results_U_FFIA27K_video/resolve/main/ConvNeXtTiny_holdout_random_sample_20260729_153012.zip?download=true" -o teachers/ConvNeXtTiny.zip
-#     unzip -q teachers/ConvNeXtTiny.zip -d teachers/ConvNeXtTiny && rm teachers/ConvNeXtTiny.zip
-# fi
-# if [ ! -f "teachers/PANNS_Cnn6/DL_audio/checkpoint/panns_cnn6/audio_best.pt" ]; then
-#     curl -L "https://huggingface.co/datasets/hoangphihung442004/Results_U_FFIA27K_audio/resolve/main/PANNS_Cnn6_holdout_random_sample_20260729_153012.zip?download=true" -o teachers/PANNS_Cnn6.zip
-#     unzip -q teachers/PANNS_Cnn6.zip -d teachers/PANNS_Cnn6 && rm teachers/PANNS_Cnn6.zip
-# fi
+# ==============================================================================
+# TẢI VÀ GIẢI NÉN 2 CHECKPOINTS TEACHER VÀO THƯ MỤC teachers/
+# Thư mục lưu: /marimo/Capstone_2026_Fish_Feeding_Intensity/teachers/
+# ==============================================================================
+mkdir -p teachers/ConvNeXtTiny teachers/PANNS_Cnn6
+
+# 1. Video Teacher: ConvNeXt-Tiny Holdout
+if [ ! -f "teachers/ConvNeXtTiny/DL_video/checkpoint/convnext_tiny/video_best.pt" ]; then
+    echo "Dang tai Video Teacher (ConvNeXt-Tiny)..."
+    curl -L "https://huggingface.co/datasets/hoangphihung442004/Results_U_FFIA27K_video/resolve/main/ConvNeXtTiny_holdout_random_sample_20260729_153012.zip?download=true" -o teachers/ConvNeXtTiny.zip
+    unzip -q -o teachers/ConvNeXtTiny.zip -d teachers/ConvNeXtTiny && rm teachers/ConvNeXtTiny.zip
+fi
+
+# 2. Audio Teacher: PANNS_Cnn6 Holdout
+if [ ! -f "teachers/PANNS_Cnn6/DL_audio/checkpoint/panns_cnn6/audio_best.pt" ]; then
+    echo "Dang tai Audio Teacher (PANNS_Cnn6)..."
+    curl -L "https://huggingface.co/datasets/hoangphihung442004/Results_U_FFIA27K_audio/resolve/main/PANNS_Cnn6_holdout_random_sample_20260729_153012.zip?download=true" -o teachers/PANNS_Cnn6.zip
+    unzip -q -o teachers/PANNS_Cnn6.zip -d teachers/PANNS_Cnn6 && rm teachers/PANNS_Cnn6.zip
+fi
+
+# Kiểm tra sự tồn tại của cả 2 file:
+ls -lh teachers/ConvNeXtTiny/DL_video/checkpoint/convnext_tiny/video_best.pt
+ls -lh teachers/PANNS_Cnn6/DL_audio/checkpoint/panns_cnn6/audio_best.pt
 
 cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
 pip install --upgrade pip
