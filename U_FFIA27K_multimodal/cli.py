@@ -98,7 +98,7 @@ def mode_profile(args: argparse.Namespace) -> None:
     stats = count_parameters(model)
     print("\n[1] DETAILED PARAMETER BREAKDOWN:")
     print(f"  - Video Backbone (ConvNeXt-Nano 7-ch) : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-    print(f"  - Audio Backbone (TKEO-STFT-MLP 256k) : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+    print(f"  - Audio Backbone (EfficientAT MN01 256k) : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
     print(f"  - Pairwise Tournament Fusion          : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
     print(f"  - Kinematics Extractor (Sobel/P-free) : {stats['kinematics']:,}")
     print(f"  ===============================================================")

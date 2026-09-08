@@ -533,45 +533,44 @@ class MultimodalTrainer:
                                 for p in vb.proj.parameters():
                                     p.requires_grad = True
 
-                        # Audio (AudioMLPBackbone / PANNS-CNN6-Pro): early layers frozen, late layers fine-tune
+                        # Audio (EfficientAT MN01 / AudioMLPBackbone / PANNS):
                         if hasattr(self.model, "audio_backbone"):
                             ab = self.model.audio_backbone
-                            # 1. AudioMLPBackbone: fc1 & ln1 frozen, fc2 & ln2 fine-tune
-                            if hasattr(ab, "fc1"):
+                            # 1. EfficientAT MN01: Frozen 100% in Phase 2 as per design decision
+                            if hasattr(ab, "mn01"):
+                                for p in ab.parameters():
+                                    p.requires_grad = False
+                                logger.info(">>> Audio Backbone (EfficientAT MN01) is 100% FROZEN in Phase 2 to preserve peak acoustic representations.")
+                            # 2. AudioMLPBackbone: fc1 & ln1 frozen, fc2 & ln2 fine-tune
+                            elif hasattr(ab, "fc1"):
                                 for p in ab.fc1.parameters():
                                     p.requires_grad = False
-                            if hasattr(ab, "ln1"):
                                 for p in ab.ln1.parameters():
                                     p.requires_grad = False
-                            if hasattr(ab, "fc2"):
                                 for p in ab.fc2.parameters():
                                     p.requires_grad = True
-                            if hasattr(ab, "ln2"):
                                 for p in ab.ln2.parameters():
                                     p.requires_grad = True
 
-                            # 2. Legacy PANNS-CNN6-Pro: conv_block 1..2 frozen; conv_block 3..4 + proj fine-tune
-                            if hasattr(ab, "conv_block1"):
+                            # 3. Legacy PANNS-CNN6-Pro: conv_block 1..2 frozen; conv_block 3..4 + proj fine-tune
+                            elif hasattr(ab, "conv_block1"):
                                 for p in ab.conv_block1.parameters():
                                     p.requires_grad = False
-                            if hasattr(ab, "conv_block2"):
                                 for p in ab.conv_block2.parameters():
                                     p.requires_grad = False
-                            if hasattr(ab, "conv_block3"):
                                 for p in ab.conv_block3.parameters():
                                     p.requires_grad = True
-                            if hasattr(ab, "conv_block4"):
                                 for p in ab.conv_block4.parameters():
                                     p.requires_grad = True
-                            if hasattr(ab, "proj"):
-                                for p in ab.proj.parameters():
-                                    p.requires_grad = True
-                            if hasattr(ab, "token_proj"):
-                                for p in ab.token_proj.parameters():
-                                    p.requires_grad = True
-                            if hasattr(ab, "norm_audio"):
-                                for p in ab.norm_audio.parameters():
-                                    p.requires_grad = True
+                                if hasattr(ab, "proj"):
+                                    for p in ab.proj.parameters():
+                                        p.requires_grad = True
+                                if hasattr(ab, "token_proj"):
+                                    for p in ab.token_proj.parameters():
+                                        p.requires_grad = True
+                                if hasattr(ab, "norm_audio"):
+                                    for p in ab.norm_audio.parameters():
+                                        p.requires_grad = True
 
                         if hasattr(self.model, "aux_head_video"):
                             for p in self.model.aux_head_video.parameters():

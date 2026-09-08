@@ -24,7 +24,7 @@ class AudioFrontend(nn.Module):
     Applies Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis, cuFFT RFFT,
     Log Magnitude, and Temporal Mean Pooling to extract a 2049-dimensional spectral vector.
     """
-    def __init__(self, config: Optional[AudioFeaturesConfig] = None) -> None:
+    def __init__(self, config: Optional[AudioFeaturesConfig] = None, return_2d: bool = True) -> None:
         super().__init__()
         if config is None:
             self.config = AudioFeaturesConfig()
@@ -37,6 +37,7 @@ class AudioFrontend(nn.Module):
         self.stft_bins = self.n_fft // 2 + 1  # 2049 for n_fft=4096
         self.alpha_max = float(getattr(self.config, 'alpha_max', 0.99))
         self.use_tkeo = bool(getattr(self.config, 'use_tkeo', True))
+        self.return_2d = return_2d
 
         # Register Hann window buffer
         window = torch.hann_window(self.n_fft)
@@ -51,6 +52,7 @@ class AudioFrontend(nn.Module):
         logger.info(f"  - FFT Size (n_fft):   {self.n_fft}")
         logger.info(f"  - Hop Length:         {self.hop_length}")
         logger.info(f"  - STFT Output Bins:   {self.stft_bins} linear bins")
+        logger.info(f"  - Output Mode:        {'2D Spectrogram [B, 1, T, 2049]' if self.return_2d else '1D Vector [B, 2049]'}")
         logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max})")
         logger.info(f"  - SpecAugment:        DISABLED (Pure Log-Magnitude)")
         logger.info("==================================================")
@@ -100,10 +102,14 @@ class AudioFrontend(nn.Module):
         # 5. Log Magnitude: log(|X| + 1e-8)
         log_mag = torch.log(torch.abs(complex_spec) + 1e-8)
 
-        # 6. Mean over time axis -> [Batch, 2049]
-        spec_vector = log_mag.mean(dim=1)
-
-        # 7. Layer Normalization
-        out = self.norm(spec_vector)
+        # 6. Normalization & Output Formatting
+        if self.return_2d:
+            # 2D Spectrogram: [Batch, 1, Time_Steps, 2049] for 2D CNNs like EfficientAT
+            norm_spec = self.norm(log_mag)
+            out = norm_spec.unsqueeze(1)
+        else:
+            # 1D Mean Vector: [Batch, 2049] for flat MLPs
+            spec_vector = log_mag.mean(dim=1)
+            out = self.norm(spec_vector)
 
         return out

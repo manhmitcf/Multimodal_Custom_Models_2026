@@ -34,7 +34,9 @@
     "embed_dim": 224,
     "num_bottlenecks": 4,
     "num_heads": 4,
-    "pretrained_video": false
+    "pretrained_video": false,
+    "audio_backbone_type": "efficientat_mn01",
+    "pretrained_audio": true
   },
   "audio_features": {
     "sample_rate": 256000,

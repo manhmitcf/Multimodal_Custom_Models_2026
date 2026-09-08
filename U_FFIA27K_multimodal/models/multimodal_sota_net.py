@@ -60,10 +60,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
             in_chans=in_chans,
             num_frames=num_frames
         )
-        self.audio_backbone = AudioMLPBackbone(
-            in_features=2049,
+        self.audio_backbone = EfficientATAudioBackbone(
             embed_dim=embed_dim,
-            num_tokens=num_frames
+            num_tokens=num_frames,
+            pretrained=True
         )
 
         # 3. Gated Bilateral Boundary Fusion (~0.14M)

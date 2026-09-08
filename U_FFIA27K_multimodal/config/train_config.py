@@ -64,6 +64,8 @@ class ModelConfig(BaseModel):
     num_heads: int = Field(default=4, description="Number of cross-attention heads.")
     pretrained_video: bool = Field(default=True, description="Initialize RGB channels from pretrained MobileViT-XS.")
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
+    audio_backbone_type: str = Field(default="efficientat_mn01", description="Audio backbone model type.")
+    pretrained_audio: bool = Field(default=True, description="Load pre-trained weights for audio backbone.")
 
 
 class SplitterConfig(BaseModel):

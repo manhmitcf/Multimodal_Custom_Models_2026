@@ -223,6 +223,7 @@ class AudioMLPBackbone(nn.Module):
         return f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio
 
 
-# Default AudioBackbone uses AudioMLPBackbone
-AudioBackbone = AudioMLPBackbone
-EfficientATAudioBackbone = AudioMLPBackbone
+from .efficientat import EfficientATAudioBackbone
+
+# Default AudioBackbone uses EfficientATAudioBackbone (MN01 ~0.2M params)
+AudioBackbone = EfficientATAudioBackbone
