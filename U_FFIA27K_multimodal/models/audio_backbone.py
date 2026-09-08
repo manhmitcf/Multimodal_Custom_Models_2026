@@ -97,15 +97,20 @@ class PANNSCNN6AudioBackbone(nn.Module):
         embed_dim: int = 224,
         num_tokens: int = 2,
         channels: Tuple[int, ...] = (40, 80, 160, 320),
-        dropout: float = 0.2
+        dropout: float = 0.2,
+        use_frequency_attention: bool = False
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.num_tokens = num_tokens
         self.dropout_rate = dropout
+        self.use_frequency_attention = use_frequency_attention
 
-        # 1. Learnable Frequency Attention (Freq-SE)
-        self.freq_attention = LearnableFrequencyAttention(mel_bins=128, reduction=4)
+        # 1. Frequency Attention (Disabled by default to strictly match standard Log-Mel PANNS Teacher)
+        if use_frequency_attention:
+            self.freq_attention = LearnableFrequencyAttention(mel_bins=128, reduction=4)
+        else:
+            self.freq_attention = nn.Identity()
 
         # 2. 4 PANNS 5x5 Conv Blocks
         self.conv_block1 = ConvBlock5x5(in_channels=1, out_channels=channels[0])

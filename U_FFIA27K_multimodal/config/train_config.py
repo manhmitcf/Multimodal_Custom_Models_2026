@@ -46,7 +46,8 @@ class AudioFeaturesConfig(BaseModel):
     time_stripes_num: int = Field(default=2, description="SpecAugment number of time stripes.")
     freq_drop_width: int = Field(default=16, description="SpecAugment max freq mask width.")
     freq_stripes_num: int = Field(default=2, description="SpecAugment number of freq stripes.")
-    use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
+    use_tkeo: bool = Field(default=False, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
+    use_frequency_attention: bool = Field(default=False, description="Enable Learnable Frequency Attention across Mel-bins.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
     beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
 

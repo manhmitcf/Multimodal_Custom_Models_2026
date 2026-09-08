@@ -72,7 +72,8 @@ def build_cli_model(config: TrainConfig, pretrained_video: bool = True) -> nn.Mo
         audio_frontend=audio_frontend,
         image_size=config.image_size,
         num_frames=config.num_frames,
-        in_chans=getattr(config.video_features, "num_channels", 7)
+        in_chans=getattr(config.video_features, "num_channels", 7),
+        use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False)
     )
     return model
 
