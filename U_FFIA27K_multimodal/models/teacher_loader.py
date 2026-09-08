@@ -5,7 +5,7 @@ from typing import Tuple, Optional, Dict, Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import densenet121
+from torchvision.models import convnext_tiny, densenet121
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,30 @@ class TeacherPANNS_Cnn6(nn.Module):
         return logits, emb
 
 
+class TeacherConvNeXtTiny(nn.Module):
+    """
+    Self-contained ConvNeXt-Tiny Video Teacher model (classes_num=4).
+    Accepts RGB image tensor [B, 3, 224, 224].
+    Penultimate feature embedding: 768-dim.
+    Spatial feature map: [B, 768, 7, 7].
+    """
+    def __init__(self, classes_num: int = 4):
+        super().__init__()
+        self.model = convnext_tiny(weights=None)
+        self.model.classifier[2] = nn.Linear(self.model.classifier[2].in_features, classes_num)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x)
+
+    def forward_with_features(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        feat_map = self.model.features(x)  # [B, 768, 7, 7]
+        pooled = self.model.avgpool(feat_map)  # [B, 768, 1, 1]
+        norm_pooled = self.model.classifier[0](pooled)  # LayerNorm2d [B, 768, 1, 1]
+        flattened = self.model.classifier[1](norm_pooled)  # Flatten -> [B, 768]
+        logits = self.model.classifier[2](flattened)  # Linear -> [B, 4]
+        return logits, flattened, feat_map
+
+
 class TeacherDenseNet121(nn.Module):
     """
     Self-contained DenseNet121 Video Teacher model (classes_num=4).
@@ -111,11 +135,153 @@ class TeacherDenseNet121(nn.Module):
         return logits, pooled, feat_map
 
 
+# Official HuggingFace artifact URLs for holdout experiment
+DEFAULT_VIDEO_TEACHER_URL = (
+    "https://huggingface.co/datasets/hoangphihung442004/Results_U_FFIA27K_video/resolve/main/"
+    "ConvNeXtTiny_holdout_random_sample_20260729_153012.zip?download=true"
+)
+DEFAULT_AUDIO_TEACHER_URL = (
+    "https://huggingface.co/datasets/hoangphihung442004/Results_U_FFIA27K_audio/resolve/main/"
+    "PANNS_Cnn6_holdout_random_sample_20260729_153012.zip?download=true"
+)
+
+
+def download_and_extract_checkpoint(url: str, target_dir: str, expected_filename: str) -> str:
+    """
+    Downloads zip archive from URL, extracts into target_dir, and returns absolute path
+    to the expected checkpoint file.
+    """
+    os.makedirs(target_dir, exist_ok=True)
+
+    # 1. Quick check if already extracted
+    for root, _, files in os.walk(target_dir):
+        if expected_filename in files:
+            found = os.path.join(root, expected_filename)
+            logger.info(f"[*] Found existing teacher checkpoint at: {found}")
+            return os.path.abspath(found)
+
+    logger.info("==================================================")
+    logger.info(f"[*] Teacher checkpoint '{expected_filename}' not found locally.")
+    logger.info(f"[*] Automatically downloading from HuggingFace:")
+    logger.info(f"    URL: {url}")
+    logger.info(f"    Target Directory: {target_dir}")
+    logger.info("==================================================")
+
+    import urllib.request
+    import zipfile
+    import tempfile
+
+    temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    temp_zip_path = temp_zip.name
+    temp_zip.close()
+
+    try:
+        def _reporthook(block_num, block_size, total_size):
+            if total_size > 0 and block_num % 50 == 0:
+                percent = min(100.0, block_num * block_size / total_size * 100.0)
+                downloaded_mb = block_num * block_size / 1e6
+                total_mb = total_size / 1e6
+                print(f"\rDownloading teacher checkpoint: {percent:.1f}% ({downloaded_mb:.1f}MB / {total_mb:.1f}MB)", end="", flush=True)
+
+        urllib.request.urlretrieve(url, temp_zip_path, reporthook=_reporthook)
+        print()
+        logger.info(f"[*] Extracting teacher archive to '{target_dir}'...")
+        with zipfile.ZipFile(temp_zip_path, "r") as zip_ref:
+            zip_ref.extractall(target_dir)
+        logger.info("[*] Successfully extracted teacher archive.")
+    except Exception as exc:
+        raise RuntimeError(f"Failed to auto-download and extract teacher from '{url}': {exc}") from exc
+    finally:
+        if os.path.exists(temp_zip_path):
+            try:
+                os.remove(temp_zip_path)
+            except OSError:
+                pass
+
+    for root, _, files in os.walk(target_dir):
+        if expected_filename in files:
+            found = os.path.join(root, expected_filename)
+            logger.info(f"[*] Verified teacher checkpoint at: {found}")
+            return os.path.abspath(found)
+
+    raise FileNotFoundError(f"Checkpoint '{expected_filename}' not found after extracting '{url}' into '{target_dir}'.")
+
+
+def ensure_teacher_checkpoints(
+    video_ckpt_path: Optional[str] = None,
+    audio_ckpt_path: Optional[str] = None
+) -> Tuple[str, str]:
+    """
+    Ensures that both Video Teacher (ConvNeXt-Tiny) and Audio Teacher (PANNS_Cnn6) checkpoints exist.
+    If not found on disk at the requested or standard fallback paths, automatically downloads
+    and extracts them from Hugging Face into the 'teachers' directory.
+    """
+    from pathlib import Path
+    current_file = Path(__file__).resolve()
+    pkg_dir = current_file.parent.parent       # U_FFIA27K_multimodal
+    repo_root = pkg_dir.parent                 # Repository root or workspace root
+
+    # 1. Resolve or auto-download Video Teacher
+    resolved_v = None
+    v_candidates = []
+    if video_ckpt_path:
+        v_candidates.extend([
+            Path(video_ckpt_path),
+            pkg_dir / video_ckpt_path,
+            repo_root / video_ckpt_path,
+        ])
+    v_candidates.extend([
+        repo_root / "teachers" / "ConvNeXtTiny" / "DL_video" / "checkpoint" / "convnext_tiny" / "video_best.pt",
+        pkg_dir / "teachers" / "ConvNeXtTiny" / "DL_video" / "checkpoint" / "convnext_tiny" / "video_best.pt",
+    ])
+    for c in v_candidates:
+        if c.is_file():
+            resolved_v = str(c.resolve())
+            break
+
+    if not resolved_v:
+        target_v_dir = str((repo_root / "teachers" / "ConvNeXtTiny").resolve())
+        resolved_v = download_and_extract_checkpoint(
+            url=DEFAULT_VIDEO_TEACHER_URL,
+            target_dir=target_v_dir,
+            expected_filename="video_best.pt"
+        )
+
+    # 2. Resolve or auto-download Audio Teacher
+    resolved_a = None
+    a_candidates = []
+    if audio_ckpt_path:
+        a_candidates.extend([
+            Path(audio_ckpt_path),
+            pkg_dir / audio_ckpt_path,
+            repo_root / audio_ckpt_path,
+        ])
+    a_candidates.extend([
+        repo_root / "teachers" / "PANNS_Cnn6" / "DL_audio" / "checkpoint" / "panns_cnn6" / "audio_best.pt",
+        pkg_dir / "teachers" / "PANNS_Cnn6" / "DL_audio" / "checkpoint" / "panns_cnn6" / "audio_best.pt",
+    ])
+    for c in a_candidates:
+        if c.is_file():
+            resolved_a = str(c.resolve())
+            break
+
+    if not resolved_a:
+        target_a_dir = str((repo_root / "teachers" / "PANNS_Cnn6").resolve())
+        resolved_a = download_and_extract_checkpoint(
+            url=DEFAULT_AUDIO_TEACHER_URL,
+            target_dir=target_a_dir,
+            expected_filename="audio_best.pt"
+        )
+
+    return resolved_v, resolved_a
+
+
 class OfflineTeacherEnsemble(nn.Module):
     """
-    Offline Teacher Ensemble managing frozen Video Teacher (DenseNet121)
+    Offline Teacher Ensemble managing frozen Video Teacher (ConvNeXt-Tiny)
     and Audio Teacher (PANNS_Cnn6).
 
+    - Automatically downloads & extracts pretrained holdout checkpoints if missing.
     - Loaded once at training start.
     - Parameters strictly frozen (requires_grad = False).
     - Mode strictly eval().
@@ -124,14 +290,19 @@ class OfflineTeacherEnsemble(nn.Module):
     """
     def __init__(
         self,
-        video_ckpt_path: str,
-        audio_ckpt_path: str,
+        video_ckpt_path: Optional[str] = None,
+        audio_ckpt_path: Optional[str] = None,
         classes_num: int = 4,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        auto_download: bool = True
     ):
         super().__init__()
         self.classes_num = classes_num
         self.device = device or torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Auto-download & resolve checkpoints
+        if auto_download:
+            video_ckpt_path, audio_ckpt_path = ensure_teacher_checkpoints(video_ckpt_path, audio_ckpt_path)
 
         # 1. Initialize Teacher Models & Frontend
         from features.audio_frontend import AudioFrontend
@@ -144,7 +315,7 @@ class OfflineTeacherEnsemble(nn.Module):
             use_tkeo=False
         )
         self.audio_frontend = AudioFrontend(tea_audio_cfg)
-        self.video_teacher = TeacherDenseNet121(classes_num=classes_num)
+        self.video_teacher = TeacherConvNeXtTiny(classes_num=classes_num)
         self.audio_teacher = TeacherPANNS_Cnn6(classes_num=classes_num)
 
         # 2. Load Checkpoints
@@ -164,11 +335,12 @@ class OfflineTeacherEnsemble(nn.Module):
         self.audio_frontend.eval()
         self.to(self.device)
 
+        video_teacher_name = self.video_teacher.__class__.__name__
         logger.info("==================================================")
         logger.info("Initialized OfflineTeacherEnsemble:")
-        logger.info(f"  - Video Teacher: DenseNet121 (Loaded from '{video_ckpt_path}')")
+        logger.info(f"  - Video Teacher: {video_teacher_name} (Loaded from '{video_ckpt_path}')")
         logger.info(f"  - Audio Teacher: PANNS_Cnn6  (Loaded from '{audio_ckpt_path}')")
-        logger.info(f"  - Multi-Level KD: Logits + Spatial Attention Map (7x7) + Penultimate Embeddings")
+        logger.info(f"  - Multi-Level KD: Logits + Spatial Attention Map (7x7) + Penultimate Embeddings (768-dim)")
         logger.info(f"  - State: Frozen (requires_grad=False), Device: {self.device}")
         logger.info("==================================================")
 
@@ -190,8 +362,17 @@ class OfflineTeacherEnsemble(nn.Module):
             else:
                 clean_state[k] = v
 
-        self.video_teacher.model.load_state_dict(clean_state, strict=True)
-        logger.info(f"  [*] Loaded Video Teacher (DenseNet121) weights from: {ckpt_path}")
+        # Dynamically switch between ConvNeXt-Tiny and DenseNet121 based on weights structure
+        if any('classifier.0.weight' in k or 'features.0.0.weight' in k for k in clean_state):
+            if not isinstance(self.video_teacher, TeacherConvNeXtTiny):
+                self.video_teacher = TeacherConvNeXtTiny(classes_num=self.classes_num).to(self.device)
+            self.video_teacher.model.load_state_dict(clean_state, strict=True)
+            logger.info(f"  [*] Loaded Video Teacher (ConvNeXt-Tiny) weights from: {ckpt_path}")
+        else:
+            if not isinstance(self.video_teacher, TeacherDenseNet121):
+                self.video_teacher = TeacherDenseNet121(classes_num=self.classes_num).to(self.device)
+            self.video_teacher.model.load_state_dict(clean_state, strict=True)
+            logger.info(f"  [*] Loaded Video Teacher (DenseNet121) weights from: {ckpt_path}")
 
     def _load_audio_teacher(self, ckpt_path: str) -> None:
         if not os.path.exists(ckpt_path):
@@ -227,9 +408,9 @@ class OfflineTeacherEnsemble(nn.Module):
             Dict containing:
               - teacher_logits_video: [B, classes_num]
               - teacher_logits_audio: [B, classes_num]
-              - teacher_feat_video: [B, 1024]
+              - teacher_feat_video: [B, 768] (ConvNeXt-Tiny) or [B, 1024] (DenseNet121)
               - teacher_feat_audio: [B, 512]
-              - teacher_feat_map_video: [B, 1024, 7, 7]
+              - teacher_feat_map_video: [B, 768, 7, 7] or [B, 1024, 7, 7]
         """
         self.video_teacher.eval()
         self.audio_teacher.eval()
@@ -267,3 +448,4 @@ class OfflineTeacherEnsemble(nn.Module):
             "teacher_feat_audio": teacher_feat_a,
             "teacher_feat_map_video": teacher_map_v,
         }
+

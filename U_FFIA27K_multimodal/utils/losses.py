@@ -151,7 +151,7 @@ class PairwiseTournamentLoss(BaseLoss):
         adaptive_kd: bool = False,
         adaptive_kd_min_alpha: float = 0.0,
         student_feat_v_dim: int = 224,
-        teacher_feat_v_dim: int = 1024,
+        teacher_feat_v_dim: int = 768,
         student_feat_a_dim: int = 224,
         teacher_feat_a_dim: int = 512,
         only_backbones: bool = False,
@@ -174,7 +174,6 @@ class PairwiseTournamentLoss(BaseLoss):
 
         self.kd_loss_video = KDLoss(temperature=float(kwargs.get("kd_temperature_video", kd_temperature_video)))
         self.kd_loss_audio = KDLoss(temperature=float(kwargs.get("kd_temperature_audio", kd_temperature_audio)))
-
         self.enable_feature_kd = bool(kwargs.get("enable_feature_kd", enable_feature_kd))
         self.enable_at_kd = bool(kwargs.get("enable_at_kd", enable_at_kd))
         self.weight_feat = float(kwargs.get("weight_feature_kd", weight_feature_kd))
@@ -185,9 +184,11 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             self.at_loss = None
 
+        teacher_v_dim = int(kwargs.get("teacher_feat_v_dim", teacher_feat_v_dim))
+        teacher_a_dim = int(kwargs.get("teacher_feat_a_dim", teacher_feat_a_dim))
         if self.enable_kd and self.enable_feature_kd:
-            self.feat_kd_v = FeatureEmbeddingKDLoss(in_dim=student_feat_v_dim, teacher_dim=teacher_feat_v_dim)
-            self.feat_kd_a = FeatureEmbeddingKDLoss(in_dim=student_feat_a_dim, teacher_dim=teacher_feat_a_dim)
+            self.feat_kd_v = FeatureEmbeddingKDLoss(in_dim=student_feat_v_dim, teacher_dim=teacher_v_dim)
+            self.feat_kd_a = FeatureEmbeddingKDLoss(in_dim=student_feat_a_dim, teacher_dim=teacher_a_dim)
         else:
             self.feat_kd_v = None
             self.feat_kd_a = None

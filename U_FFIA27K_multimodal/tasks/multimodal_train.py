@@ -70,13 +70,14 @@ class MultimodalTrainer:
         if self.enable_kd:
             try:
                 from models.teacher_loader import OfflineTeacherEnsemble
-                v_ckpt = getattr(self.config, "teacher_video_ckpt", "teachers/DenseNet121/DL_video/checkpoint/densenet121/fold_00/video_best.pt")
+                v_ckpt = getattr(self.config, "teacher_video_ckpt", "teachers/ConvNeXtTiny/DL_video/checkpoint/convnext_tiny/video_best.pt")
                 a_ckpt = getattr(self.config, "teacher_audio_ckpt", "teachers/PANNS_Cnn6/DL_audio/checkpoint/panns_cnn6/audio_best.pt")
                 self.teachers = OfflineTeacherEnsemble(
                     video_ckpt_path=v_ckpt,
                     audio_ckpt_path=a_ckpt,
                     classes_num=getattr(self.config.model, "classes_num", 4),
-                    device=self.device
+                    device=self.device,
+                    auto_download=True
                 )
                 logger.info("Offline Dual-Teacher Ensemble loaded successfully: Distillation active throughout training.")
             except Exception as exc:
@@ -103,6 +104,8 @@ class MultimodalTrainer:
                 enable_at_kd=getattr(self.config, "enable_at_kd", True),
                 adaptive_kd=getattr(self.config, "adaptive_kd", False),
                 adaptive_kd_min_alpha=getattr(self.config, "adaptive_kd_min_alpha", 0.0),
+                teacher_feat_v_dim=getattr(self.config, "teacher_feat_v_dim", 768),
+                teacher_feat_a_dim=getattr(self.config, "teacher_feat_a_dim", 512),
             ).to(self.device)
             logger.info(f"Configured PairwiseTournamentLoss with Multi-Level KD (40% CE / 60% KD | Adaptive={getattr(self.config, 'adaptive_kd', False)}, Feature Alignment, Spatial AT | KD={self.enable_kd}).")
         elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):

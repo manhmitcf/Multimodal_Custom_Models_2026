@@ -31,11 +31,11 @@ class TestKDTournamentPipeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        cls.v_ckpt = str(repo_root / "teachers/DenseNet121/DL_video/checkpoint/densenet121/fold_00/video_best.pt")
+        cls.v_ckpt = str(repo_root / "teachers/ConvNeXtTiny/DL_video/checkpoint/convnext_tiny/video_best.pt")
         cls.a_ckpt = str(repo_root / "teachers/PANNS_Cnn6/DL_audio/checkpoint/panns_cnn6/audio_best.pt")
 
     def test_01_teacher_models_and_checkpoints_loading(self):
-        """Verify standalone loading of DenseNet121 and PANNS_Cnn6 checkpoints with zero missing keys."""
+        """Verify standalone loading of ConvNeXt-Tiny and PANNS_Cnn6 checkpoints with zero missing keys."""
         if not os.path.exists(self.v_ckpt) or not os.path.exists(self.a_ckpt):
             self.skipTest("Teacher checkpoints not found on local disk. Skipping.")
 
@@ -73,9 +73,9 @@ class TestKDTournamentPipeline(unittest.TestCase):
         self.assertIsInstance(t_out, dict, "Teachers forward must return a dictionary of multi-level targets!")
         self.assertEqual(t_out["teacher_logits_video"].shape, (B, 4), "Video teacher logits must be [B, 4]")
         self.assertEqual(t_out["teacher_logits_audio"].shape, (B, 4), "Audio teacher logits must be [B, 4]")
-        self.assertEqual(t_out["teacher_feat_video"].shape, (B, 1024), "Video teacher penultimate feat must be [B, 1024]")
+        self.assertEqual(t_out["teacher_feat_video"].shape, (B, 768), "Video teacher penultimate feat must be [B, 768]")
         self.assertEqual(t_out["teacher_feat_audio"].shape, (B, 512), "Audio teacher penultimate feat must be [B, 512]")
-        self.assertEqual(t_out["teacher_feat_map_video"].shape, (B, 1024, 7, 7), "Video teacher feat map must be [B, 1024, 7, 7]")
+        self.assertEqual(t_out["teacher_feat_map_video"].shape, (B, 768, 7, 7), "Video teacher feat map must be [B, 768, 7, 7]")
 
         # Also verify with precomputed Mel Spectrogram [B, 1, 100, 128]
         dummy_audio_mel = torch.randn(B, 1, 100, 128, device=self.device)
@@ -84,7 +84,7 @@ class TestKDTournamentPipeline(unittest.TestCase):
         self.assertEqual(t_out2["teacher_logits_audio"].shape, (B, 4), "Audio teacher logits from Mel must be [B, 4]")
 
     def test_03_kd_loss_and_independent_gradient_flow(self):
-        """Verify PairwiseTournamentLoss with Multi-Level KD (Logits 35/65 + Feature Cosine + Spatial AT)."""
+        """Verify PairwiseTournamentLoss with Multi-Level KD (Logits 40/60 + Feature Cosine + Spatial AT)."""
         loss_fn = PairwiseTournamentLoss(
             weight_act=0.5,
             weight_pairwise=0.5,
@@ -100,6 +100,8 @@ class TestKDTournamentPipeline(unittest.TestCase):
             weight_at_kd=0.2,
             enable_feature_kd=True,
             enable_at_kd=True,
+            teacher_feat_v_dim=768,
+            teacher_feat_a_dim=512,
         ).to(self.device)
 
         B = 4
@@ -120,9 +122,9 @@ class TestKDTournamentPipeline(unittest.TestCase):
             'target': torch.tensor([0, 1, 2, 3], device=self.device),
             'teacher_logits_video': torch.randn(B, 4, device=self.device),
             'teacher_logits_audio': torch.randn(B, 4, device=self.device),
-            'teacher_feat_video': torch.randn(B, 1024, device=self.device),
+            'teacher_feat_video': torch.randn(B, 768, device=self.device),
             'teacher_feat_audio': torch.randn(B, 512, device=self.device),
-            'teacher_feat_map_video': torch.randn(B, 1024, 7, 7, device=self.device),
+            'teacher_feat_map_video': torch.randn(B, 768, 7, 7, device=self.device),
         }
 
         total_loss = loss_fn(student_out, target_dict, epoch=1)

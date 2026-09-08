@@ -191,6 +191,8 @@ def mode_dry_run(args: argparse.Namespace) -> None:
             enable_at_kd=getattr(config, "enable_at_kd", True),
             adaptive_kd=getattr(config, "adaptive_kd", False),
             adaptive_kd_min_alpha=getattr(config, "adaptive_kd_min_alpha", 0.0),
+            teacher_feat_v_dim=getattr(config, "teacher_feat_v_dim", 768),
+            teacher_feat_a_dim=getattr(config, "teacher_feat_a_dim", 512),
         ).to(device)
     else:
         print("[*] Running backward pass with OrdinalWassersteinEvidentialLoss...")
@@ -204,11 +206,13 @@ def mode_dry_run(args: argparse.Namespace) -> None:
 
     target_dict = {"target": dummy_targets}
     if getattr(config, "enable_kd", True):
+        v_dim = getattr(config, "teacher_feat_v_dim", 768)
+        a_dim = getattr(config, "teacher_feat_a_dim", 512)
         target_dict["teacher_logits_video"] = torch.randn(2, 4, device=device)
         target_dict["teacher_logits_audio"] = torch.randn(2, 4, device=device)
-        target_dict["teacher_feat_video"] = torch.randn(2, 1024, device=device)
-        target_dict["teacher_feat_audio"] = torch.randn(2, 512, device=device)
-        target_dict["teacher_feat_map_video"] = torch.randn(2, 1024, 7, 7, device=device)
+        target_dict["teacher_feat_video"] = torch.randn(2, v_dim, device=device)
+        target_dict["teacher_feat_audio"] = torch.randn(2, a_dim, device=device)
+        target_dict["teacher_feat_map_video"] = torch.randn(2, v_dim, 7, 7, device=device)
 
     loss = loss_fn(out, target_dict, epoch=1)
     loss.backward()
