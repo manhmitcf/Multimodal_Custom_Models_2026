@@ -9,6 +9,7 @@ if project_root not in sys.path:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from models.multimodal_sota_net import MultimodalBoundaryAwareNet
 from utils.losses import PairwiseTournamentLoss
@@ -119,44 +120,120 @@ def test_gradient_flow_tournament_loss():
     print(f"  Composite Tournament Loss: {loss.item():.4f}")
 
 
-def test_end_to_end_from_scratch():
+def test_phase1_warmup():
     print("\n" + "=" * 65)
-    print("TEST 4: END-TO-END FROM SCRATCH SIMULTANEOUS TRAINING")
+    print("TEST 4: PHASE 1 BACKBONE WARMUP (FUSION FROZEN, SEPARATE GRADIENTS)")
     print("=" * 65)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
     model.train()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
+
+    # Freeze fusion in Phase 1
+    for p in model.fusion.parameters():
+        p.requires_grad = False
+
+    B = 4
+    v_input = torch.randn(B, 2, 3, 224, 224)
+    a_input = torch.randn(B, 512000)
+    y_raw = torch.tensor([0, 1, 2, 3])
+
+    # Unimodal Video step
+    outputs = model(v_input, a_input)
+    loss_v = F.cross_entropy(outputs['logits_video'], y_raw)
+    loss_v.backward(retain_graph=True)
+
+    vb_grads = [p.grad for p in model.video_backbone.parameters()]
+    assert all(g is not None for g in vb_grads), "Video backbone missing gradients in Phase 1"
+    f_grads = [p.grad for p in model.fusion.parameters()]
+    assert all(g is None for g in f_grads), "Fusion received gradients during Phase 1 warmup (should be frozen)!"
+
+    # Unimodal Audio step
+    loss_a = F.cross_entropy(outputs['logits_audio'], y_raw)
+    loss_a.backward()
+
+    ab_grads = [p.grad for p in model.audio_backbone.parameters()]
+    assert all(g is not None for g in ab_grads), "Audio MLP backbone missing gradients in Phase 1"
+
+    print("[PASSED] Phase 1 Warmup: Video & Audio backbones trained independently, Fusion safely FROZEN!")
+
+
+def test_phase2_unfreeze_last_stages():
+    print("\n" + "=" * 65)
+    print("TEST 5: PHASE 2 UNFREEZE LAST STAGES & TOURNAMENT FUSION")
+    print("=" * 65)
+
+    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model.train()
+
+    # Unfreeze fusion
+    for p in model.fusion.parameters():
+        p.requires_grad = True
+
+    # Video: freeze stem, stage0, stage1; unfreeze stage2, stage3, proj
+    vb = model.video_backbone
+    for p in vb.stem.parameters():
+        p.requires_grad = False
+    for p in vb.downsample_layers[0].parameters():
+        p.requires_grad = False
+    for p in vb.stages[0].parameters():
+        p.requires_grad = False
+    for p in vb.stages[1].parameters():
+        p.requires_grad = False
+    for p in vb.stages[2:].parameters():
+        p.requires_grad = True
+    for p in vb.downsample_layers[1:].parameters():
+        p.requires_grad = True
+    for p in vb.norm_final.parameters():
+        p.requires_grad = True
+    for p in vb.proj.parameters():
+        p.requires_grad = True
+
+    # Audio MLP: freeze fc1, ln1; unfreeze fc2, ln2
+    ab = model.audio_backbone
+    for p in ab.fc1.parameters():
+        p.requires_grad = False
+    for p in ab.ln1.parameters():
+        p.requires_grad = False
+    for p in ab.fc2.parameters():
+        p.requires_grad = True
+    for p in ab.ln2.parameters():
+        p.requires_grad = True
+
+    # Aux heads frozen
+    for p in model.aux_head_video.parameters():
+        p.requires_grad = False
+    for p in model.aux_head_audio.parameters():
+        p.requires_grad = False
+
+    criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0)
 
     B = 4
     v_input = torch.randn(B, 2, 3, 224, 224)
     a_input = torch.randn(B, 512000)
     targets = {"target": torch.tensor([0, 1, 2, 3])}
 
-    optimizer.zero_grad()
     outputs = model(v_input, a_input)
     loss = criterion(outputs, targets)
     loss.backward()
 
-    # Verify all components received gradients
-    vb_grads = [p.grad for p in model.video_backbone.parameters() if p.requires_grad]
-    ab_grads = [p.grad for p in model.audio_backbone.parameters() if p.requires_grad]
-    f_grads = [p.grad for p in model.fusion.parameters() if p.requires_grad]
+    # Verify frozen parameters have NO grad
+    assert vb.stem[0].weight.grad is None, "Video stem should be frozen in Phase 2!"
+    assert ab.fc1.weight.grad is None, "Audio fc1 should be frozen in Phase 2!"
 
-    assert all(g is not None for g in vb_grads), "Video backbone missing gradients"
-    assert all(g is not None for g in ab_grads), "Audio MLP backbone missing gradients"
-    assert all(g is not None for g in f_grads), "Tournament fusion missing gradients"
+    # Verify unfrozen parameters HAVE healthy grad
+    assert vb.proj[0].weight.grad is not None, "Video proj should have grad in Phase 2!"
+    assert ab.fc2.weight.grad is not None, "Audio fc2 should have grad in Phase 2!"
+    assert model.fusion.tournament_head.head_b12[0].weight.grad is not None, "Tournament fusion should have grad in Phase 2!"
 
-    optimizer.step()
-    print(f"[PASSED] End-to-End Single Phase: All {len(list(model.parameters()))} param tensors updated simultaneously!")
+    print("[PASSED] Phase 2: Early stages & fc1 safely FROZEN; Late stages, fc2 & Tournament Fusion actively learning!")
 
 
 if __name__ == "__main__":
     test_parameter_budget()
     test_tournament_forward_and_pairwise()
     test_gradient_flow_tournament_loss()
-    test_end_to_end_from_scratch()
+    test_phase1_warmup()
+    test_phase2_unfreeze_last_stages()
     print("\n" + "=" * 65)
-    print("ALL TOURNAMENT STFT-MLP TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("ALL TOURNAMENT STFT-MLP 2-PHASE TESTS PASSED! (100% READY)")
     print("=" * 65 + "\n")

@@ -533,9 +533,24 @@ class MultimodalTrainer:
                                 for p in vb.proj.parameters():
                                     p.requires_grad = True
 
-                        # Audio (PANNS-CNN6-Pro): conv_block 1..2 frozen; conv_block 3..4 + proj fine-tune
+                        # Audio (AudioMLPBackbone / PANNS-CNN6-Pro): early layers frozen, late layers fine-tune
                         if hasattr(self.model, "audio_backbone"):
                             ab = self.model.audio_backbone
+                            # 1. AudioMLPBackbone: fc1 & ln1 frozen, fc2 & ln2 fine-tune
+                            if hasattr(ab, "fc1"):
+                                for p in ab.fc1.parameters():
+                                    p.requires_grad = False
+                            if hasattr(ab, "ln1"):
+                                for p in ab.ln1.parameters():
+                                    p.requires_grad = False
+                            if hasattr(ab, "fc2"):
+                                for p in ab.fc2.parameters():
+                                    p.requires_grad = True
+                            if hasattr(ab, "ln2"):
+                                for p in ab.ln2.parameters():
+                                    p.requires_grad = True
+
+                            # 2. Legacy PANNS-CNN6-Pro: conv_block 1..2 frozen; conv_block 3..4 + proj fine-tune
                             if hasattr(ab, "conv_block1"):
                                 for p in ab.conv_block1.parameters():
                                     p.requires_grad = False
@@ -557,6 +572,13 @@ class MultimodalTrainer:
                             if hasattr(ab, "norm_audio"):
                                 for p in ab.norm_audio.parameters():
                                     p.requires_grad = True
+
+                        if hasattr(self.model, "aux_head_video"):
+                            for p in self.model.aux_head_video.parameters():
+                                p.requires_grad = False
+                        if hasattr(self.model, "aux_head_audio"):
+                            for p in self.model.aux_head_audio.parameters():
+                                p.requires_grad = False
 
                         fusion_params = list(self.model.fusion.parameters()) if hasattr(self.model, "fusion") else []
                         backbone_trainable = [p for n, p in self.model.named_parameters() if not n.startswith("fusion.") and p.requires_grad]
