@@ -104,13 +104,15 @@ def evaluate_model(
     acc = float(accuracy_score(y_true, y_pred)) * 100.0
     f1 = float(f1_score(y_true, y_pred, average='macro')) * 100.0
     qwk = float(cohen_kappa_score(y_true, y_pred, weights='quadratic'))
+    mae = float(np.mean(np.abs(y_true - y_pred)))
     avg_loss = total_loss / max(total_samples, 1)
 
     return {
         'loss': avg_loss,
         'accuracy': acc,
         'f1': f1,
-        'qwk': qwk
+        'qwk': qwk,
+        'mae': mae
     }
 
 
@@ -243,11 +245,15 @@ def run_audio_2d_benchmark(
     for key, item in model_registry.items():
         name = item['name']
         csv_headers.extend([
+            f"{name}_lr",
             f"{name}_train_loss",
+            f"{name}_train_acc",
+            f"{name}_train_mae",
             f"{name}_val_loss",
             f"{name}_val_acc",
-            f"{name}_val_f1",
-            f"{name}_val_qwk"
+            f"{name}_val_qwk",
+            f"{name}_val_mae",
+            f"{name}_val_f1"
         ])
     with open(csv_path, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
@@ -264,6 +270,8 @@ def run_audio_2d_benchmark(
         audio_frontend.eval()
 
         train_losses = {k: 0.0 for k in model_registry}
+        train_correct = {k: 0 for k in model_registry}
+        train_mae_sum = {k: 0.0 for k in model_registry}
         train_samples = 0
 
         pbar = tqdm(train_loader, desc=f"Epoch {epoch:03d}/{config.epochs:03d}", leave=False)
@@ -286,33 +294,47 @@ def run_audio_2d_benchmark(
 
                 opt.zero_grad(set_to_none=True)
                 output = model(spec_2d)
-                loss = F.cross_entropy(output['logits'], targets)
+                logits = output['logits']
+                loss = F.cross_entropy(logits, targets)
                 loss.backward()
                 opt.step()
                 sched.step()
 
                 train_losses[key] += loss.item() * batch_size
+                with torch.no_grad():
+                    preds = logits.argmax(dim=-1)
+                    train_correct[key] += (preds == targets).sum().item()
+                    train_mae_sum[key] += torch.abs(preds.float() - targets.float()).sum().item()
 
             # Update progress bar
             desc_parts = [f"Ep {epoch}"]
             for k in model_registry:
-                desc_parts.append(f"{k[0].upper()}:{train_losses[k]/train_samples:.3f}")
+                loss_val = train_losses[k] / max(train_samples, 1)
+                acc_val = (train_correct[k] / max(train_samples, 1)) * 100.0
+                desc_parts.append(f"{k[0].upper()}:{loss_val:.3f}({acc_val:.1f}%)")
             pbar.set_postfix_str(" | ".join(desc_parts))
 
         # 9. Validation at end of Epoch (Strictly Validation, NO Test Peeking)
         epoch_results = {"epoch": epoch}
-        log_line_parts = [f"Epoch {epoch:03d}/{config.epochs:03d}"]
 
         for key, item in model_registry.items():
             model = item['model']
             val_metrics = evaluate_model(model, audio_frontend, val_loader, device)
 
             train_loss = train_losses[key] / max(train_samples, 1)
-            epoch_results[f"{item['name']}_train_loss"] = round(train_loss, 4)
-            epoch_results[f"{item['name']}_val_loss"] = round(val_metrics['loss'], 4)
+            train_acc = (train_correct[key] / max(train_samples, 1)) * 100.0
+            train_mae = train_mae_sum[key] / max(train_samples, 1)
+            current_lr = item['scheduler'].get_last_lr()[0]
+
+            epoch_results[f"{item['name']}_lr"] = round(current_lr, 6)
+            epoch_results[f"{item['name']}_train_loss"] = round(train_loss, 5)
+            epoch_results[f"{item['name']}_train_acc"] = round(train_acc, 2)
+            epoch_results[f"{item['name']}_train_mae"] = round(train_mae, 4)
+            epoch_results[f"{item['name']}_val_loss"] = round(val_metrics['loss'], 5)
             epoch_results[f"{item['name']}_val_acc"] = round(val_metrics['accuracy'], 2)
-            epoch_results[f"{item['name']}_val_f1"] = round(val_metrics['f1'], 2)
             epoch_results[f"{item['name']}_val_qwk"] = round(val_metrics['qwk'], 4)
+            epoch_results[f"{item['name']}_val_mae"] = round(val_metrics['mae'], 4)
+            epoch_results[f"{item['name']}_val_f1"] = round(val_metrics['f1'], 2)
 
             # Monitor metric determination (strictly on validation set, exactly matching MLP baseline)
             monitor_metric = getattr(config, 'monitor', 'qwk')
@@ -337,17 +359,26 @@ def run_audio_2d_benchmark(
                     'model_state_dict': model.state_dict(),
                     'val_acc': val_metrics['accuracy'],
                     'val_qwk': val_metrics['qwk'],
+                    'val_mae': val_metrics['mae'],
+                    'val_loss': val_metrics['loss'],
                     'monitor': monitor_metric,
                     'best_val_metric': current_val_metric,
                     'config': _config_to_dict(config)
                 }, item['ckpt_file'])
 
             best_marker = "(*BEST*)" if is_best else ""
-            log_line_parts.append(
-                f"[{item['name']}: ValQWK={val_metrics['qwk']:.4f} | ValAcc={val_metrics['accuracy']:.2f}% {best_marker}]"
+            logger.info(
+                f"Epoch {epoch:03d}/{config.epochs:03d} [{item['name']}]: "
+                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.2f}% | Train MAE = {train_mae:.4f} | LR = {current_lr:.2e} | "
+                f"Val Loss = {val_metrics['loss']:.5f} | Val Acc = {val_metrics['accuracy']:.2f}% | Val QWK = {val_metrics['qwk']:.4f} | Val MAE = {val_metrics['mae']:.4f} {best_marker}"
             )
 
-        logger.info(" ".join(log_line_parts))
+        best_summary_parts = []
+        for key, item in model_registry.items():
+            best_summary_parts.append(
+                f"{item['name']} [Epoch {item['best_epoch']:03d}: Val QWK = {item['best_val_qwk']:.4f} | Val Acc = {item['best_val_acc']:.2f}%]"
+            )
+        logger.info(f"[*] Current Best: " + " | ".join(best_summary_parts))
 
         # Append row to CSV
         with open(csv_path, mode='a', newline='', encoding='utf-8') as f:
