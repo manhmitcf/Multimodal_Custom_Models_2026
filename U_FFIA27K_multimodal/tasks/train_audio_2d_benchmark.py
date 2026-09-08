@@ -316,8 +316,9 @@ def run_audio_2d_benchmark(
 
         # 9. Validation at end of Epoch (Strictly Validation, NO Test Peeking)
         epoch_results = {"epoch": epoch}
+        logger.info(f"Epoch {epoch:03d}/{config.epochs:03d} ======================================================================")
 
-        for key, item in model_registry.items():
+        for idx, (key, item) in enumerate(model_registry.items(), 1):
             model = item['model']
             val_metrics = evaluate_model(model, audio_frontend, val_loader, device)
 
@@ -367,18 +368,17 @@ def run_audio_2d_benchmark(
                 }, item['ckpt_file'])
 
             best_marker = "(*BEST*)" if is_best else ""
-            logger.info(
-                f"Epoch {epoch:03d}/{config.epochs:03d} [{item['name']}]: "
-                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.2f}% | Train MAE = {train_mae:.4f} | LR = {current_lr:.2e} | "
-                f"Val Loss = {val_metrics['loss']:.5f} | Val Acc = {val_metrics['accuracy']:.2f}% | Val QWK = {val_metrics['qwk']:.4f} | Val MAE = {val_metrics['mae']:.4f} {best_marker}"
-            )
+            logger.info(f"  [{idx}] {item['name']} {best_marker}:")
+            logger.info(f"      • Train: Loss = {train_loss:.4f} | Acc = {train_acc:.2f}% | MAE = {train_mae:.4f} | LR = {current_lr:.2e}")
+            logger.info(f"      • Val  : Loss = {val_metrics['loss']:.4f} | Acc = {val_metrics['accuracy']:.2f}% | QWK = {val_metrics['qwk']:.4f} | MAE = {val_metrics['mae']:.4f}")
 
-        best_summary_parts = []
+        logger.info("  ----------------------------------------------------------------------")
+        logger.info("  [*] Current Best Checkpoints (by Val QWK):")
         for key, item in model_registry.items():
-            best_summary_parts.append(
-                f"{item['name']} [Epoch {item['best_epoch']:03d}: Val QWK = {item['best_val_qwk']:.4f} | Val Acc = {item['best_val_acc']:.2f}%]"
+            logger.info(
+                f"      • {item['name']:<25}: Val QWK = {item['best_val_qwk']:.4f} | Val Acc = {item['best_val_acc']:.2f}% (Epoch {item['best_epoch']:03d})"
             )
-        logger.info(f"[*] Current Best: " + " | ".join(best_summary_parts))
+        logger.info("==========================================================================")
 
         # Append row to CSV
         with open(csv_path, mode='a', newline='', encoding='utf-8') as f:
