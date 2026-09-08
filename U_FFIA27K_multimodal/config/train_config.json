@@ -26,6 +26,7 @@
   "weight_ce": 1.0,
   "enable_two_phase_warmup": true,
   "phase1_warmup_epochs": 200,
+  "phase2_backbone_mode": "freeze_all",
   "aux_loss_weight": 0.3,
   "model": {
     "backbone": "MultimodalSOTANet",
@@ -41,11 +42,7 @@
     "hop_size": 512,
     "mel_bins": 128,
     "fmin": 50,
-    "fmax": 32000,
-    "use_tkeo": false,
-    "use_frequency_attention": false,
-    "alpha_max": 0.99,
-    "beta": 0.8
+    "fmax": 32000
   },
   "dataset_splitter": {
     "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",

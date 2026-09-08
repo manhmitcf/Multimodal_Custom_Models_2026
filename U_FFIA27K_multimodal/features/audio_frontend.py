@@ -13,7 +13,6 @@ import torch
 import torch.nn as nn
 from torchlibrosa.stft import Spectrogram, LogmelFilterBank
 from torchlibrosa.augmentation import SpecAugmentation
-from features.stft_ape import Spectrogram_APE
 
 from config.train_config import AudioFeaturesConfig
 
@@ -32,9 +31,7 @@ def init_bn(bn: nn.BatchNorm2d) -> None:
 
 class AudioFrontend(nn.Module):
     """
-    GPU-based Audio Frontend extracting 128 Mel-frequency Filterbanks.
-    Enhanced with Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis:
-      Psi[x(n)] = x^2(n) - x(n-1) * x(n+1)
+    GPU-based Audio Frontend extracting standard 128 Mel-frequency Filterbanks.
     Converts raw 1D waveforms [B, num_samples] into Log-Mel Spectrograms [B, 1, T, 128].
     """
     def __init__(self, config: Optional[AudioFeaturesConfig] = None) -> None:
@@ -51,34 +48,16 @@ class AudioFrontend(nn.Module):
         self.f_min = self.config.fmin
         self.f_max = min(self.config.fmax, self.sample_rate // 2)
 
-        use_tkeo = getattr(self.config, 'use_tkeo', True)
-        alpha_max = getattr(self.config, 'alpha_max', 0.99)
-        beta = getattr(self.config, 'beta', 0.8)
-
-        # 1. Amplitude Spectrogram Extractor with TKEO Adaptive Pre-Emphasis
-        if use_tkeo:
-            logger.info("Enabling Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis Spectrogram Extractor.")
-            self.spectrogram_extractor = Spectrogram_APE(
-                n_fft=self.n_fft,
-                hop_length=self.hop_length,
-                win_length=self.n_fft,
-                window='hann',
-                center=True,
-                pad_mode='reflect',
-                freeze_parameters=True,
-                alpha_max=alpha_max,
-                beta=beta
-            )
-        else:
-            self.spectrogram_extractor = Spectrogram(
-                n_fft=self.n_fft,
-                hop_length=self.hop_length,
-                win_length=self.n_fft,
-                window='hann',
-                center=True,
-                pad_mode='reflect',
-                freeze_parameters=True
-            )
+        # 1. Standard Amplitude Spectrogram Extractor on GPU
+        self.spectrogram_extractor = Spectrogram(
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.n_fft,
+            window='hann',
+            center=True,
+            pad_mode='reflect',
+            freeze_parameters=True
+        )
 
         # 2. Logmel Filterbank Extractor on GPU using torchlibrosa
         self.logmel_extractor = LogmelFilterBank(

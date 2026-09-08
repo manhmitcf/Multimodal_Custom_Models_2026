@@ -194,6 +194,7 @@ class MultimodalTrainer:
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
         logger.info(f"  - Monitor Metric:           {self.config.monitor}")
         logger.info(f"  - Two-Phase Warmup:         {self.enable_two_phase_warmup} (Phase 1: {self.phase1_warmup_epochs} epochs)")
+        logger.info(f"  - Phase 2 Strategy:         {getattr(self.config, 'phase2_backbone_mode', 'freeze_all')}")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
@@ -379,32 +380,119 @@ class MultimodalTrainer:
             if self.enable_two_phase_warmup and self.phase1_warmup_epochs > 0:
                 if epoch == self.phase1_warmup_epochs + 1 and self.current_phase == 1:
                     logger.info("==================================================")
-                    logger.info(f">>> TRANSITION TO PHASE 2 (EPOCH {epoch:03d}): UNFREEZING MULTIMODAL FUSION & RE-INITIALIZING OPTIMIZER...")
+                    logger.info(f">>> TRANSITION TO PHASE 2 (EPOCH {epoch:03d}): INITIALIZING TOURNAMENT FUSION...")
                     self.current_phase = 2
                     if hasattr(self.loss_fn, "only_backbones"):
                         self.loss_fn.only_backbones = False
 
-                    # Unfreeze fusion parameters
+                    # 1. Restore best Phase 1 backbone weights if available
+                    best_phase1_path = os.path.join(self.run_dir, "best_phase1_backbone.pth")
+                    if os.path.exists(best_phase1_path):
+                        logger.info(f">>> Restoring best Phase 1 backbones from: '{best_phase1_path}'...")
+                        best_state = torch.load(best_phase1_path, map_location=self.device, weights_only=True)
+                        self.model.load_state_dict(best_state, strict=False)
+
+                    # 2. Unfreeze fusion parameters
                     if hasattr(self.model, "fusion"):
                         for p in self.model.fusion.parameters():
                             p.requires_grad = True
 
-                    # Setup Discriminative LR optimizer:
-                    # Fusion: max_lr = config.learning_rate (1e-3)
-                    # Backbones: max_lr = config.learning_rate * 0.2 (2e-4)
-                    fusion_params = list(self.model.fusion.parameters()) if hasattr(self.model, "fusion") else []
-                    other_params = [p for n, p in self.model.named_parameters() if not n.startswith("fusion.")]
-                    param_groups = [
-                        {"params": fusion_params, "lr": self.config.learning_rate},
-                        {"params": other_params, "lr": self.config.learning_rate * 0.2}
-                    ]
-                    self.optimizer = optim.AdamW(param_groups, weight_decay=self.weight_decay)
+                    phase2_mode = getattr(self.config, "phase2_backbone_mode", "freeze_all")
+                    logger.info(f">>> Phase 2 Backbone Strategy: '{phase2_mode}'")
+
+                    if phase2_mode == "freeze_all":
+                        # Freeze 100% of all parameters except fusion (backbones, frontends, aux heads)
+                        for n, p in self.model.named_parameters():
+                            if not n.startswith("fusion."):
+                                p.requires_grad = False
+
+                        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+                        self.optimizer = optim.AdamW(
+                            trainable_params,
+                            lr=self.config.learning_rate,
+                            weight_decay=self.weight_decay
+                        )
+                        max_lrs = self.config.learning_rate
+                        logger.info(f">>> Backbones FROZEN completely. Training ONLY Multimodal Fusion ({len(trainable_params)} param tensors, max_lr={max_lrs}).")
+
+                    elif phase2_mode == "unfreeze_last_stages":
+                        # Freeze early stages, only unfreeze late stages of backbones
+                        # Video (ConvNeXt-Nano): stem & stages 0..1 frozen; stages 2..3 + proj fine-tune
+                        if hasattr(self.model, "video_backbone"):
+                            vb = self.model.video_backbone
+                            for p in vb.stem.parameters():
+                                p.requires_grad = False
+                            if hasattr(vb, "downsample_layers") and len(vb.downsample_layers) > 0:
+                                for p in vb.downsample_layers[0].parameters():
+                                    p.requires_grad = False
+                            if hasattr(vb, "stages") and len(vb.stages) > 1:
+                                for p in vb.stages[0].parameters():
+                                    p.requires_grad = False
+                                for p in vb.stages[1].parameters():
+                                    p.requires_grad = False
+                                for p in vb.stages[2:].parameters():
+                                    p.requires_grad = True
+                            if hasattr(vb, "downsample_layers") and len(vb.downsample_layers) > 1:
+                                for p in vb.downsample_layers[1:].parameters():
+                                    p.requires_grad = True
+                            if hasattr(vb, "norm_final"):
+                                for p in vb.norm_final.parameters():
+                                    p.requires_grad = True
+                            if hasattr(vb, "proj"):
+                                for p in vb.proj.parameters():
+                                    p.requires_grad = True
+
+                        # Audio (PANNS-CNN6-Pro): conv_block 1..2 frozen; conv_block 3..4 + proj fine-tune
+                        if hasattr(self.model, "audio_backbone"):
+                            ab = self.model.audio_backbone
+                            if hasattr(ab, "conv_block1"):
+                                for p in ab.conv_block1.parameters():
+                                    p.requires_grad = False
+                            if hasattr(ab, "conv_block2"):
+                                for p in ab.conv_block2.parameters():
+                                    p.requires_grad = False
+                            if hasattr(ab, "conv_block3"):
+                                for p in ab.conv_block3.parameters():
+                                    p.requires_grad = True
+                            if hasattr(ab, "conv_block4"):
+                                for p in ab.conv_block4.parameters():
+                                    p.requires_grad = True
+                            if hasattr(ab, "proj"):
+                                for p in ab.proj.parameters():
+                                    p.requires_grad = True
+                            if hasattr(ab, "token_proj"):
+                                for p in ab.token_proj.parameters():
+                                    p.requires_grad = True
+
+                        fusion_params = list(self.model.fusion.parameters()) if hasattr(self.model, "fusion") else []
+                        backbone_trainable = [p for n, p in self.model.named_parameters() if not n.startswith("fusion.") and p.requires_grad]
+                        backbone_lr = self.config.learning_rate * 0.05
+                        param_groups = [
+                            {"params": fusion_params, "lr": self.config.learning_rate},
+                            {"params": backbone_trainable, "lr": backbone_lr}
+                        ]
+                        self.optimizer = optim.AdamW(param_groups, weight_decay=self.weight_decay)
+                        max_lrs = [self.config.learning_rate, backbone_lr]
+                        logger.info(f">>> Early stages frozen, fine-tuning late stages & fusion (Fusion lr={self.config.learning_rate}, Backbones lr={backbone_lr}).")
+
+                    else:  # unfreeze_all
+                        for p in self.model.parameters():
+                            p.requires_grad = True
+                        fusion_params = list(self.model.fusion.parameters()) if hasattr(self.model, "fusion") else []
+                        other_params = [p for n, p in self.model.named_parameters() if not n.startswith("fusion.")]
+                        param_groups = [
+                            {"params": fusion_params, "lr": self.config.learning_rate},
+                            {"params": other_params, "lr": self.config.learning_rate * 0.2}
+                        ]
+                        self.optimizer = optim.AdamW(param_groups, weight_decay=self.weight_decay)
+                        max_lrs = [self.config.learning_rate, self.config.learning_rate * 0.2]
+                        logger.info(f">>> All parameters unfrozen (Fusion lr={self.config.learning_rate}, Backbones lr={self.config.learning_rate * 0.2}).")
 
                     remaining_epochs = max(1, self.config.epochs - self.phase1_warmup_epochs)
                     if self.use_onecycle:
                         self.scheduler = optim.lr_scheduler.OneCycleLR(
                             self.optimizer,
-                            max_lr=[self.config.learning_rate, self.config.learning_rate * 0.2],
+                            max_lr=max_lrs,
                             epochs=remaining_epochs,
                             steps_per_epoch=self.steps_per_epoch,
                             pct_start=0.05,
@@ -418,7 +506,6 @@ class MultimodalTrainer:
                             T_max=remaining_epochs,
                             eta_min=1e-6
                         )
-                    logger.info(f">>> Discriminative LR configured: Fusion={self.config.learning_rate}, Backbones={self.config.learning_rate * 0.2} (Remaining: {remaining_epochs} epochs)")
                     logger.info("==================================================")
 
             train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)

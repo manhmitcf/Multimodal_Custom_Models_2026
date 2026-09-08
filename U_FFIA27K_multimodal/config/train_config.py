@@ -154,6 +154,7 @@ class TrainConfig(BaseModel):
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     enable_two_phase_warmup: bool = Field(default=True, description="Enable two-phase warmup training strategy.")
     phase1_warmup_epochs: int = Field(default=200, ge=0, description="Number of epochs for Phase 1 backbone warmup.")
+    phase2_backbone_mode: str = Field(default="freeze_all", description="Phase 2 backbone strategy: 'freeze_all' (freeze both backbones completely, train only fusion), 'unfreeze_last_stages' (freeze stems/early stages, only unfreeze last stages), or 'unfreeze_all'.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads in Phase 2.")
     ordinal_sigma: float = Field(default=0.5, gt=0.0, description="Gaussian bandwidth sigma for ordinal soft label smoothing.")
     lambda_ord_start: float = Field(default=0.2, ge=0.0, description="Initial weight for ordinal Wasserstein EMD loss.")

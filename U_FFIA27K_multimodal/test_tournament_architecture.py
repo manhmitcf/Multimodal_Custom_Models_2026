@@ -152,20 +152,38 @@ def test_two_phase_warmup_isolation_and_unfreeze():
     assert all(p.grad is not None for p in backbone_params), "Phase 1 violation: Backbones did not receive gradients!"
     print("[PASSED] Phase 1 Isolation: Fusion 100% frozen, Video/Audio backbones 100% trained via auxiliary heads!")
 
-    # --- Phase 2: Fusion UNFROZEN, Full End-to-End Joint Training ---
-    model.zero_grad()
-    for p in model.fusion.parameters():
-        p.requires_grad = True
+    # --- Phase 2: Mode 1 (DEFAULT) - Backbones FROZEN, Only Fusion Trained ---
+    model.zero_grad(set_to_none=True)
+    for p in model.parameters():
+        p.grad = None
+    for n, p in model.named_parameters():
+        if n.startswith("fusion."):
+            p.requires_grad = True
+        else:
+            p.requires_grad = False
 
-    criterion_phase2 = PairwiseTournamentLoss(only_backbones=False, aux_loss_weight=0.3)
+    criterion_phase2 = PairwiseTournamentLoss(only_backbones=False, aux_loss_weight=0.0)
     outputs_phase2 = model(v_input, a_input)
     loss_phase2 = criterion_phase2(outputs_phase2, targets)
     loss_phase2.backward()
 
-    all_tensors = sum(1 for _ in model.parameters())
-    all_grads = sum(1 for p in model.parameters() if p.grad is not None)
-    assert all_grads == all_tensors, f"Phase 2 violation: only {all_grads}/{all_tensors} got gradients!"
-    print(f"[PASSED] Phase 2 Joint Training: All {all_grads}/{all_tensors} parameters receive healthy gradients!")
+    fusion_trainable = [p for p in model.fusion.parameters()]
+    backbone_frozen = [p for n, p in model.named_parameters() if not n.startswith("fusion.")]
+    assert all(p.grad is not None for p in fusion_trainable), "Phase 2 freeze_all violation: Fusion did not get gradients!"
+    assert all(p.grad is None for p in backbone_frozen), "Phase 2 freeze_all violation: Backbones got gradients while frozen!"
+    print(f"[PASSED] Phase 2 Mode 'freeze_all' (DEFAULT): Backbones 100% frozen, only Tournament Fusion ({len(fusion_trainable)} tensors) trained!")
+
+    # --- Phase 2: Mode 2 - Late Stages Fine-Tuning ---
+    model.zero_grad(set_to_none=True)
+    # Unfreeze late stages of video & audio
+    for p in model.video_backbone.stages[2:].parameters(): p.requires_grad = True
+    for p in model.audio_backbone.conv_block3.parameters(): p.requires_grad = True
+    for p in model.audio_backbone.conv_block4.parameters(): p.requires_grad = True
+    loss_phase2_stage = criterion_phase2(model(v_input, a_input), targets)
+    loss_phase2_stage.backward()
+    assert model.video_backbone.stem[0].weight.grad is None, "Early stem should stay frozen!"
+    assert model.video_backbone.stages[2][0].dwconv.weight.grad is not None, "Late stage should get gradients!"
+    print("[PASSED] Phase 2 Mode 'unfreeze_last_stages': Stem/early frozen, late stages & fusion fine-tuned!")
 
 
 if __name__ == "__main__":
