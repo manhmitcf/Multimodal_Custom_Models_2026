@@ -36,11 +36,13 @@ class KDLoss(nn.Module):
         super().__init__()
         self.temperature = float(temperature)
 
-    def forward(self, student_logits: torch.Tensor, teacher_logits: torch.Tensor) -> torch.Tensor:
+    def forward(self, student_logits: torch.Tensor, teacher_logits: torch.Tensor, reduction: str = 'batchmean') -> torch.Tensor:
         T = self.temperature
         p_student = F.log_softmax(student_logits / T, dim=-1)
         p_teacher = F.softmax(teacher_logits / T, dim=-1)
-        return F.kl_div(p_student, p_teacher, reduction='batchmean') * (T ** 2)
+        if reduction == 'none':
+            return F.kl_div(p_student, p_teacher, reduction='none').sum(dim=-1) * (T ** 2)
+        return F.kl_div(p_student, p_teacher, reduction=reduction) * (T ** 2)
 
 
 class AttentionTransferLoss(nn.Module):
@@ -146,6 +148,8 @@ class PairwiseTournamentLoss(BaseLoss):
         weight_at_kd: float = 0.2,
         enable_feature_kd: bool = True,
         enable_at_kd: bool = True,
+        adaptive_kd: bool = True,
+        adaptive_kd_min_alpha: float = 0.0,
         student_feat_v_dim: int = 224,
         teacher_feat_v_dim: int = 1024,
         student_feat_a_dim: int = 224,
@@ -165,6 +169,9 @@ class PairwiseTournamentLoss(BaseLoss):
         self.enable_kd = bool(kwargs.get("enable_kd", enable_kd))
         self.kd_alpha_v = float(kwargs.get("kd_alpha_video", kd_alpha_video))
         self.kd_alpha_a = float(kwargs.get("kd_alpha_audio", kd_alpha_audio))
+        self.adaptive_kd = bool(kwargs.get("adaptive_kd", adaptive_kd))
+        self.adaptive_kd_min_alpha = float(kwargs.get("adaptive_kd_min_alpha", adaptive_kd_min_alpha))
+
         self.kd_loss_video = KDLoss(temperature=float(kwargs.get("kd_temperature_video", kd_temperature_video)))
         self.kd_loss_audio = KDLoss(temperature=float(kwargs.get("kd_temperature_audio", kd_temperature_audio)))
 
@@ -185,6 +192,8 @@ class PairwiseTournamentLoss(BaseLoss):
             self.feat_kd_v = None
             self.feat_kd_a = None
 
+        self.last_mean_alpha_v: float = self.kd_alpha_v
+        self.last_mean_alpha_a: float = self.kd_alpha_a
         self.only_backbones = bool(kwargs.get("only_backbones", only_backbones))
 
     def _get_raw_targets(self, targets: torch.Tensor) -> torch.Tensor:
@@ -200,29 +209,63 @@ class PairwiseTournamentLoss(BaseLoss):
         targets = target_dict['target']
         y_raw = self._get_raw_targets(targets)  # [B]: 0=None, 1=Strong, 2=Medium, 3=Weak
 
-        # 1. Video Backbone Auxiliary / Distillation Loss (Logits: 35% CE / 65% KD)
+        # 1. Video Backbone Auxiliary / Distillation Loss (Logits: Adaptive or Fixed 35% CE / 65% KD)
         logits_v = output_dict.get("logits_video")
         t_logits_v = target_dict.get("teacher_logits_video")
         if logits_v is not None:
-            ce_v = F.cross_entropy(logits_v, y_raw)
             if self.enable_kd and t_logits_v is not None:
-                kd_v = self.kd_loss_video(logits_v, t_logits_v)
-                loss_v = (1.0 - self.kd_alpha_v) * ce_v + self.kd_alpha_v * kd_v
+                if self.adaptive_kd:
+                    ce_v_sample = F.cross_entropy(logits_v, y_raw, reduction='none')
+                    kd_v_sample = self.kd_loss_video(logits_v, t_logits_v, reduction='none')
+                    with torch.no_grad():
+                        p_tea_v = F.softmax(t_logits_v, dim=-1)
+                        pred_tea_v = p_tea_v.argmax(dim=-1)
+                        conf_tea_v = p_tea_v.gather(dim=-1, index=y_raw.unsqueeze(-1)).squeeze(-1)
+                        correct_mask_v = (pred_tea_v == y_raw).float()
+                        alpha_v_sample = torch.where(
+                            correct_mask_v > 0.5,
+                            torch.clamp(self.kd_alpha_v * conf_tea_v, min=self.adaptive_kd_min_alpha, max=self.kd_alpha_v),
+                            torch.full_like(conf_tea_v, self.adaptive_kd_min_alpha)
+                        )
+                    loss_v = torch.mean((1.0 - alpha_v_sample) * ce_v_sample + alpha_v_sample * kd_v_sample)
+                    self.last_mean_alpha_v = float(alpha_v_sample.mean().item())
+                else:
+                    ce_v = F.cross_entropy(logits_v, y_raw)
+                    kd_v = self.kd_loss_video(logits_v, t_logits_v, reduction='batchmean')
+                    loss_v = (1.0 - self.kd_alpha_v) * ce_v + self.kd_alpha_v * kd_v
+                    self.last_mean_alpha_v = self.kd_alpha_v
             else:
-                loss_v = ce_v
+                loss_v = F.cross_entropy(logits_v, y_raw)
         else:
             loss_v = torch.tensor(0.0, device=targets.device)
 
-        # 2. Audio Backbone Auxiliary / Distillation Loss (Logits: 35% CE / 65% KD)
+        # 2. Audio Backbone Auxiliary / Distillation Loss (Logits: Adaptive or Fixed 35% CE / 65% KD)
         logits_a = output_dict.get("logits_audio")
         t_logits_a = target_dict.get("teacher_logits_audio")
         if logits_a is not None:
-            ce_a = F.cross_entropy(logits_a, y_raw)
             if self.enable_kd and t_logits_a is not None:
-                kd_a = self.kd_loss_audio(logits_a, t_logits_a)
-                loss_a = (1.0 - self.kd_alpha_a) * ce_a + self.kd_alpha_a * kd_a
+                if self.adaptive_kd:
+                    ce_a_sample = F.cross_entropy(logits_a, y_raw, reduction='none')
+                    kd_a_sample = self.kd_loss_audio(logits_a, t_logits_a, reduction='none')
+                    with torch.no_grad():
+                        p_tea_a = F.softmax(t_logits_a, dim=-1)
+                        pred_tea_a = p_tea_a.argmax(dim=-1)
+                        conf_tea_a = p_tea_a.gather(dim=-1, index=y_raw.unsqueeze(-1)).squeeze(-1)
+                        correct_mask_a = (pred_tea_a == y_raw).float()
+                        alpha_a_sample = torch.where(
+                            correct_mask_a > 0.5,
+                            torch.clamp(self.kd_alpha_a * conf_tea_a, min=self.adaptive_kd_min_alpha, max=self.kd_alpha_a),
+                            torch.full_like(conf_tea_a, self.adaptive_kd_min_alpha)
+                        )
+                    loss_a = torch.mean((1.0 - alpha_a_sample) * ce_a_sample + alpha_a_sample * kd_a_sample)
+                    self.last_mean_alpha_a = float(alpha_a_sample.mean().item())
+                else:
+                    ce_a = F.cross_entropy(logits_a, y_raw)
+                    kd_a = self.kd_loss_audio(logits_a, t_logits_a, reduction='batchmean')
+                    loss_a = (1.0 - self.kd_alpha_a) * ce_a + self.kd_alpha_a * kd_a
+                    self.last_mean_alpha_a = self.kd_alpha_a
             else:
-                loss_a = ce_a
+                loss_a = F.cross_entropy(logits_a, y_raw)
         else:
             loss_a = torch.tensor(0.0, device=targets.device)
 

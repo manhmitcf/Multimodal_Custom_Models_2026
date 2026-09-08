@@ -133,6 +133,8 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
                 weight_at_kd=getattr(config, "weight_at_kd", 0.2),
                 enable_feature_kd=getattr(config, "enable_feature_kd", True),
                 enable_at_kd=getattr(config, "enable_at_kd", True),
+                adaptive_kd=getattr(config, "adaptive_kd", True),
+                adaptive_kd_min_alpha=getattr(config, "adaptive_kd_min_alpha", 0.0),
             ).to(device)
             target_dict = {"target": dummy_targets}
             if getattr(config, "enable_kd", True):

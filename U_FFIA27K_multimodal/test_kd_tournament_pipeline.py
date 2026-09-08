@@ -159,6 +159,65 @@ class TestKDTournamentPipeline(unittest.TestCase):
         self.assertLess(stats['total'], 5_000_000, f"Model parameters ({stats['total']:,}) must be < 5.0M!")
         self.assertEqual(stats['total'], 4_681_893, "Parameters must match exact architecture budget 4,681,893")
 
+    def test_05_adaptive_kd_confidence_and_correctness_gating(self):
+        """Verify Instance-Level Adaptive KD adjusts alpha by teacher confidence and zeros out when teacher is wrong."""
+        loss_fn_adaptive = PairwiseTournamentLoss(
+            enable_kd=True,
+            adaptive_kd=True,
+            kd_alpha_video=0.65,
+            kd_alpha_audio=0.65,
+            adaptive_kd_min_alpha=0.0,
+            enable_feature_kd=False,
+            enable_at_kd=False,
+        ).to(self.device)
+
+        # Batch of 2 samples, both true target = 1 (Strong)
+        targets = torch.tensor([1, 1], device=self.device)
+
+        student_out = {
+            'clipwise_output': torch.zeros(2, 4, device=self.device, requires_grad=True),
+            'logits_video': torch.zeros(2, 4, device=self.device, requires_grad=True),
+            'logits_audio': torch.zeros(2, 4, device=self.device, requires_grad=True),
+        }
+
+        # Teacher Video Logits:
+        # Sample 0: Teacher correctly predicts class 1 with extreme confidence (~99.9%)
+        # Sample 1: Teacher wrongly predicts class 0 with extreme confidence (~99.9%)
+        t_logits_v = torch.tensor([
+            [-5.0, 10.0, -5.0, -5.0],  # Correct (Class 1)
+            [10.0, -5.0, -5.0, -5.0],  # Wrong (Class 0 instead of 1)
+        ], device=self.device)
+
+        t_logits_a = t_logits_v.clone()
+
+        target_dict = {
+            'target': targets,
+            'teacher_logits_video': t_logits_v,
+            'teacher_logits_audio': t_logits_a,
+        }
+
+        loss = loss_fn_adaptive(student_out, target_dict)
+        loss.backward()
+
+        # Check that mean adaptive alpha reflects: Sample 0 (~0.65) + Sample 1 (0.0) -> mean ~0.325
+        self.assertAlmostEqual(loss_fn_adaptive.last_mean_alpha_v, 0.325, delta=0.02,
+                               msg="Mean alpha must be ~0.325 because sample 1 teacher was wrong!")
+        self.assertAlmostEqual(loss_fn_adaptive.last_mean_alpha_a, 0.325, delta=0.02,
+                               msg="Mean audio alpha must be ~0.325 because sample 1 teacher was wrong!")
+
+        # Verify fixed KD (adaptive=False) gives strictly 0.65
+        loss_fn_fixed = PairwiseTournamentLoss(
+            enable_kd=True,
+            adaptive_kd=False,
+            kd_alpha_video=0.65,
+            kd_alpha_audio=0.65,
+            enable_feature_kd=False,
+            enable_at_kd=False,
+        ).to(self.device)
+
+        _ = loss_fn_fixed(student_out, target_dict)
+        self.assertEqual(loss_fn_fixed.last_mean_alpha_v, 0.65, "Fixed KD must yield exactly 0.65 alpha")
+
 
 if __name__ == "__main__":
     unittest.main()

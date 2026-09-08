@@ -169,6 +169,8 @@ class TrainConfig(BaseModel):
     weight_at_kd: float = Field(default=0.2, ge=0.0, description="Weight for spatial attention transfer distillation.")
     enable_feature_kd: bool = Field(default=True, description="Enable penultimate embedding feature distillation.")
     enable_at_kd: bool = Field(default=True, description="Enable intermediate spatial attention transfer distillation.")
+    adaptive_kd: bool = Field(default=True, description="Enable sample-wise adaptive KD based on teacher confidence and correctness.")
+    adaptive_kd_min_alpha: float = Field(default=0.0, ge=0.0, le=1.0, description="Minimum alpha weight for incorrect/uncertain teacher predictions.")
     ordinal_sigma: float = Field(default=0.5, gt=0.0, description="Gaussian bandwidth sigma for ordinal soft label smoothing.")
     lambda_ord_start: float = Field(default=0.2, ge=0.0, description="Initial weight for ordinal Wasserstein EMD loss.")
     lambda_ord_end: float = Field(default=2.0, ge=0.0, description="Final weight for ordinal Wasserstein EMD loss after cosine ramp-up.")

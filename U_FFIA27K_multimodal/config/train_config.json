@@ -42,6 +42,8 @@
   "weight_at_kd": 0.2,
   "enable_feature_kd": true,
   "enable_at_kd": true,
+  "adaptive_kd": true,
+  "adaptive_kd_min_alpha": 0.0,
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,

@@ -189,6 +189,8 @@ def mode_dry_run(args: argparse.Namespace) -> None:
             weight_at_kd=getattr(config, "weight_at_kd", 0.2),
             enable_feature_kd=getattr(config, "enable_feature_kd", True),
             enable_at_kd=getattr(config, "enable_at_kd", True),
+            adaptive_kd=getattr(config, "adaptive_kd", True),
+            adaptive_kd_min_alpha=getattr(config, "adaptive_kd_min_alpha", 0.0),
         ).to(device)
     else:
         print("[*] Running backward pass with OrdinalWassersteinEvidentialLoss...")

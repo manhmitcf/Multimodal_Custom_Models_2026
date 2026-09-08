@@ -101,8 +101,10 @@ class MultimodalTrainer:
                 weight_at_kd=getattr(self.config, "weight_at_kd", 0.2),
                 enable_feature_kd=getattr(self.config, "enable_feature_kd", True),
                 enable_at_kd=getattr(self.config, "enable_at_kd", True),
+                adaptive_kd=getattr(self.config, "adaptive_kd", True),
+                adaptive_kd_min_alpha=getattr(self.config, "adaptive_kd_min_alpha", 0.0),
             ).to(self.device)
-            logger.info(f"Configured PairwiseTournamentLoss with Multi-Level KD (35% CE / 65% KD, Feature Alignment, Spatial AT | KD={self.enable_kd}).")
+            logger.info(f"Configured PairwiseTournamentLoss with Multi-Level KD (35% CE / 65% KD | Adaptive={getattr(self.config, 'adaptive_kd', True)}, Feature Alignment, Spatial AT | KD={self.enable_kd}).")
         elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
             self.loss_fn = BilateralBoundaryLoss(
                 lambda_emd=getattr(self.config, "lambda_emd", 0.5),
@@ -310,17 +312,16 @@ class MultimodalTrainer:
             train_preds.append(logits.detach().cpu().numpy())
             train_targets.append(targets.detach().cpu().numpy())
 
+            postfix_dict = {'loss': f"{loss_val:.4f}"}
+            if hasattr(self.loss_fn, "last_mean_alpha_v"):
+                postfix_dict['a_v'] = f"{self.loss_fn.last_mean_alpha_v:.2f}"
+                postfix_dict['a_a'] = f"{self.loss_fn.last_mean_alpha_a:.2f}"
             if len(self.optimizer.param_groups) > 1:
-                pbar.set_postfix({
-                    'loss': f"{loss_val:.4f}",
-                    'lr_f': f"{self.optimizer.param_groups[0]['lr']:.1e}",
-                    'lr_b': f"{self.optimizer.param_groups[1]['lr']:.1e}"
-                })
+                postfix_dict['lr_f'] = f"{self.optimizer.param_groups[0]['lr']:.1e}"
+                postfix_dict['lr_b'] = f"{self.optimizer.param_groups[1]['lr']:.1e}"
             else:
-                pbar.set_postfix({
-                    'loss': f"{loss_val:.4f}",
-                    'lr': f"{self.optimizer.param_groups[0]['lr']:.1e}"
-                })
+                postfix_dict['lr'] = f"{self.optimizer.param_groups[0]['lr']:.1e}"
+            pbar.set_postfix(postfix_dict)
 
         epoch_loss = total_loss / max(1, len(self.train_loader))
         train_preds = np.concatenate(train_preds, axis=0)
