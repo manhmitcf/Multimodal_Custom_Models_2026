@@ -12,7 +12,6 @@ if project_root not in sys.path:
 import torch
 import torch.nn as nn
 from torchlibrosa.stft import Spectrogram, LogmelFilterBank
-from torchlibrosa.augmentation import SpecAugmentation
 
 from config.train_config import AudioFeaturesConfig
 
@@ -72,15 +71,7 @@ class AudioFrontend(nn.Module):
             freeze_parameters=True
         )
 
-        # 3. SpecAugment Spec Augmentation Extractor on GPU using torchlibrosa
-        self.spec_augmenter = SpecAugmentation(
-            time_drop_width=getattr(self.config, 'time_drop_width', 64),
-            time_stripes_num=getattr(self.config, 'time_stripes_num', 2),
-            freq_drop_width=getattr(self.config, 'freq_drop_width', 8),
-            freq_stripes_num=getattr(self.config, 'freq_stripes_num', 2)
-        )
-
-        # 4. BatchNorm normalization layer over Mel bins
+        # 3. BatchNorm normalization layer over Mel bins
         self.bn0 = nn.BatchNorm2d(self.n_mels)
         init_bn(self.bn0)
 
@@ -119,9 +110,5 @@ class AudioFrontend(nn.Module):
         x = x.transpose(1, 3)
         x = self.bn0(x)
         x = x.transpose(1, 3)  # Result shape: [Batch, 1, Time_Steps + 2, 128]
-
-        # Step E: Apply SpecAugment masking during training
-        if self.training:
-            x = self.spec_augmenter(x)
 
         return x
