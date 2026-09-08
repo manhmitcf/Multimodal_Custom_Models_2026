@@ -235,7 +235,17 @@ class MultimodalTrainer:
             train_preds.append(logits.detach().cpu().numpy())
             train_targets.append(targets.detach().cpu().numpy())
 
-            pbar.set_postfix({'loss': f"{loss_val:.4f}"})
+            if len(self.optimizer.param_groups) > 1:
+                pbar.set_postfix({
+                    'loss': f"{loss_val:.4f}",
+                    'lr_f': f"{self.optimizer.param_groups[0]['lr']:.1e}",
+                    'lr_b': f"{self.optimizer.param_groups[1]['lr']:.1e}"
+                })
+            else:
+                pbar.set_postfix({
+                    'loss': f"{loss_val:.4f}",
+                    'lr': f"{self.optimizer.param_groups[0]['lr']:.1e}"
+                })
 
         epoch_loss = total_loss / max(1, len(self.train_loader))
         train_preds = np.concatenate(train_preds, axis=0)
@@ -427,17 +437,26 @@ class MultimodalTrainer:
             val_acc_a = float(val_stats.get('acc_audio', 0.0))
             val_mean_backbone = float(val_stats.get('mean_backbone_acc', (val_acc_v + val_acc_a) / 2.0))
 
+            # Extract current learning rates
+            if len(self.optimizer.param_groups) > 1:
+                lr_fusion = self.optimizer.param_groups[0]['lr']
+                lr_backbone = self.optimizer.param_groups[1]['lr']
+                lr_info = f"LR = [Fusion: {lr_fusion:.2e}, Backbones: {lr_backbone:.2e}]"
+            else:
+                lr_current = self.optimizer.param_groups[0]['lr']
+                lr_info = f"LR = {lr_current:.2e}"
+
             if self.current_phase == 1:
                 logger.info(
                     f"Epoch {epoch:03d} [PHASE 1 - BACKBONES WARMUP]: "
-                    f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | "
+                    f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | {lr_info} | "
                     f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} | Val Acc Audio = {val_acc_a:.4f} | "
                     f"Val Mean Acc = {val_mean_backbone:.4f} | Fusion: [FROZEN]"
                 )
             else:
                 logger.info(
                     f"Epoch {epoch:03d} [PHASE 2 - MULTIMODAL TOURNAMENT]: "
-                    f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | "
+                    f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | {lr_info} | "
                     f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} | Val Acc Audio = {val_acc_a:.4f} | "
                     f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
                 )
