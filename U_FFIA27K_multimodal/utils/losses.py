@@ -41,12 +41,13 @@ class BilateralBoundaryLoss(BaseLoss):
         self,
         lambda_emd: float = 0.5,
         lambda_align: float = 0.2,
-        lambda_unimodal: float = 0.5
+        lambda_unimodal: float = 0.5,
+        **kwargs
     ) -> None:
         super().__init__()
-        self.lambda_emd = lambda_emd
-        self.lambda_align = lambda_align
-        self.lambda_unimodal = lambda_unimodal
+        self.lambda_emd = float(kwargs.get("lambda_emd", lambda_emd))
+        self.lambda_align = float(kwargs.get("lambda_align", lambda_align))
+        self.lambda_unimodal = float(kwargs.get("lambda_unimodal", lambda_unimodal))
 
         # Raw dataset class index to Physical Ordinal Rank:
         # Raw 0: None   -> Rank 0
