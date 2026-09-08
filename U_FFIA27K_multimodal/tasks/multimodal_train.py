@@ -259,7 +259,7 @@ class MultimodalTrainer:
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
         logger.info(f"  - Monitor Metric:           {self.config.monitor}")
-        logger.info(f"  - Knowledge Distillation:   {self.enable_kd} (Dual Teachers: DenseNet121 + PANNS_Cnn6)")
+        logger.info(f"  - Knowledge Distillation:   {self.enable_kd} (Dual Teachers: ConvNeXt-Tiny + PANNS_Cnn6)")
         logger.info(f"  - Two-Phase Warmup:         {self.enable_two_phase_warmup} (Phase 1: {self.phase1_warmup_epochs} epochs)")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
