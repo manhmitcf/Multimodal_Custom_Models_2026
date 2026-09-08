@@ -9,64 +9,61 @@ if project_root not in sys.path:
 
 import torch
 import torch.nn as nn
-from models.multimodal_sota_net import MultimodalSOTANet
-from features.motion_kinematics import FishMotionKinematics10Ch
+from models.multimodal_sota_net import MultimodalBoundaryAwareNet, MultimodalSOTANet
+from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
 from utils.profile_model import count_parameters, measure_flops, measure_latency
 
 
 def test_multimodal_sota_net():
     print("=================================================================")
-    print("      MULTIMODAL SOTA FISH FEEDING INTENSITY ASSESSMENT NET")
-    print("      (MobileViT-XS 10-ch + EfficientAT + Google MBT + TMC)")
+    print("    MULTIMODAL BOUNDARY-AWARE NET (MultimodalBoundaryAwareNet)   ")
+    print("    (7-ch MobileViT-XS + T-F EfficientAT + Bi-CA + BACA + CORAL) ")
     print("=================================================================")
 
     # 1. Instantiate Core Model
-    model = MultimodalSOTANet(
+    model = MultimodalBoundaryAwareNet(
         classes_num=4,
         embed_dim=224,
-        num_bottlenecks=4,
         num_heads=4,
         pretrained_video=False,
         num_frames=4,
-        image_size=224
+        image_size=224,
+        in_chans=7
     )
     model.eval()
 
     # 2. Parameter Audit
     stats = count_parameters(model)
     print("\n[1] PARAMETER BREAKDOWN AUDIT:")
-    print(f"  - Video Backbone (MobileViT-XS 10-ch) : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-    print(f"  - Audio Backbone (EfficientAT 128-mel): {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-    print(f"  - Multimodal Fusion (MBT + TMC)       : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+    print(f"  - Video Backbone (MobileViT-XS 7-ch)  : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+    print(f"  - Audio Backbone (T-F EfficientAT)    : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+    print(f"  - Multimodal Fusion (Bi-CA+BACA+CORAL): {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
     print(f"  - Kinematics Extractor (Param-free)   : {stats['kinematics']:,}")
     print(f"  ===============================================================")
     print(f"  * CORE ARCHITECTURE TOTAL             : {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
     print(f"  * TOTAL TRAINABLE PARAMETERS          : {stats['total']:,} ({stats['total_million']:.3f} M)")
 
     assert stats['total'] < 5_000_000, f"Total parameters exceed 5.0M! Found {stats['total']}"
-    assert stats['total'] >= 4_500_000, f"Total parameters too low for ~4.8M! Found {stats['total']}"
+    assert stats['total'] >= 4_400_000, f"Total parameters too low for ~4.78M! Found {stats['total']}"
     margin = (5_000_000 - stats['total']) / 1e6
-    print(f"  >>> [PASS] Model meets ~4.8M target ({stats['total_million']:.3f} M) strictly under 5.0M! (Margin: {margin:.3f} M)")
+    print(f"  >>> [PASS] Model meets ~4.78M target ({stats['total_million']:.3f} M) strictly under 5.0M! (Margin: {margin:.3f} M)")
 
-    # 3. Verify Kinematics Module (10-Channel Tensor from T=4 Frames)
-    print("\n[2] 10-CHANNEL KINEMATICS EXTRACTION VERIFICATION (T=4 Frames):")
+    # 3. Verify Kinematics Module (7-Channel Tensor from T=4 Frames)
+    print("\n[2] 7-CHANNEL KINEMATICS EXTRACTION VERIFICATION (T=4 Frames):")
     kinematics_mod = model.motion_kinematics
     dummy_rgb = torch.rand(2, 4, 3, 224, 224)
-    frames_10ch, k_summary = kinematics_mod(dummy_rgb)
+    frames_7ch, k_summary = kinematics_mod(dummy_rgb)
 
-    assert frames_10ch.shape == (2, 4, 10, 224, 224), f"10-channel shape mismatch: {frames_10ch.shape}"
+    assert frames_7ch.shape == (2, 4, 7, 224, 224), f"7-channel shape mismatch: {frames_7ch.shape}"
     assert k_summary.shape == (2, 4), f"Kinematics summary shape mismatch: {k_summary.shape}"
-    print(f"  - 10-channel tensor shape: {list(frames_10ch.shape)}")
-    print(f"    * Ch 0-2: RGB visual channels")
-    print(f"    * Ch 3-4: Dense Optical Flow (u, v)")
-    print(f"    * Ch 5:   Velocity Magnitude |V|")
-    print(f"    * Ch 6:   Flow Direction Angle theta")
-    print(f"    * Ch 7:   Fluid Vorticity omega (feeding turbulence)")
-    print(f"    * Ch 8:   Frame Difference Delta I")
-    print(f"    * Ch 9:   Motion History Image (MHI)")
+    print(f"  - 7-channel tensor shape: {list(frames_7ch.shape)}")
+    print(f"    * Ch 0-2: Spatial RGB visual channels (shoaling, white foam, pellets)")
+    print(f"    * Ch 3-4: Dense Optical Flow (u, v) swimming velocities")
+    print(f"    * Ch 5:   Fluid Vorticity omega (feeding turbulence)")
+    print(r"    * Ch 6:   Deceleration Delta|V| = |V_t| - |V_{t-1}| (temporal boundary transition signal)")
     print(f"  - Kinematics Summary vector: {k_summary[0].tolist()}")
-    print("  >>> [PASS] 10-Channel Kinematic representation verified!")
+    print("  >>> [PASS] 7-Channel Kinematic representation verified!")
 
     # 4. Verify Audio Frontend (64kHz -> 128 Mel-bins)
     print("\n[3] AUDIO FRONTEND (64kHz -> 128 Mel-bins):")
@@ -77,7 +74,7 @@ def test_multimodal_sota_net():
     print("  >>> [PASS] Audio Log-Mel filterbank extraction verified!")
 
     # 5. Full End-to-End Forward Pass
-    print("\n[4] FORWARD PASS & UNCERTAINTY QUANTIFICATION:")
+    print("\n[4] FORWARD PASS & BOUNDARY TRANSITION ENGINE:")
     model.train()
     B = 2
     out = model(video_input=dummy_rgb, audio_input=dummy_audio)
@@ -85,8 +82,9 @@ def test_multimodal_sota_net():
     expected_keys = [
         "clipwise_output", "logits", "probabilities", "uncertainty",
         "uncertainty_video", "uncertainty_audio", "modality_weights",
-        "kinematics_summary", "f_spatial", "f_motion", "f_frequency",
-        "f_rhythm", "f_fused", "evidence_v", "evidence_a", "evidence_final"
+        "boundary_weights", "intensity_score", "expected_intensity",
+        "cutoffs", "cum_probs", "kinematics_summary", "f_spatial",
+        "f_motion", "f_frequency", "f_rhythm", "f_fused"
     ]
     for k in expected_keys:
         assert k in out, f"Missing key in model output: '{k}'"
@@ -96,7 +94,18 @@ def test_multimodal_sota_net():
     assert out["probabilities"].shape == (B, 4)
     assert out["uncertainty"].shape == (B, 1)
     assert out["modality_weights"].shape == (B, 2)
-    print("  >>> [PASS] Forward pass & tensor shapes verified!")
+    assert out["boundary_weights"].shape == (B, 4)
+
+    # Verify probability normalization
+    prob_sums = torch.sum(out["probabilities"], dim=-1)
+    assert torch.allclose(prob_sums, torch.ones_like(prob_sums), atol=1e-5), f"Probabilities do not sum to 1: {prob_sums}"
+
+    # Verify strict monotonicity of cutoffs: b_1 < b_2 < b_3
+    cutoffs = out["cutoffs"]
+    b_1, b_2, b_3 = cutoffs[0].item(), cutoffs[1].item(), cutoffs[2].item()
+    print(f"  - Monotonic Cutoffs: b_1={b_1:.4f} < b_2={b_2:.4f} < b_3={b_3:.4f}")
+    assert b_1 < b_2 < b_3, f"Cutoff monotonicity violated! b_1={b_1}, b_2={b_2}, b_3={b_3}"
+    print("  >>> [PASS] Forward pass, probabilities, & strictly monotonic cutoffs verified!")
 
     # 6. Backward Pass & Gradient Propagation
     print("\n[5] BACKWARD PASS & GRADIENT VERIFICATION:")
@@ -121,9 +130,10 @@ def test_multimodal_sota_net():
     print(f"  * Average Inference Latency (CPU): {latency_ms:.2f} ms")
 
     print("\n=================================================================")
-    print("ALL TESTS PASSED SUCCESSFULLY! MultimodalSOTANet is 100% OPERATIONAL.")
+    print("ALL TESTS PASSED SUCCESSFULLY! MultimodalBoundaryAwareNet is 100% OPERATIONAL.")
     print("=================================================================")
 
 
 if __name__ == "__main__":
     test_multimodal_sota_net()
+

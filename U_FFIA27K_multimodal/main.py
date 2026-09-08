@@ -19,7 +19,7 @@ import torch
 
 from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
-from models import MultimodalSOTANet
+from models import MultimodalBoundaryAwareNet, MultimodalSOTANet
 from tasks import MultimodalTrainer
 from utils.profile_model import count_parameters
 
@@ -36,6 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY = {
+    "MultimodalBoundaryAwareNet": MultimodalBoundaryAwareNet,
     "MultimodalSOTANet": MultimodalSOTANet,
 }
 
@@ -56,13 +57,14 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
     return model_cls(
         classes_num=config.model.classes_num,
         embed_dim=config.model.embed_dim,
-        num_bottlenecks=config.model.num_bottlenecks,
         num_heads=config.model.num_heads,
         pretrained_video=config.model.pretrained_video,
         audio_frontend=frontend,
         image_size=config.image_size,
         num_frames=config.num_frames,
+        in_chans=getattr(config.video_features, "num_channels", 7),
     )
+
 
 
 def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: torch.device) -> None:
@@ -87,9 +89,9 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     try:
         # 1. Parameter audit
         stats = count_parameters(model)
-        logger.info(f"  - Video Backbone (MobileViT-XS 10-ch): {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (EfficientAT mn05):   {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Multimodal Fusion (MBT + TMC):       {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+        logger.info(f"  - Video Backbone (MobileViT-XS 7-ch)  : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Audio Backbone (T-F EfficientAT)    : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Multimodal Fusion (Bi-CA+BACA+CORAL): {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
         logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
         logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
 
@@ -349,6 +351,8 @@ def upload_artifact_if_enabled(upload_config: ArtifactUploadConfig, config: Trai
 def run_training_session(
     train_config_path: Optional[str] = None,
     artifact_upload_config_path: Optional[str] = None,
+    dry_run: bool = False,
+    device_str: Optional[str] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -357,7 +361,10 @@ def run_training_session(
         artifact_upload_config_path = str(pkg_dir / "config" / "artifact_upload_config.json")
 
     config = TrainConfig.from_json(train_config_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device_str is not None:
+        device = torch.device(device_str)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Training device: {device}")
 
     eval_mode = config.dataset_splitter.evaluation_mode
@@ -368,6 +375,10 @@ def run_training_session(
     # =========================================================================
     preflight_model = build_model(config).to(device)
     verify_model_dry_run(preflight_model, config, device)
+
+    if dry_run:
+        logger.info(">>> Dry-run flag detected: Pre-flight check passed. Exiting without training.")
+        return
 
     if eval_mode == "cross_validation":
         del preflight_model
@@ -441,14 +452,23 @@ def run_training_session(
     upload_artifact_if_enabled(upload_config, config)
 
 
-if __name__ == "__main__":
+def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="Multimodal SOTA Fish Feeding Intensity Assessment")
     parser.add_argument("--config", type=str, default=None, help="Path to train_config.json")
     parser.add_argument("--upload-config", type=str, default=None, help="Path to artifact_upload_config.json")
+    parser.add_argument("--device", type=str, default=None, help="Target compute device (cuda or cpu)")
+    parser.add_argument("--dry-run", action="store_true", help="Run pre-flight check only without training")
     args = parser.parse_args()
 
     run_training_session(
         train_config_path=args.config,
-        artifact_upload_config_path=args.upload_config
+        artifact_upload_config_path=args.upload_config,
+        dry_run=args.dry_run,
+        device_str=args.device,
     )
+
+
+if __name__ == "__main__":
+    main()
+

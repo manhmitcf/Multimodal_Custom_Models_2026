@@ -16,9 +16,15 @@ class EfficientATAudioBackbone(nn.Module):
       - Stage 3: Depthwise-separable 1D Temporal Rhythm Convolutions (splashing temporal impulses)
       - Total parameters: ~1.82M params.
     """
-    def __init__(self, embed_dim: int = 224, pretrained: bool = False) -> None:
+    def __init__(
+        self,
+        embed_dim: int = 224,
+        pretrained: bool = False,
+        num_tokens: int = 4
+    ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
+        self.num_tokens = num_tokens
 
         try:
             import timm
@@ -66,7 +72,7 @@ class EfficientATAudioBackbone(nn.Module):
             f_audio: Joint acoustic embedding [B, embed_dim]
             f_frequency: Spectral frequency distribution feature [B, embed_dim]
             f_rhythm: Temporal rhythm cadence feature [B, embed_dim]
-            tokens_audio: Sequence of temporal audio tokens [B, T', embed_dim] for MBT Bottleneck Fusion
+            tokens_audio: Sequence of temporal audio tokens [B, num_tokens, embed_dim]
         """
         # Feature extraction: [B, 1, Ta, 128] -> [B, 576, T', F'] -> conv_head -> [B, 1024, T', F']
         feat = self.backbone.forward_features(mel_spec)
@@ -77,7 +83,7 @@ class EfficientATAudioBackbone(nn.Module):
 
         B, C, T_prime, F_prime = feat.shape
 
-        # 1. Frequency Profile (Pool over Time T'): [B, C, F'] -> [B, C]
+        # 1. Frequency Profile (Pool over Time T'): [B, C, F'] -> [B, C] -> [B, embed_dim]
         freq_pool = feat.mean(dim=2).mean(dim=-1)  # [B, 1024]
         f_freq_raw = self.spatial_proj(freq_pool)  # [B, embed_dim]
         w_freq = self.freq_se(f_freq_raw)
@@ -85,12 +91,13 @@ class EfficientATAudioBackbone(nn.Module):
 
         # 2. Temporal Rhythm Sequence (Pool over Frequency F'): [B, C, T', F'] -> [B, C, T']
         temporal_seq = feat.mean(dim=-1)  # [B, 1024, T']
-        # Project channel dim: [B, T', 1024] -> [B, T', embed_dim]
         temporal_seq_proj = self.spatial_proj(temporal_seq.transpose(1, 2)).transpose(1, 2)  # [B, embed_dim, T']
         rhythm_seq = self.rhythm_conv(temporal_seq_proj)  # [B, embed_dim, T']
 
-        tokens_audio = rhythm_seq.transpose(1, 2)  # [B, T', embed_dim]
-        f_rhythm = tokens_audio.mean(dim=1)        # [B, embed_dim]
+        # Pool temporal dimension to num_tokens (default 4) for exact video-audio token alignment
+        rhythm_pooled = F.adaptive_avg_pool1d(rhythm_seq, self.num_tokens)  # [B, embed_dim, num_tokens]
+        tokens_audio = rhythm_pooled.transpose(1, 2)  # [B, num_tokens, embed_dim]
+        f_rhythm = tokens_audio.mean(dim=1)          # [B, embed_dim]
 
         # 3. Joint Acoustic Vector fusing frequency profile and temporal rhythm
         f_audio = self.norm_audio(f_frequency + f_rhythm)
