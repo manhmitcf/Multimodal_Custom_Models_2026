@@ -61,7 +61,8 @@
     "mel_bins": 128,
     "fmin": 50,
     "fmax": 32000,
-    "use_tkeo": true,
+    "use_tkeo": false,
+    "use_frequency_attention": false,
     "alpha_max": 0.99,
     "beta": 0.8
   },

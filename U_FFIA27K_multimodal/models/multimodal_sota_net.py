@@ -40,6 +40,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
+        use_frequency_attention: bool = False,
+        **kwargs
     ) -> None:
         super().__init__()
         self.classes_num = classes_num
@@ -60,7 +62,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
         )
         self.audio_backbone = PANNSCNN6AudioBackbone(
             embed_dim=embed_dim,
-            num_tokens=num_frames
+            num_tokens=num_frames,
+            use_frequency_attention=use_frequency_attention
         )
 
         # 3. Gated Bilateral Boundary Fusion (~0.14M)

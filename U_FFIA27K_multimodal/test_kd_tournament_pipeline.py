@@ -159,7 +159,7 @@ class TestKDTournamentPipeline(unittest.TestCase):
         stats = count_parameters(model)
         print(f"\n[Test Budget] Total Trainable Parameters: {stats['total']:,} ({stats['total_million']:.3f} M)")
         self.assertLess(stats['total'], 5_000_000, f"Model parameters ({stats['total']:,}) must be < 5.0M!")
-        self.assertEqual(stats['total'], 4_681_893, "Parameters must match exact architecture budget 4,681,893")
+        self.assertEqual(stats['total'], 4_673_541, "Parameters must match exact architecture budget 4,673,541")
 
     def test_05_adaptive_kd_confidence_and_correctness_gating(self):
         """Verify Instance-Level Adaptive KD adjusts alpha by teacher confidence and zeros out when teacher is wrong."""
