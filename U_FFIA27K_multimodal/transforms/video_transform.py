@@ -45,59 +45,45 @@ class ImageToPIL:
 
 class VideoTransform:
     """
-    VideoTransform for multi-frame clips with ZERO data augmentation (No-Aug).
-    Applies pure deterministic preprocessing across all frames:
-      1. Resize to (image_size, image_size)
-      2. ToTensor()
-      3. ImageNet normalization
-    Preserves exact pixel values, true optical flow, and pristine temporal differences.
+    Video transform pipeline applied uniformly across video frames.
+    Identical to multimodal branches.
+
+    Input:  np.ndarray [H, W, C] or [C, H, W] uint8
+    Output: torch.Tensor [C, H, W] float32 normalized with ImageNet statistics.
     """
-    def __init__(
-        self,
-        is_train: bool = False,
-        image_size: int = 224,
-        mean: tuple = (0.485, 0.456, 0.406),
-        std: tuple = (0.229, 0.224, 0.225)
-    ) -> None:
-        self.is_train = is_train
-        self.image_size = image_size
-        self.mean = mean
-        self.std = std
-        self.to_pil = ImageToPIL()
-
-    def transform_clip(self, frames: List[Union[np.ndarray, torch.Tensor]]) -> List[torch.Tensor]:
-        """
-        Pure deterministic transform of video frames with NO augmentation.
-        """
-        if not frames:
-            return []
-
-        pil_frames = [self.to_pil(f) if not hasattr(f, 'convert') else f for f in frames]
-
-        transformed_tensors = []
-        for img in pil_frames:
-            # 1. Resize to target resolution
-            img = TF.resize(img, (self.image_size, self.image_size), interpolation=InterpolationMode.BILINEAR)
-
-            # 2. ToTensor & Normalize with ImageNet stats (NO AGU)
-            tensor = TF.to_tensor(img)
-            tensor = TF.normalize(tensor, mean=self.mean, std=self.std)
-            transformed_tensors.append(tensor)
-
-        return transformed_tensors
+    def __init__(self, transform: transforms.Compose) -> None:
+        self.transform = transform
 
     def __call__(self, image: Union[np.ndarray, torch.Tensor, List]) -> Union[torch.Tensor, List[torch.Tensor]]:
         if isinstance(image, (list, tuple)):
-            return self.transform_clip(list(image))
-        if isinstance(image, np.ndarray) and image.ndim == 4:
-            return self.transform_clip(list(image))
-        return self.transform_clip([image])[0]
+            return [self.transform(f) for f in image]
+        return self.transform(image)
 
     @staticmethod
     def get_transforms(image_size: int = 224):
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+
+        train_transform = [
+            ImageToPIL(),
+            transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
+            transforms.ColorJitter(brightness=0.15, contrast=0.15),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(15),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ]
+
+        eval_transform = [
+            ImageToPIL(),
+            transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std),
+        ]
+
         return {
-            "train": VideoTransform(is_train=False, image_size=image_size),
-            "val": VideoTransform(is_train=False, image_size=image_size),
-            "test": VideoTransform(is_train=False, image_size=image_size),
+            "train": VideoTransform(transforms.Compose(train_transform)),
+            "val": VideoTransform(transforms.Compose(eval_transform)),
+            "test": VideoTransform(transforms.Compose(eval_transform)),
         }
 

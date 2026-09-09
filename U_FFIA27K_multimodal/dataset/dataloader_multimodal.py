@@ -325,11 +325,8 @@ class FishMultimodalDataLoader:
         def __getitem__(self, idx: int) -> Dict[str, Any]:
             if self.ram_cache is not None and self.ram_cache[idx] is not None:
                 video_raw, audio_raw, target_onehot, clip_name = self.ram_cache[idx]
-                transformed = self.transform(list(video_raw))
-                if isinstance(transformed, list):
-                    video_tensor = torch.stack(transformed[:self.parent.num_frames])
-                else:
-                    video_tensor = torch.stack([transformed])
+                frames = [self.transform(frame) for frame in video_raw]
+                video_tensor = torch.stack(frames[:self.parent.num_frames])  # [T, 3, H, W]
 
                 if self.parent.load_audio and audio_raw is not None and audio_raw.size > 1:
                     audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
