@@ -17,7 +17,7 @@
   "load_audio": false,
   "sample_rate": 256000,
   "cache_mode": "ram",
-  "dataloader_workers": -1,
+  "dataloader_workers": 5,
   "prefetch_factor": 2,
   "ckpt_dir": "checkpoint/video_convnext_nano_4frames",
   "save_best_only": true,

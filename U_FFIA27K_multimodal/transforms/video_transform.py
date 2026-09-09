@@ -45,11 +45,12 @@ class ImageToPIL:
 
 class VideoTransform:
     """
-    VideoTransform supporting both single-frame and spatiotemporally consistent multi-frame clips.
-
-    For multi-frame sequences (T frames):
-    Applies IDENTICAL spatial augmentation (flip, rotation, affine shift) across all frames
-    in the clip to prevent destroying temporal frame difference (It = It - It-1) and optical flow.
+    VideoTransform for multi-frame clips with ZERO data augmentation (No-Aug).
+    Applies pure deterministic preprocessing across all frames:
+      1. Resize to (image_size, image_size)
+      2. ToTensor()
+      3. ImageNet normalization
+    Preserves exact pixel values, true optical flow, and pristine temporal differences.
     """
     def __init__(
         self,
@@ -66,50 +67,19 @@ class VideoTransform:
 
     def transform_clip(self, frames: List[Union[np.ndarray, torch.Tensor]]) -> List[torch.Tensor]:
         """
-        Transform a sequence of video frames with spatiotemporal consistency.
+        Pure deterministic transform of video frames with NO augmentation.
         """
         if not frames:
             return []
 
-        # Convert all frames to PIL Image
         pil_frames = [self.to_pil(f) if not hasattr(f, 'convert') else f for f in frames]
-
-        # In train mode, sample geometric and photometric augmentation parameters ONCE per clip
-        if self.is_train:
-            do_flip = random.random() < 0.5
-            angle = random.uniform(-15.0, 15.0)
-            max_trans = int(0.1 * self.image_size)
-            translate = (random.randint(-max_trans, max_trans), random.randint(-max_trans, max_trans))
-            bright_factor = random.uniform(0.85, 1.15)
-        else:
-            do_flip = False
-            angle = 0.0
-            translate = (0, 0)
-            bright_factor = 1.0
 
         transformed_tensors = []
         for img in pil_frames:
             # 1. Resize to target resolution
             img = TF.resize(img, (self.image_size, self.image_size), interpolation=InterpolationMode.BILINEAR)
 
-            # 2. Consistent Photometric Augmentation
-            if self.is_train and bright_factor != 1.0:
-                img = TF.adjust_brightness(img, bright_factor)
-
-            # 3. Consistent Geometric Augmentation
-            if do_flip:
-                img = TF.hflip(img)
-            if angle != 0.0 or translate != (0, 0):
-                img = TF.affine(
-                    img,
-                    angle=angle,
-                    translate=translate,
-                    scale=1.0,
-                    shear=0.0,
-                    interpolation=InterpolationMode.BILINEAR
-                )
-
-            # 4. ToTensor & Normalize with ImageNet stats
+            # 2. ToTensor & Normalize with ImageNet stats (NO AGU)
             tensor = TF.to_tensor(img)
             tensor = TF.normalize(tensor, mean=self.mean, std=self.std)
             transformed_tensors.append(tensor)
@@ -117,9 +87,6 @@ class VideoTransform:
         return transformed_tensors
 
     def __call__(self, image: Union[np.ndarray, torch.Tensor, List]) -> Union[torch.Tensor, List[torch.Tensor]]:
-        """
-        Supports single image, list of frames, or 4D numpy array.
-        """
         if isinstance(image, (list, tuple)):
             return self.transform_clip(list(image))
         if isinstance(image, np.ndarray) and image.ndim == 4:
@@ -129,7 +96,7 @@ class VideoTransform:
     @staticmethod
     def get_transforms(image_size: int = 224):
         return {
-            "train": VideoTransform(is_train=True, image_size=image_size),
+            "train": VideoTransform(is_train=False, image_size=image_size),
             "val": VideoTransform(is_train=False, image_size=image_size),
             "test": VideoTransform(is_train=False, image_size=image_size),
         }

@@ -143,9 +143,10 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         # 1. Pure Spatial feature from the final frame (appearance of fish & water surface)
         f_spatial = tokens_video[:, -1]  # [B, embed_dim]
 
-        # 2. Inter-frame motion dynamics
+        # 2. Inter-frame motion dynamics across consecutive frame transitions
         if T >= 2:
-            f_motion = torch.abs(tokens_video[:, 1] - tokens_video[:, 0])  # [B, embed_dim]
+            diffs = [torch.abs(tokens_video[:, k] - tokens_video[:, k - 1]) for k in range(1, T)]
+            f_motion = torch.stack(diffs, dim=0).mean(dim=0)  # [B, embed_dim]
         else:
             f_motion = tokens_video[:, 0]
 

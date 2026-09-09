@@ -142,7 +142,7 @@ class TrainConfig(BaseModel):
     sample_rate: int = Field(default=256000, gt=0, description="Audio sampling rate in Hz.")
     load_audio: bool = Field(default=True, description="Whether to load and process audio data.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
-    dataloader_workers: int = Field(default=-1, description="Number of worker processes for DataLoader (-1 = auto).")
+    dataloader_workers: int = Field(default=5, description="Number of worker processes for DataLoader (-1 = auto).")
     prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
     save_best_only: bool = Field(default=True, description="Save only the best checkpoint.")
     loss_type: str = Field(default="cross_entropy", description="Loss function: 'cross_entropy', 'pairwise_tournament', 'ordinal_wasserstein' or 'clip_ce'.")
