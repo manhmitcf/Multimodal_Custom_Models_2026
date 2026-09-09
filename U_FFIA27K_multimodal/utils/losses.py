@@ -104,7 +104,7 @@ class PairwiseTournamentLoss(BaseLoss):
         mask_23 = (y_raw == 2) | (y_raw == 1)
         if mask_23.sum() > 0 and logit_23 is not None:
             target_23 = (y_raw[mask_23] == 2).float()  # 1.0 if Medium, 0.0 if Strong
-            pos_weight_23 = torch.tensor(1.25, device=targets.device)
+            pos_weight_23 = torch.tensor(1.25, device=logit_23.device)
             loss_23 = F.binary_cross_entropy_with_logits(logit_23[mask_23], target_23, pos_weight=pos_weight_23)
         else:
             loss_23 = torch.tensor(0.0, device=targets.device)
