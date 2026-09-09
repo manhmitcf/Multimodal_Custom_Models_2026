@@ -58,7 +58,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
     def __init__(
         self,
         embed_dim: int = 224,
-        in_chans: int = 7,
+        in_chans: int = 10,
         dims: Tuple[int, ...] = (48, 96, 192, 384),
         depths: Tuple[int, ...] = (1, 1, 3, 1),
         num_frames: int = 2,

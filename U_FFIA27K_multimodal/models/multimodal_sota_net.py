@@ -39,7 +39,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         audio_frontend: Optional[AudioFrontend] = None,
         image_size: int = 224,
         num_frames: int = 2,
-        in_chans: int = 7,
+        in_chans: int = 10,
         use_frequency_attention: bool = False,
         **kwargs
     ) -> None:
@@ -52,7 +52,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
-        self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
+        self.motion_kinematics = FishMotionKinematics10Ch(image_size=image_size)
 
         # 2. Backbones (~4.46M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
@@ -84,7 +84,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Args:
-            video_input: Raw RGB frames [B, T, 3, H, W] or precomputed 7-ch tensor [B, T, 7, H, W]
+            video_input: Raw RGB frames [B, T, 3, H, W] or precomputed 10-ch tensor [B, T, 10, H, W]
             audio_input: Raw audio waveforms [B, num_samples] or precomputed Log-Mel Spectrogram [B, 1, Ta, 128]
 
         Returns:
@@ -93,9 +93,9 @@ class MultimodalBoundaryAwareNet(nn.Module):
         """
         # Step 1: Preprocessing & Frontend Extraction
         if video_input.ndim == 5 and video_input.size(2) == 3:
-            frames_7ch, kinematics_summary = self.motion_kinematics(video_input)
+            frames_10ch, kinematics_summary = self.motion_kinematics(video_input)
         else:
-            frames_7ch = video_input
+            frames_10ch = video_input
             kinematics_summary = torch.zeros(video_input.size(0), 4, device=video_input.device, dtype=video_input.dtype)
 
         if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
@@ -104,7 +104,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
             stft_feat = audio_input
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
-        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_7ch)
+        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_10ch)
         f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(stft_feat)
 
         # Auxiliary Unimodal Logits & Probabilities (for standalone evaluation & Phase 1 warmup)

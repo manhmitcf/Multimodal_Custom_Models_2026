@@ -26,9 +26,9 @@ def test_parameter_budget():
     f_params = sum(p.numel() for p in model.fusion.parameters())
 
     print(f"Total Model Parameters:               {total_params:,}")
-    print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
-    print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
-    print(f"  - Pairwise Tournament Fusion:         {f_params:,}")
+    print(f"  - Video Backbone (ConvNeXt-Nano 10ch): {v_params:,}")
+    print(f"  - Audio Backbone (STFT-MLP 2049):      {a_params:,}")
+    print(f"  - Pairwise Tournament Fusion:          {f_params:,}")
 
     strict_limit = 5000000
     assert total_params < strict_limit, f"FAILED: Exceeded budget {total_params} >= {strict_limit}"

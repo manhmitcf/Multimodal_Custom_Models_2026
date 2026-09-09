@@ -36,6 +36,11 @@
     "num_heads": 4,
     "pretrained_video": false
   },
+  "video_features": {
+    "num_channels": 10,
+    "num_frames": 2,
+    "image_size": 224
+  },
   "audio_features": {
     "sample_rate": 256000,
     "window_size": 4096,

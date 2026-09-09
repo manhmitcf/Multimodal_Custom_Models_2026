@@ -62,7 +62,7 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
         audio_frontend=frontend,
         image_size=config.image_size,
         num_frames=config.num_frames,
-        in_chans=getattr(config.video_features, "num_channels", 7),
+        in_chans=getattr(config.video_features, "num_channels", 10),
         use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
     )
 
@@ -90,7 +90,7 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     try:
         # 1. Parameter audit
         stats = count_parameters(model)
-        logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Video Backbone (ConvNeXt-Nano 10-ch)      : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
         logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
         logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
         logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")

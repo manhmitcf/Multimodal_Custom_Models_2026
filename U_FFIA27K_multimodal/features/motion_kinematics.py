@@ -4,18 +4,21 @@ import torch.nn.functional as F
 from typing import Tuple
 
 
-class FishMotionKinematics7Ch(nn.Module):
+class FishMotionKinematics10Ch(nn.Module):
     """
-    Differentiable 7-Channel Kinematics Extractor for Fish Feeding Intensity Assessment (T=2 frames):
+    Differentiable 10-Channel Kinematics Extractor for Fish Feeding Intensity Assessment (T=2 frames):
       - Channels 0-2 : Spatial RGB visual appearance (fish density, white water foam, surface pellets)
       - Channels 3-4 : Dense Optical Flow (u, v) representing horizontal and vertical swimming velocities
       - Channel 5    : Velocity Magnitude |V| = sqrt(u^2 + v^2) (absolute swimming kinetic intensity)
       - Channel 6    : Fluid Vorticity omega = dv/dx - du/dy (swirling vortex turbulence from feeding strike)
+      - Channel 7    : Fluid Divergence div = du/dx + dv/dy (feeding centripetal convergence < 0 vs dispersal > 0)
+      - Channel 8    : Temporal Frame Difference dI = |I2 - I1| (instantaneous high-frequency motion residual)
+      - Channel 9    : Convective Acceleration |a| = sqrt(ax^2 + ay^2) (centripetal/burst acceleration field)
 
     Input:
         frames_rgb: [B, T, 3, H, W] (T=2)
     Output:
-        frames_7ch: [B, T, 7, H, W]
+        frames_10ch: [B, T, 10, H, W]
         kinematics_summary: [B, 4] summary statistics [v_mean, omega_max, v_max, convergence_flux]
     """
     def __init__(self, image_size: int = 224) -> None:
@@ -86,25 +89,47 @@ class FishMotionKinematics7Ch(nn.Module):
         # 5. Velocity Magnitude |V| in [0, ~1.414]
         v_mag_seq = torch.sqrt(u_seq ** 2 + v_seq ** 2 + 1e-6)  # [B, T, 1, H, W]
 
-        # 6. Fluid Vorticity omega = dv/dx - du/dy in [-1, 1]
-        v_flat = v_seq.view(B * T, 1, H, W)
+        # Spatial derivatives of optical flow u, v
         u_flat = u_seq.view(B * T, 1, H, W)
-        dv_dx = F.conv2d(v_flat, sobel_x, padding=1)
+        v_flat = v_seq.view(B * T, 1, H, W)
+        du_dx = F.conv2d(u_flat, sobel_x, padding=1)
         du_dy = F.conv2d(u_flat, sobel_y, padding=1)
-        omega_flat = torch.tanh((dv_dx - du_dy) * 4.0)  # normalized vorticity
+        dv_dx = F.conv2d(v_flat, sobel_x, padding=1)
+        dv_dy = F.conv2d(v_flat, sobel_y, padding=1)
+
+        # 6. Fluid Vorticity omega = dv/dx - du/dy in [-1, 1]
+        omega_flat = torch.tanh((dv_dx - du_dy) * 4.0)
         omega_seq = omega_flat.view(B, T, 1, H, W)
 
-        # Assemble finalized 7 channels:
-        # [R, G, B, u, v, |V|, omega]
-        frames_7ch = torch.cat([
+        # 7. Fluid Divergence div = du/dx + dv/dy in [-1, 1] (Convergence vs Dispersal)
+        div_flat = torch.tanh((du_dx + dv_dy) * 4.0)
+        div_seq = div_flat.view(B, T, 1, H, W)
+
+        # 8. Temporal Frame Difference dI = |I2 - I1| in [0, 1]
+        di_seq = torch.tanh(torch.abs(it_seq) * 4.0)  # [B, T, 1, H, W]
+
+        # 9. Convective Acceleration |a_conv| = sqrt(ax^2 + ay^2) in [0, 1]
+        # ax = u*(du/dx) + v*(du/dy), ay = u*(dv/dx) + v*(dv/dy)
+        ax_flat = u_flat * du_dx + v_flat * du_dy
+        ay_flat = u_flat * dv_dx + v_flat * dv_dy
+        a_mag_flat = torch.sqrt(ax_flat ** 2 + ay_flat ** 2 + 1e-6)
+        acc_flat = torch.tanh(a_mag_flat * 4.0)
+        acc_seq = acc_flat.view(B, T, 1, H, W)
+
+        # Assemble finalized 10 channels:
+        # [R, G, B, u, v, |V|, omega, div, dI, acc]
+        frames_10ch = torch.cat([
             frames_rgb,   # 3 ch (Spatial appearance, fish clustering, white water foam)
             u_seq,        # 1 ch (Flow horizontal velocity)
             v_seq,        # 1 ch (Flow vertical velocity)
             v_mag_seq,    # 1 ch (Velocity magnitude |V|)
-            omega_seq     # 1 ch (Fluid vorticity / swirling turbulence)
-        ], dim=2)  # [B, T, 7, H, W]
+            omega_seq,    # 1 ch (Fluid vorticity / swirling turbulence)
+            div_seq,      # 1 ch (Fluid divergence / centripetal convergence)
+            di_seq,       # 1 ch (Temporal frame difference / high-frequency residual)
+            acc_seq       # 1 ch (Convective acceleration / feeding burst)
+        ], dim=2)  # [B, T, 10, H, W]
 
-        # 7. Kinematics Summary Statistics:
+        # Kinematics Summary Statistics:
         v_mean = v_mag_seq.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
         omega_max = torch.amax(torch.abs(omega_seq), dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
         v_max = torch.amax(v_mag_seq, dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
@@ -115,9 +140,9 @@ class FishMotionKinematics7Ch(nn.Module):
         convergence_flux = active_flux.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
 
         kinematics_summary = torch.cat([v_mean, omega_max, v_max, convergence_flux], dim=-1)  # [B, 4]
-        return frames_7ch, kinematics_summary
+        return frames_10ch, kinematics_summary
 
 
 # Backward compatibility aliases
-FishMotionKinematics10Ch = FishMotionKinematics7Ch
-FishMotionKinematics = FishMotionKinematics7Ch
+FishMotionKinematics7Ch = FishMotionKinematics10Ch
+FishMotionKinematics = FishMotionKinematics10Ch
