@@ -25,10 +25,10 @@ def test_parameter_budget():
     a_params = sum(p.numel() for p in model.audio_backbone.parameters())
     f_params = sum(p.numel() for p in model.fusion.parameters())
 
-    print(f"Total Model Parameters:               {total_params:,}")
-    print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
-    print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
-    print(f"  - Pairwise Tournament Fusion:         {f_params:,}")
+    print(f"Total Model Parameters:                 {total_params:,}")
+    print(f"  - Video Backbone (ConvNeXt-Nano 7ch):   {v_params:,}")
+    print(f"  - Audio Backbone (Penta-Band + Cadence):{a_params:,}")
+    print(f"  - Pairwise Tournament Fusion:           {f_params:,}")
 
     strict_limit = 5000000
     assert total_params < strict_limit, f"FAILED: Exceeded budget {total_params} >= {strict_limit}"
@@ -145,11 +145,52 @@ def test_end_to_end_from_scratch():
     f_grads = [p.grad for p in model.fusion.parameters() if p.requires_grad]
 
     assert all(g is not None for g in vb_grads), "Video backbone missing gradients"
-    assert all(g is not None for g in ab_grads), "Audio MLP backbone missing gradients"
+    assert all(g is not None for g in ab_grads), "Audio backbone missing gradients"
     assert all(g is not None for g in f_grads), "Tournament fusion missing gradients"
 
     optimizer.step()
     print(f"[PASSED] End-to-End Single Phase: All {len(list(model.parameters()))} param tensors updated simultaneously!")
+
+
+def test_penta_band_cadence_engine():
+    print("\n" + "=" * 65)
+    print("TEST 5: PENTA-BAND SPECTRAL & 5-TRACK TEMPORAL CADENCE ENGINE")
+    print("=" * 65)
+
+    from features.audio_frontend import AudioFrontend, AudioFrontendOutput
+    from models.audio_backbone import DualBranchCadenceAudioBackbone, PentaBandSpectralMLP, MultiTrackTemporalCadenceEngine
+
+    frontend = AudioFrontend()
+    backbone = DualBranchCadenceAudioBackbone(embed_dim=224, num_tokens=2)
+
+    B = 2
+    raw_audio = torch.randn(B, 512000)  # 2.0s @ 256 kHz
+
+    out_frontend = frontend(raw_audio)
+    assert isinstance(out_frontend, AudioFrontendOutput), "Frontend must return AudioFrontendOutput"
+    assert out_frontend.spec_vector.shape == (B, 2049), f"Expected spec_vector [B, 2049], got {out_frontend.spec_vector.shape}"
+    assert out_frontend.temporal_energy.shape[0] == B and out_frontend.temporal_energy.shape[1] == 5, f"Expected temporal_energy [B, 5, T], got {out_frontend.temporal_energy.shape}"
+
+    print(f"Frontend outputs:")
+    print(f"  - spec_vector shape:    {list(out_frontend.spec_vector.shape)}")
+    print(f"  - temporal_energy shape:{list(out_frontend.temporal_energy.shape)}")
+
+    f_audio, f_freq, f_rhythm, f_burst_a, tokens_audio = backbone(out_frontend)
+
+    assert f_audio.shape == (B, 224), f"Expected f_audio [B, 224], got {f_audio.shape}"
+    assert f_freq.shape == (B, 224), f"Expected f_freq [B, 224], got {f_freq.shape}"
+    assert f_rhythm.shape == (B, 224), f"Expected f_rhythm [B, 224], got {f_rhythm.shape}"
+    assert f_burst_a.shape == (B, 224), f"Expected f_burst_a [B, 224], got {f_burst_a.shape}"
+    assert tokens_audio.shape == (B, 2, 224), f"Expected tokens_audio [B, 2, 224], got {tokens_audio.shape}"
+
+    # Also test backward pass on audio backbone alone
+    loss = (f_audio.sum() + f_freq.sum() + f_rhythm.sum() + f_burst_a.sum())
+    loss.backward()
+
+    for name, param in backbone.named_parameters():
+        assert param.grad is not None, f"Backbone param {name} did not receive gradient"
+
+    print(f"[PASSED] Penta-Band Spectral + 5-Track Cadence Engine forward & backward verified!")
 
 
 if __name__ == "__main__":
@@ -157,6 +198,7 @@ if __name__ == "__main__":
     test_tournament_forward_and_pairwise()
     test_gradient_flow_tournament_loss()
     test_end_to_end_from_scratch()
+    test_penta_band_cadence_engine()
     print("\n" + "=" * 65)
-    print("ALL TOURNAMENT STFT-MLP TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("ALL PENTABAND CADENCE TOURNAMENT TESTS PASSED! (100% READY)")
     print("=" * 65 + "\n")

@@ -98,7 +98,9 @@ class MultimodalBoundaryAwareNet(nn.Module):
             frames_7ch = video_input
             kinematics_summary = torch.zeros(video_input.size(0), 4, device=video_input.device, dtype=video_input.dtype)
 
-        if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
+        if isinstance(audio_input, dict):
+            stft_feat = audio_input
+        elif isinstance(audio_input, torch.Tensor) and audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
             stft_feat = self.audio_frontend(audio_input)
         else:
             stft_feat = audio_input
