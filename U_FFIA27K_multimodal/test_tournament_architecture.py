@@ -16,19 +16,19 @@ from utils.losses import PairwiseTournamentLoss
 
 def test_parameter_budget():
     print("\n" + "=" * 65)
-    print("TEST 1: TOURNAMENT NETWORK PARAMETER BUDGET (< 5.0M)")
+    print("TEST 1: V2 QUAD-DYNAMICS PARAMETER BUDGET (< 5.0M)")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model = MultimodalBoundaryAwareNet(num_frames=4, in_chans=8)
     total_params = sum(p.numel() for p in model.parameters())
     v_params = sum(p.numel() for p in model.video_backbone.parameters())
     a_params = sum(p.numel() for p in model.audio_backbone.parameters())
     f_params = sum(p.numel() for p in model.fusion.parameters())
 
-    print(f"Total Model Parameters:               {total_params:,}")
-    print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
-    print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
-    print(f"  - Pairwise Tournament Fusion:         {f_params:,}")
+    print(f"Total Model Parameters:                    {total_params:,}")
+    print(f"  - Video Backbone (ConvNeXt-Nano 8ch T=4):  {v_params:,}")
+    print(f"  - Audio Backbone (Dual-Branch Cadence):   {a_params:,}")
+    print(f"  - Pairwise Tournament Fusion:              {f_params:,}")
 
     strict_limit = 5000000
     assert total_params < strict_limit, f"FAILED: Exceeded budget {total_params} >= {strict_limit}"
@@ -38,14 +38,14 @@ def test_parameter_budget():
 
 def test_tournament_forward_and_pairwise():
     print("\n" + "=" * 65)
-    print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & PAIRWISE CROSS BOUNDARIES")
+    print("TEST 2: V2 QUAD-DYNAMICS 2-LEVEL FORWARD PASS & PAIRWISE BOUNDARIES")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model = MultimodalBoundaryAwareNet(num_frames=4, in_chans=8)
     model.eval()
 
     B = 4
-    v_input = torch.randn(B, 2, 3, 224, 224)
+    v_input = torch.randn(B, 4, 3, 224, 224)
     a_input = torch.randn(B, 512000)  # 2.0s @ 256 kHz
 
     with torch.no_grad():
@@ -89,13 +89,13 @@ def test_gradient_flow_tournament_loss():
     print("TEST 3: 100% GRADIENT FLOW THROUGH PAIRWISE TOURNAMENT LOSS")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model = MultimodalBoundaryAwareNet(num_frames=4, in_chans=8)
     model.train()
     criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0)
 
     # Batch with all 4 classes: 0 (None), 1 (Strong), 2 (Medium), 3 (Weak)
     B = 4
-    v_input = torch.randn(B, 2, 3, 224, 224)
+    v_input = torch.randn(B, 4, 3, 224, 224)
     a_input = torch.randn(B, 512000)  # 2.0s @ 256 kHz
     targets = {"target": torch.tensor([0, 1, 2, 3])}
 
@@ -107,6 +107,8 @@ def test_gradient_flow_tournament_loss():
     valid_grads = 0
 
     for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
         total_tensors += 1
         if param.grad is not None:
             if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
@@ -124,13 +126,13 @@ def test_end_to_end_from_scratch():
     print("TEST 4: END-TO-END FROM SCRATCH SIMULTANEOUS TRAINING")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model = MultimodalBoundaryAwareNet(num_frames=4, in_chans=8)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
 
     B = 4
-    v_input = torch.randn(B, 2, 3, 224, 224)
+    v_input = torch.randn(B, 4, 3, 224, 224)
     a_input = torch.randn(B, 512000)
     targets = {"target": torch.tensor([0, 1, 2, 3])}
 
@@ -145,7 +147,7 @@ def test_end_to_end_from_scratch():
     f_grads = [p.grad for p in model.fusion.parameters() if p.requires_grad]
 
     assert all(g is not None for g in vb_grads), "Video backbone missing gradients"
-    assert all(g is not None for g in ab_grads), "Audio MLP backbone missing gradients"
+    assert all(g is not None for g in ab_grads), "Audio backbone missing gradients"
     assert all(g is not None for g in f_grads), "Tournament fusion missing gradients"
 
     optimizer.step()
@@ -158,5 +160,5 @@ if __name__ == "__main__":
     test_gradient_flow_tournament_loss()
     test_end_to_end_from_scratch()
     print("\n" + "=" * 65)
-    print("ALL TOURNAMENT STFT-MLP TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("ALL V2 QUAD-DYNAMICS TESTS PASSED SUCCESSFULLY! (100% READY)")
     print("=" * 65 + "\n")

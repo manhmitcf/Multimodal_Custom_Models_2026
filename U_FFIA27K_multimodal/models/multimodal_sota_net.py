@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Any, Optional
 
-from features.motion_kinematics import FishMotionKinematics7Ch, FishMotionKinematics10Ch
+from features.motion_kinematics import FishMotionKinematics7Ch, FishMotionKinematics8Ch, FishMotionKinematics10Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone, MobileViTVideoBackbone
 from .audio_backbone import AudioMLPBackbone, AudioBackbone, PANNSCNN6AudioBackbone, EfficientATAudioBackbone
@@ -12,22 +12,21 @@ from .multimodal_fusion import GatedBilateralBoundaryFusion, MultimodalBoundaryA
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Bilateral Boundary Network (BBN-4.5M) (~4.54M Total Parameters).
+    Multimodal Bilateral Boundary Network (V2 Quad-Dynamics) (~3.48M Total Parameters).
     Specifically architected to resolve continuous temporal boundary transition ambiguity
     between adjacent fish feeding intensity classes (Strong <-> Medium <-> Weak <-> None):
 
       1. Visual-Kinematic Stream (~2.70M params):
-         7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
-         for T=2 frames.
-      2. Acoustic Time-Frequency Stream (~1.76M params):
-         TKEO Adaptive Pre-Emphasis + Learnable Frequency Attention + PANNS-CNN6-Pro 4-stage 5x5 Conv
-         with Dual Pooling (max+avg).
-      3. Gated Bilateral Boundary Fusion (~0.10M params):
+         8-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega + MHI)
+         for T=4 frames with Quad-Dynamics (Spatial + Velocity + Kinematic Acceleration + Burst).
+      2. Acoustic Time-Frequency Stream (~0.67M params):
+         Dual-Branch Cadence Audio: Tri-Band Spectral MLP with Subband SE Attention
+         + 1D Dilated Temporal Cavitation Cadence Engine (>40 kHz).
+      3. Gated Multimodal Tournament Fusion (~0.11M params):
          - Dynamic Gated Fusion: g = sigma(W[f_V || f_A]).
-         - Bilateral Monotonic CORAL Decision Heads (s_V, b_V & s_A, b_A).
-         - Blended Decision: s_final = g*s_V + (1-g)*s_A with strictly monotonic cutoffs.
+         - Hierarchical Pairwise Cross-Boundary Tournament Head (B12, B23, B13) with margin & audio tie-breaker.
 
-    Total Parameters: ~4.54M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~3.48M (Strictly < 5.0M parameter constraint).
     """
     def __init__(
         self,
@@ -38,8 +37,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
         pretrained_video: bool = False,
         audio_frontend: Optional[AudioFrontend] = None,
         image_size: int = 224,
-        num_frames: int = 2,
-        in_chans: int = 7,
+        num_frames: int = 4,
+        in_chans: int = 8,
         use_frequency_attention: bool = False,
         **kwargs
     ) -> None:
@@ -52,9 +51,13 @@ class MultimodalBoundaryAwareNet(nn.Module):
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
-        self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
+        self.motion_kinematics = (
+            FishMotionKinematics8Ch(image_size=image_size)
+            if in_chans == 8
+            else FishMotionKinematics7Ch(image_size=image_size)
+        )
 
-        # 2. Backbones (~4.46M)
+        # 2. Backbones (~3.37M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
@@ -66,7 +69,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Gated Bilateral Boundary Fusion (~0.14M)
+        # 3. Gated Multimodal Tournament Fusion (~0.11M)
         self.fusion = GatedBilateralBoundaryFusion(
             dim=embed_dim,
             dropout=0.1
@@ -84,18 +87,18 @@ class MultimodalBoundaryAwareNet(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Args:
-            video_input: Raw RGB frames [B, T, 3, H, W] or precomputed 7-ch tensor [B, T, 7, H, W]
-            audio_input: Raw audio waveforms [B, num_samples] or precomputed Log-Mel Spectrogram [B, 1, Ta, 128]
+            video_input: Raw RGB frames [B, T, 3, H, W] or precomputed kinematic tensor [B, T, in_chans, H, W]
+            audio_input: Raw audio waveforms [B, num_samples] or precomputed Log-Mel/STFT [B, 2049] / AudioFrontendOutput
 
         Returns:
             Dictionary containing clipwise_output (logits), probabilities, uncertainties,
-            modality weights, bilateral scores & cutoffs, and continuous intensity scores.
+            modality weights, bilateral tournament scores & cutoffs, and continuous intensity scores.
         """
         # Step 1: Preprocessing & Frontend Extraction
         if video_input.ndim == 5 and video_input.size(2) == 3:
-            frames_7ch, kinematics_summary = self.motion_kinematics(video_input)
+            frames_kinematics, kinematics_summary = self.motion_kinematics(video_input)
         else:
-            frames_7ch = video_input
+            frames_kinematics = video_input
             kinematics_summary = torch.zeros(video_input.size(0), 4, device=video_input.device, dtype=video_input.dtype)
 
         if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
@@ -104,7 +107,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
             stft_feat = audio_input
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
-        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_7ch)
+        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_kinematics)
         f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(stft_feat)
 
         # Auxiliary Unimodal Logits & Probabilities (for standalone evaluation & Phase 1 warmup)

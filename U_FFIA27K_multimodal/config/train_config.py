@@ -29,7 +29,7 @@ class VideoFeaturesConfig(BaseModel):
     """
     image_size: int = Field(default=224, description="Target spatial resolution H=W.")
     num_frames: int = Field(default=4, description="Number of uniform frames sampled per video clip (T=4).")
-    num_channels: int = Field(default=7, description="7-channel representation (RGB + 4 Kinematics: u, v, vorticity, decel).")
+    num_channels: int = Field(default=8, description="8-channel representation (RGB + 5 Kinematics: u, v, |V|, vorticity, MHI).")
 
 
 class AudioFeaturesConfig(BaseModel):
@@ -137,7 +137,7 @@ class TrainConfig(BaseModel):
     min_lr: float = Field(default=1e-6, gt=0, description="Minimum learning rate.")
     lambda_emd: float = Field(default=0.5, ge=0.0, description="Weight for Squared Earth Mover's Distance loss.")
     lambda_align: float = Field(default=0.2, ge=0.0, description="Weight for Cross-Modal Boundary Alignment loss.")
-    num_frames: int = Field(default=2, ge=2, description="Number of frames per video input.")
+    num_frames: int = Field(default=4, ge=2, description="Number of frames per video input.")
     image_size: int = Field(default=224, gt=0, description="Video image spatial resolution.")
     sample_rate: int = Field(default=256000, gt=0, description="Audio sampling rate in Hz.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")

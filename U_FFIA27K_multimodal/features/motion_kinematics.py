@@ -94,17 +94,29 @@ class FishMotionKinematics7Ch(nn.Module):
         omega_flat = torch.tanh((dv_dx - du_dy) * 4.0)  # normalized vorticity
         omega_seq = omega_flat.view(B, T, 1, H, W)
 
-        # Assemble finalized 7 channels:
-        # [R, G, B, u, v, |V|, omega]
-        frames_7ch = torch.cat([
+        # 7. Motion History Image (MHI) across all T frames
+        # Quantifies trajectory and temporal precedence of swimming strikes
+        mhi_acc = torch.zeros(B, 1, H, W, dtype=dtype, device=device)
+        if T >= 2:
+            for k in range(1, T):
+                diff_k = torch.abs(gray_seq[:, k] - gray_seq[:, k - 1])
+                weight_k = float(k) / float(T - 1)
+                motion_k = torch.tanh(diff_k * 4.0) * weight_k
+                mhi_acc = torch.maximum(mhi_acc, motion_k)
+        mhi_seq = mhi_acc.unsqueeze(1).repeat(1, T, 1, 1, 1)  # [B, T, 1, H, W]
+
+        # Assemble finalized 8 channels:
+        # [R, G, B, u, v, |V|, omega, MHI]
+        frames_8ch = torch.cat([
             frames_rgb,   # 3 ch (Spatial appearance, fish clustering, white water foam)
             u_seq,        # 1 ch (Flow horizontal velocity)
             v_seq,        # 1 ch (Flow vertical velocity)
             v_mag_seq,    # 1 ch (Velocity magnitude |V|)
-            omega_seq     # 1 ch (Fluid vorticity / swirling turbulence)
-        ], dim=2)  # [B, T, 7, H, W]
+            omega_seq,    # 1 ch (Fluid vorticity / swirling turbulence)
+            mhi_seq       # 1 ch (Motion History Image trajectory)
+        ], dim=2)  # [B, T, 8, H, W]
 
-        # 7. Kinematics Summary Statistics:
+        # 8. Kinematics Summary Statistics:
         v_mean = v_mag_seq.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
         omega_max = torch.amax(torch.abs(omega_seq), dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
         v_max = torch.amax(v_mag_seq, dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
@@ -115,9 +127,10 @@ class FishMotionKinematics7Ch(nn.Module):
         convergence_flux = active_flux.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
 
         kinematics_summary = torch.cat([v_mean, omega_max, v_max, convergence_flux], dim=-1)  # [B, 4]
-        return frames_7ch, kinematics_summary
+        return frames_8ch, kinematics_summary
 
 
 # Backward compatibility aliases
+FishMotionKinematics8Ch = FishMotionKinematics7Ch
 FishMotionKinematics10Ch = FishMotionKinematics7Ch
 FishMotionKinematics = FishMotionKinematics7Ch

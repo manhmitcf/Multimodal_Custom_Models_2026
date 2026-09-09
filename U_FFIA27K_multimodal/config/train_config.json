@@ -12,7 +12,7 @@
   "use_onecycle": true,
   "warmup_epochs": 20,
   "min_lr": 1e-6,
-  "num_frames": 2,
+  "num_frames": 4,
   "image_size": 224,
   "sample_rate": 256000,
   "cache_mode": "ram",

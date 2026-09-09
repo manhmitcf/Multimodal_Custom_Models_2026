@@ -58,10 +58,10 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
     def __init__(
         self,
         embed_dim: int = 224,
-        in_chans: int = 7,
+        in_chans: int = 8,
         dims: Tuple[int, ...] = (48, 96, 192, 384),
         depths: Tuple[int, ...] = (1, 1, 3, 1),
-        num_frames: int = 2,
+        num_frames: int = 4,
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
@@ -118,23 +118,23 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         return x
 
     def forward(
-        self, frames_7ch: torch.Tensor
+        self, frames_8ch: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
-            frames_7ch: [B, T, 7, H, W] tensor (T=2)
+            frames_8ch: [B, T, 8, H, W] tensor (T=4 default)
 
         Returns:
             f_video: Joint spatiotemporal video embedding [B, embed_dim]
             f_spatial: Pure spatial visual appearance feature [B, embed_dim]
-            f_motion: Motion dynamics feature between frames [B, embed_dim]
+            f_motion: Combined velocity + acceleration motion feature [B, embed_dim]
             f_burst_v: Peak-to-Average dynamic contrast [B, embed_dim]
             tokens_video: Sequence of frame tokens [B, T, embed_dim]
         """
-        B, T, C, H, W = frames_7ch.shape
+        B, T, C, H, W = frames_8ch.shape
 
-        # Process all T frames: [B * T, 7, H, W] -> [B * T, embed_dim]
-        flat_frames = frames_7ch.reshape(B * T, C, H, W)
+        # Process all T frames: [B * T, 8, H, W] -> [B * T, embed_dim]
+        flat_frames = frames_8ch.reshape(B * T, C, H, W)
         flat_tokens = self.forward_features(flat_frames)  # [B * T, embed_dim]
 
         # Reshape to temporal sequence of frame tokens: [B, T, embed_dim]
@@ -143,23 +143,31 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         # 1. Pure Spatial feature from the final frame (appearance of fish & water surface)
         f_spatial = tokens_video[:, -1]  # [B, embed_dim]
 
-        # 2. Inter-frame motion dynamics
+        # 2. Inter-frame velocity dynamics (Order 1 discrete derivative)
         if T >= 2:
-            f_motion = torch.abs(tokens_video[:, 1] - tokens_video[:, 0])  # [B, embed_dim]
+            f_vel = torch.abs(tokens_video[:, 1:] - tokens_video[:, :-1]).mean(dim=1)  # [B, embed_dim]
         else:
-            f_motion = tokens_video[:, 0]
+            f_vel = torch.zeros_like(f_spatial)
 
-        # 3. Peak-to-Average Dynamic Contrast (Burst feeding strike intensity)
+        # 3. Kinematic Acceleration dynamics (Order 2 discrete derivative)
+        if T >= 3:
+            f_acc = torch.abs(tokens_video[:, 2:] - 2.0 * tokens_video[:, 1:-1] + tokens_video[:, :-2]).mean(dim=1)  # [B, embed_dim]
+        else:
+            f_acc = torch.zeros_like(f_spatial)
+
+        # 4. Peak-to-Average Dynamic Contrast (Burst feeding strike intensity)
         f_mean_v = tokens_video.mean(dim=1)
         f_peak_v, _ = torch.max(tokens_video, dim=1)
         f_burst_v = f_peak_v - f_mean_v  # [B, embed_dim]
 
-        # 4. Joint Spatiotemporal Video Embedding
-        f_video = self.norm_video(f_spatial + f_motion + f_burst_v)  # [B, embed_dim]
+        # 5. Combined motion and joint spatiotemporal video embedding
+        f_motion = f_vel + f_acc
+        f_video = self.norm_video(f_spatial + f_vel + f_acc + f_burst_v)  # [B, embed_dim]
 
         return f_video, f_spatial, f_motion, f_burst_v, tokens_video
 
 
 # Backward compatibility alias
+ConvNeXtNanoVideoBackbone8Ch = ConvNeXtNanoVideoBackbone
 MobileViTVideoBackbone = ConvNeXtNanoVideoBackbone
 VideoBackbone = ConvNeXtNanoVideoBackbone

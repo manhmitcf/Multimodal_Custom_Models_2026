@@ -18,11 +18,51 @@ from config.train_config import AudioFeaturesConfig
 logger = logging.getLogger(__name__)
 
 
+class AudioFrontendOutput(dict):
+    """
+    Dual representation output for High-Resolution Audio:
+      - spec_vector: Normalized STFT spectral vector [B, 2049]
+      - temporal_energy: Ultrasonic cavitation energy envelope (>40kHz) [B, 1, Time_Steps]
+    Supports both dict indexing and transparent tensor attributes (.shape, .ndim, .size, .to)
+    for seamless backward compatibility with existing tests and trainers.
+    """
+    def __init__(self, spec_vector: torch.Tensor, temporal_energy: torch.Tensor) -> None:
+        super().__init__()
+        self["spec_vector"] = spec_vector
+        self["temporal_energy"] = temporal_energy
+        self.spec_vector = spec_vector
+        self.temporal_energy = temporal_energy
+
+    @property
+    def shape(self):
+        return self.spec_vector.shape
+
+    @property
+    def ndim(self):
+        return self.spec_vector.ndim
+
+    @property
+    def device(self):
+        return self.spec_vector.device
+
+    @property
+    def dtype(self):
+        return self.spec_vector.dtype
+
+    def size(self, *args, **kwargs):
+        return self.spec_vector.size(*args, **kwargs)
+
+    def to(self, *args, **kwargs):
+        spec_to = self.spec_vector.to(*args, **kwargs)
+        temp_to = self.temporal_energy.to(*args, **kwargs)
+        return AudioFrontendOutput(spec_to, temp_to)
+
+
 class AudioFrontend(nn.Module):
     """
     GPU-based High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 frequency bins).
     Applies Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis, cuFFT RFFT,
-    Log Magnitude, and Temporal Mean Pooling to extract a 2049-dimensional spectral vector.
+    Log Magnitude, and Dual Representation Extraction (Spectral Vector + Cavitation Pulse Dynamics).
     """
     def __init__(self, config: Optional[AudioFeaturesConfig] = None) -> None:
         super().__init__()
@@ -55,13 +95,13 @@ class AudioFrontend(nn.Module):
         logger.info(f"  - SpecAugment:        DISABLED (Pure Log-Magnitude)")
         logger.info("==================================================")
 
-    def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_tensor: torch.Tensor) -> AudioFrontendOutput:
         """
         Args:
             input_tensor: Raw 1D audio waveform [Batch, Num_Samples].
 
         Returns:
-            torch.Tensor: Normalized STFT spectral vector [Batch, 2049].
+            AudioFrontendOutput: Container with spec_vector [B, 2049] and temporal_energy [B, 1, T].
         """
         if input_tensor.ndim == 1:
             input_tensor = input_tensor.unsqueeze(0)
@@ -102,8 +142,10 @@ class AudioFrontend(nn.Module):
 
         # 6. Mean over time axis -> [Batch, 2049]
         spec_vector = log_mag.mean(dim=1)
-
-        # 7. Layer Normalization
         out = self.norm(spec_vector)
 
-        return out
+        # 7. Ultrasonic Cavitation Temporal Energy Envelope (>40 kHz) -> [Batch, 1, Time_Steps]
+        # At 256 kHz, 2049 bins span 0..128 kHz -> bin 640 corresponds to 40 kHz
+        ultra_energy = log_mag[:, :, 640:].mean(dim=-1, keepdim=True).transpose(1, 2)
+
+        return AudioFrontendOutput(spec_vector=out, temporal_energy=ultra_energy)
