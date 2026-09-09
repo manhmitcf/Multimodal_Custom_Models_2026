@@ -62,7 +62,7 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
         audio_frontend=frontend,
         image_size=config.image_size,
         num_frames=config.num_frames,
-        in_chans=getattr(config.video_features, "num_channels", 7),
+        in_chans=getattr(config.video_features, "num_channels", 8),
         use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
     )
 
