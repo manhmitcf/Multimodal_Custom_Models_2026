@@ -62,7 +62,8 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             nn.LayerNorm(112),
             nn.Linear(112, 1)
         )
-        self.gamma_23 = nn.Parameter(torch.tensor(0.5))
+        self.gamma_23 = nn.Parameter(torch.tensor(0.25))
+        self.margin_b23 = nn.Parameter(torch.tensor(0.20))
 
         # B13: Weak vs Strong (Direct cross-boundary anchor protection)
         self.head_b13 = nn.Sequential(
@@ -84,14 +85,14 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         logit_12 = self.head_b12(f).squeeze(-1)            # [B] (Positive -> Weak, Negative -> Medium)
         logit_13 = self.head_b13(f).squeeze(-1)            # [B] (Positive -> Weak, Negative -> Strong)
 
-        # B23 Base proposal on f_joint + Audio STFT Tie-Breaker
+        # B23 Base proposal on f_joint + Learned Margin Bias + Audio STFT Tie-Breaker
         logit_23_base = self.head_b23(f).squeeze(-1)       # [B] (Positive -> Medium, Negative -> Strong)
         if f_audio is not None:
             logit_23_a = self.head_b23_a(f_audio).squeeze(-1)
             u_tie_23 = torch.exp(-torch.abs(logit_23_base))  # peaks when base proposal is indecisive
-            logit_23 = logit_23_base + self.gamma_23 * u_tie_23 * logit_23_a
+            logit_23 = logit_23_base + self.margin_b23 + self.gamma_23 * u_tie_23 * logit_23_a
         else:
-            logit_23 = logit_23_base
+            logit_23 = logit_23_base + self.margin_b23
             logit_23_a = logit_23_base
             u_tie_23 = torch.zeros_like(logit_23_base)
 
@@ -158,6 +159,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             "u_tie": u_tie_23,
             "gamma_23": self.gamma_23,
             "gamma": self.gamma_23,
+            "margin_b23": self.margin_b23,
             "logit_13": logit_13,
             "p_w_over_m": p_w_over_m,
             "p_m_over_s": p_m_over_s,

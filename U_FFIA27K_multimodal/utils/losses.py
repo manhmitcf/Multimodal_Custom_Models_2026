@@ -100,11 +100,12 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             loss_12 = torch.tensor(0.0, device=targets.device)
 
-        # B23: Medium (2) vs Strong (1)
+        # B23: Medium (2) vs Strong (1) - Asymmetric BCE protecting Medium
         mask_23 = (y_raw == 2) | (y_raw == 1)
         if mask_23.sum() > 0 and logit_23 is not None:
             target_23 = (y_raw[mask_23] == 2).float()  # 1.0 if Medium, 0.0 if Strong
-            loss_23 = F.binary_cross_entropy_with_logits(logit_23[mask_23], target_23)
+            pos_weight_23 = torch.tensor(1.25, device=targets.device)
+            loss_23 = F.binary_cross_entropy_with_logits(logit_23[mask_23], target_23, pos_weight=pos_weight_23)
         else:
             loss_23 = torch.tensor(0.0, device=targets.device)
 
@@ -116,8 +117,8 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             loss_13 = torch.tensor(0.0, device=targets.device)
 
-        # Dual-border Medium supervision (0.4 on B12, 0.4 on B23) + B13 anchor protection (0.2)
-        loss_pairwise = 0.4 * loss_12 + 0.4 * loss_23 + 0.2 * loss_13
+        # Focused Medium-Strong supervision (0.30 on B12, 0.50 on B23, 0.20 on B13 anchor)
+        loss_pairwise = 0.30 * loss_12 + 0.50 * loss_23 + 0.20 * loss_13
 
 
 
