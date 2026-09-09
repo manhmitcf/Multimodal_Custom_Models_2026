@@ -141,7 +141,7 @@ class TrainConfig(BaseModel):
     image_size: int = Field(default=224, gt=0, description="Video image spatial resolution.")
     sample_rate: int = Field(default=256000, gt=0, description="Audio sampling rate in Hz.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
-    dataloader_workers: int = Field(default=-1, description="Number of worker processes for DataLoader (-1 = auto).")
+    dataloader_workers: int = Field(default=5, description="Number of worker processes for DataLoader (-1 = auto).")
     prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
     save_best_only: bool = Field(default=True, description="Save only the best checkpoint.")
     loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament', 'ordinal_wasserstein' or 'clip_ce'.")

@@ -121,7 +121,7 @@ class FishMultimodalDataLoader:
     def __init__(
         self,
         batch_size: int = 32,
-        dataloader_workers: int = -1,
+        dataloader_workers: int = 5,
         prefetch_factor: Optional[int] = None,
         cache_mode: str = "ram",
         image_size: int = 224,
