@@ -37,7 +37,7 @@
     "pretrained_video": false
   },
   "video_features": {
-    "num_channels": 10,
+    "num_channels": 9,
     "num_frames": 2,
     "image_size": 224
   },

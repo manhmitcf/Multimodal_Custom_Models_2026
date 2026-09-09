@@ -26,7 +26,7 @@ def test_parameter_budget():
     f_params = sum(p.numel() for p in model.fusion.parameters())
 
     print(f"Total Model Parameters:               {total_params:,}")
-    print(f"  - Video Backbone (ConvNeXt-Nano 10ch): {v_params:,}")
+    print(f"  - Video Backbone (ConvNeXt-Nano 9ch):  {v_params:,}")
     print(f"  - Audio Backbone (STFT-MLP 2049):      {a_params:,}")
     print(f"  - Pairwise Tournament Fusion:          {f_params:,}")
 

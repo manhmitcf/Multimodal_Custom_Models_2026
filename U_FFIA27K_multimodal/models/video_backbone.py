@@ -40,25 +40,19 @@ class ConvNeXtBlock(nn.Module):
 
 class ConvNeXtNanoVideoBackbone(nn.Module):
     """
-    Streamlined ConvNeXt-Nano Video Backbone tailored for 7-channel kinematic inputs across T=2 frames.
+    Streamlined ConvNeXt-Nano Video Backbone tailored for 9-channel kinematic inputs across T=2 frames.
     Channels:
       - 0, 1, 2: Spatial RGB appearance
       - 3, 4:    Optical Flow (u, v) swimming velocity
       - 5:       Velocity Magnitude |V| = sqrt(u^2 + v^2)
       - 6:       Fluid Vorticity omega = dv/dx - du/dy
-
-    Architecture:
-      - Stem: Conv 4x4 (7 -> 48) + LayerNorm
-      - Stage 1: 48ch  x 1 block
-      - Stage 2: 96ch  x 1 block
-      - Stage 3: 192ch x 3 blocks
-      - Stage 4: 384ch x 1 block
-      - Total parameters: ~2.70M params.
+      - 7:       Temporal Frame Difference dI = |I2 - I1|
+      - 8:       Convective Acceleration |a_conv| = sqrt(ax^2 + ay^2)
     """
     def __init__(
         self,
         embed_dim: int = 224,
-        in_chans: int = 10,
+        in_chans: int = 9,
         dims: Tuple[int, ...] = (48, 96, 192, 384),
         depths: Tuple[int, ...] = (1, 1, 3, 1),
         num_frames: int = 2,
