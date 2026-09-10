@@ -91,7 +91,7 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
         # 1. Parameter audit
         stats = count_parameters(model)
         logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (Penta-Band + Cadence)     : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Audio Backbone (Dual-Axis 1D ConvNet)     : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
         logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
         logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
         logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")

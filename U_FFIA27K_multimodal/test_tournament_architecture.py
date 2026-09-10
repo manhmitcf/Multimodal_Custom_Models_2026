@@ -27,7 +27,7 @@ def test_parameter_budget():
 
     print(f"Total Model Parameters:                 {total_params:,}")
     print(f"  - Video Backbone (ConvNeXt-Nano 7ch):   {v_params:,}")
-    print(f"  - Audio Backbone (Penta-Band + Cadence):{a_params:,}")
+    print(f"  - Audio Backbone (Dual-Axis 1D Conv):   {a_params:,}")
     print(f"  - Pairwise Tournament Fusion:           {f_params:,}")
 
     strict_limit = 5000000
@@ -152,28 +152,28 @@ def test_end_to_end_from_scratch():
     print(f"[PASSED] End-to-End Single Phase: All {len(list(model.parameters()))} param tensors updated simultaneously!")
 
 
-def test_penta_band_cadence_engine():
+def test_dual_axis_convnet_engine():
     print("\n" + "=" * 65)
-    print("TEST 5: PENTA-BAND SPECTRAL & 5-TRACK TEMPORAL CADENCE ENGINE")
+    print("TEST 5: FACTORIZED DUAL-AXIS 1D CONVNET AUDIO ENGINE")
     print("=" * 65)
 
     from features.audio_frontend import AudioFrontend, AudioFrontendOutput
-    from models.audio_backbone import DualBranchCadenceAudioBackbone, PentaBandSpectralMLP, MultiTrackTemporalCadenceEngine
+    from models.audio_backbone import FactorizedDualAxisAudioBackbone, SpectralAxis1DConvEngine, TemporalAxis1DConvEngine
 
     frontend = AudioFrontend()
-    backbone = DualBranchCadenceAudioBackbone(embed_dim=224, num_tokens=2)
+    backbone = FactorizedDualAxisAudioBackbone(embed_dim=224, num_tokens=2)
 
     B = 2
     raw_audio = torch.randn(B, 512000)  # 2.0s @ 256 kHz
 
     out_frontend = frontend(raw_audio)
     assert isinstance(out_frontend, AudioFrontendOutput), "Frontend must return AudioFrontendOutput"
+    assert out_frontend.spectrogram.shape == (B, 1, 251, 2049), f"Expected spectrogram [B, 1, 251, 2049], got {out_frontend.spectrogram.shape}"
     assert out_frontend.spec_vector.shape == (B, 2049), f"Expected spec_vector [B, 2049], got {out_frontend.spec_vector.shape}"
-    assert out_frontend.temporal_energy.shape[0] == B and out_frontend.temporal_energy.shape[1] == 5, f"Expected temporal_energy [B, 5, T], got {out_frontend.temporal_energy.shape}"
 
     print(f"Frontend outputs:")
+    print(f"  - spectrogram shape:    {list(out_frontend.spectrogram.shape)}")
     print(f"  - spec_vector shape:    {list(out_frontend.spec_vector.shape)}")
-    print(f"  - temporal_energy shape:{list(out_frontend.temporal_energy.shape)}")
 
     f_audio, f_freq, f_rhythm, f_burst_a, tokens_audio = backbone(out_frontend)
 
@@ -183,14 +183,14 @@ def test_penta_band_cadence_engine():
     assert f_burst_a.shape == (B, 224), f"Expected f_burst_a [B, 224], got {f_burst_a.shape}"
     assert tokens_audio.shape == (B, 2, 224), f"Expected tokens_audio [B, 2, 224], got {tokens_audio.shape}"
 
-    # Also test backward pass on audio backbone alone
+    # Test backward pass on audio backbone alone
     loss = (f_audio.sum() + f_freq.sum() + f_rhythm.sum() + f_burst_a.sum())
     loss.backward()
 
     for name, param in backbone.named_parameters():
         assert param.grad is not None, f"Backbone param {name} did not receive gradient"
 
-    print(f"[PASSED] Penta-Band Spectral + 5-Track Cadence Engine forward & backward verified!")
+    print(f"[PASSED] Factorized Dual-Axis 1D ConvNet forward & backward verified!")
 
 
 if __name__ == "__main__":
@@ -198,7 +198,7 @@ if __name__ == "__main__":
     test_tournament_forward_and_pairwise()
     test_gradient_flow_tournament_loss()
     test_end_to_end_from_scratch()
-    test_penta_band_cadence_engine()
+    test_dual_axis_convnet_engine()
     print("\n" + "=" * 65)
-    print("ALL PENTABAND CADENCE TOURNAMENT TESTS PASSED! (100% READY)")
+    print("ALL FACTORIZED DUAL-AXIS CONV1D TOURNAMENT TESTS PASSED! (100% READY)")
     print("=" * 65 + "\n")

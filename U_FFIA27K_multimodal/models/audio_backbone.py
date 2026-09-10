@@ -311,12 +311,151 @@ class MultiTrackTemporalCadenceEngine(nn.Module):
         return f_rhythm, f_burst_a, tokens_audio
 
 
-class DualBranchCadenceAudioBackbone(nn.Module):
+class SpectralAxis1DConvEngine(nn.Module):
     """
-    Dual-Branch Cadence Audio Backbone (~0.61M params).
-    Combines:
-      - Branch 1: Penta-Band Spectral MLP (~0.54M params) on 2049-bin STFT
-      - Branch 2: 5-Track 1D Dilated Temporal Cadence Engine (~0.065M params)
+    Stage 1: Spectral-Axis 1D Convolutions (~0.056M params).
+    Convolves along the frequency axis (F=2049) across each time frame (T=251):
+      - F1: Conv2d(1 -> 32, k=(1, 15), s=(1, 4), p=(0, 7), bias=False) + BN2d + GELU (F: 2049 -> 513)
+      - F2: Conv2d(32 -> 64, k=(1, 7), s=(1, 4), p=(0, 3), bias=False) + BN2d + GELU (F: 513 -> 129)
+      - F3: Conv2d(64 -> 128, k=(1, 5), s=(1, 4), p=(0, 2), bias=False) + BN2d + GELU (F: 129 -> 33)
+      - Spectral Adaptive MaxPool: AdaptiveMaxPool2d((None, 1)) -> squeezes F -> [B, 128, T=251]
+      - Global frequency projection: Linear(128 -> embed_dim) -> f_frequency [B, 224]
+    """
+    def __init__(self, embed_dim: int = 224) -> None:
+        super().__init__()
+        self.embed_dim = embed_dim
+
+        self.conv_f1 = nn.Conv2d(1, 32, kernel_size=(1, 15), stride=(1, 4), padding=(0, 7), bias=False)
+        self.bn_f1 = nn.BatchNorm2d(32)
+        self.act_f1 = nn.GELU()
+
+        self.conv_f2 = nn.Conv2d(32, 64, kernel_size=(1, 7), stride=(1, 4), padding=(0, 3), bias=False)
+        self.bn_f2 = nn.BatchNorm2d(64)
+        self.act_f2 = nn.GELU()
+
+        self.conv_f3 = nn.Conv2d(64, 128, kernel_size=(1, 5), stride=(1, 4), padding=(0, 2), bias=False)
+        self.bn_f3 = nn.BatchNorm2d(128)
+        self.act_f3 = nn.GELU()
+
+        self.pool_f = nn.AdaptiveMaxPool2d((None, 1))
+        self.proj_freq = nn.Sequential(
+            nn.Linear(128, embed_dim),
+            nn.LayerNorm(embed_dim)
+        )
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for conv in [self.conv_f1, self.conv_f2, self.conv_f3]:
+            init_layer(conv)
+        for bn in [self.bn_f1, self.bn_f2, self.bn_f3]:
+            init_bn(bn)
+        for layer in self.proj_freq:
+            if isinstance(layer, nn.Linear):
+                init_layer(layer)
+
+    def forward(self, x_spec: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            x_spec: Spectrogram [B, 1, T, F=2049]
+        Returns:
+            temporal_seq: Feature tensor across time [B, 128, T]
+            f_frequency: Spectral frequency embedding [B, embed_dim]
+        """
+        x = self.act_f1(self.bn_f1(self.conv_f1(x_spec)))
+        x = self.act_f2(self.bn_f2(self.conv_f2(x)))
+        x = self.act_f3(self.bn_f3(self.conv_f3(x)))  # [B, 128, T, 33]
+
+        # Global frequency feature: pool over both time and frequency
+        f_freq_raw = x.mean(dim=[2, 3])  # [B, 128]
+        f_frequency = self.proj_freq(f_freq_raw)  # [B, embed_dim]
+
+        # Pool over frequency axis to form temporal feature sequence
+        x_pooled_f = self.pool_f(x)  # [B, 128, T, 1]
+        temporal_seq = x_pooled_f.squeeze(-1)  # [B, 128, T]
+
+        return temporal_seq, f_frequency
+
+
+class TemporalAxis1DConvEngine(nn.Module):
+    """
+    Stage 2: Temporal-Axis 1D Convolutions (~0.181M params).
+    Convolves along the time axis (T=251) across 128 spectral channels:
+      - T1: Conv1d(128 -> 128, k=5, s=2, p=2, bias=False) + BN1d + GELU (T: 251 -> 126)
+      - T2: Dilated Conv1d(128 -> 128, k=3, s=2, p=2, dilation=2, bias=False) + BN1d + GELU (T: 126 -> 63)
+      - T3: Conv1d(128 -> 128, k=3, s=1, p=1, bias=False) + BN1d + GELU (T: 63 -> 63)
+      - Global Pooling -> f_rhythm [B, embed_dim]
+      - Token Pooling -> tokens_audio [B, num_tokens, embed_dim]
+      - Dynamic Contrast -> f_burst_a [B, embed_dim]
+    """
+    def __init__(self, embed_dim: int = 224, num_tokens: int = 2) -> None:
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_tokens = num_tokens
+
+        self.conv_t1 = nn.Conv1d(128, 128, kernel_size=5, stride=2, padding=2, bias=False)
+        self.bn_t1 = nn.BatchNorm1d(128)
+        self.act_t1 = nn.GELU()
+
+        self.conv_t2 = nn.Conv1d(128, 128, kernel_size=3, stride=2, padding=2, dilation=2, bias=False)
+        self.bn_t2 = nn.BatchNorm1d(128)
+        self.act_t2 = nn.GELU()
+
+        self.conv_t3 = nn.Conv1d(128, 128, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn_t3 = nn.BatchNorm1d(128)
+        self.act_t3 = nn.GELU()
+
+        self.proj_rhythm = nn.Sequential(
+            nn.Linear(128, embed_dim),
+            nn.LayerNorm(embed_dim)
+        )
+        self.proj_tokens = nn.Sequential(
+            nn.Linear(128, embed_dim),
+            nn.LayerNorm(embed_dim)
+        )
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for conv in [self.conv_t1, self.conv_t2, self.conv_t3]:
+            init_layer(conv)
+        for bn in [self.bn_t1, self.bn_t2, self.bn_t3]:
+            init_bn(bn)
+        for proj in [self.proj_rhythm, self.proj_tokens]:
+            for layer in proj:
+                if isinstance(layer, nn.Linear):
+                    init_layer(layer)
+
+    def forward(self, temporal_seq: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if temporal_seq.size(-1) < 5:
+            temporal_seq = F.pad(temporal_seq, (0, 5 - temporal_seq.size(-1)))
+
+        x = self.act_t1(self.bn_t1(self.conv_t1(temporal_seq)))
+        x = self.act_t2(self.bn_t2(self.conv_t2(x)))
+        x_cadence = self.act_t3(self.bn_t3(self.conv_t3(x)))  # [B, 128, T']
+
+        # 1. Global rhythm pooling
+        x_avg = x_cadence.mean(dim=-1)  # [B, 128]
+        f_rhythm = self.proj_rhythm(x_avg)  # [B, embed_dim]
+
+        # 2. Token pooling for multimodal alignment
+        x_tokens = F.adaptive_avg_pool1d(x_cadence, self.num_tokens)  # [B, 128, num_tokens]
+        tokens_audio = self.proj_tokens(x_tokens.transpose(1, 2))  # [B, num_tokens, embed_dim]
+
+        # 3. Dynamic contrast acoustic burst: peak token minus mean token
+        f_peak_a, _ = torch.max(tokens_audio, dim=1)  # [B, embed_dim]
+        f_mean_a = tokens_audio.mean(dim=1)           # [B, embed_dim]
+        f_burst_a = f_peak_a - f_mean_a               # [B, embed_dim]
+
+        return f_rhythm, f_burst_a, tokens_audio
+
+
+class FactorizedDualAxisAudioBackbone(nn.Module):
+    """
+    Factorized Dual-Axis 1D ConvNet Audio Backbone (~0.295M params).
+    Directly processes full 2D Spectrogram [B, 1, T=251, F=2049]:
+      - Stage 1: SpectralAxis1DConvEngine: Convolves along frequency axis (2049 -> 1) -> [B, 128, 251]
+      - Stage 2: TemporalAxis1DConvEngine: Dilated Conv1d along time axis (251 -> 63) -> f_rhythm, f_burst_a
       - Joint Acoustic Embedding: LayerNorm(f_frequency + f_rhythm + f_burst_a)
     """
     def __init__(
@@ -330,8 +469,8 @@ class DualBranchCadenceAudioBackbone(nn.Module):
         self.embed_dim = embed_dim
         self.num_tokens = num_tokens
 
-        self.spectral_branch = PentaBandSpectralMLP(embed_dim=embed_dim, dropout=dropout)
-        self.temporal_branch = MultiTrackTemporalCadenceEngine(embed_dim=embed_dim, num_tokens=num_tokens)
+        self.spectral_engine = SpectralAxis1DConvEngine(embed_dim=embed_dim)
+        self.temporal_engine = TemporalAxis1DConvEngine(embed_dim=embed_dim, num_tokens=num_tokens)
         self.norm_audio = nn.LayerNorm(embed_dim)
 
     def forward(
@@ -339,8 +478,7 @@ class DualBranchCadenceAudioBackbone(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
-            x: AudioFrontendOutput, dict with keys 'spec_vector' and 'temporal_energy',
-               tuple (spec_vector, temporal_energy), or raw STFT tensor [B, 2049].
+            x: AudioFrontendOutput, dict with keys 'spectrogram', tuple, or raw tensor.
 
         Returns:
             f_audio: Joint acoustic embedding [B, embed_dim]
@@ -350,31 +488,49 @@ class DualBranchCadenceAudioBackbone(nn.Module):
             tokens_audio: Sequence of audio tokens [B, num_tokens, embed_dim]
         """
         if isinstance(x, dict):
-            spec_vector = x["spec_vector"]
-            temporal_energy = x.get("temporal_energy", None)
+            if "spectrogram" in x and x["spectrogram"] is not None:
+                x_spec = x["spectrogram"]
+            elif "spec_vector" in x:
+                sv = x["spec_vector"]
+                x_spec = sv.unsqueeze(1).unsqueeze(1)
+            else:
+                raise KeyError(f"Audio dict missing 'spectrogram' or 'spec_vector': {list(x.keys())}")
         elif isinstance(x, (tuple, list)):
-            spec_vector = x[0]
-            temporal_energy = x[1] if len(x) > 1 else None
+            x_spec = x[0]
+            if x_spec.ndim == 2:
+                x_spec = x_spec.unsqueeze(1).unsqueeze(1)
         elif isinstance(x, torch.Tensor):
-            spec_vector = x
-            temporal_energy = None
+            if x.ndim == 4:
+                x_spec = x
+            elif x.ndim == 3:
+                x_spec = x.unsqueeze(1)
+            elif x.ndim == 2:
+                x_spec = x.unsqueeze(1).unsqueeze(1)
+            else:
+                x_spec = x.view(x.size(0), 1, 1, -1)
         else:
             raise TypeError(f"Unsupported audio input type: {type(x)}")
 
-        f_frequency = self.spectral_branch(spec_vector)
-        f_rhythm, f_burst_a, tokens_audio = self.temporal_branch(
-            temporal_energy=temporal_energy,
-            batch_size=spec_vector.size(0),
-            device=spec_vector.device,
-            dtype=spec_vector.dtype
-        )
+        # Ensure correct frequency dimension (2049)
+        if x_spec.size(-1) > 2049:
+            x_spec = x_spec[:, :, :, :2049]
+        elif x_spec.size(-1) < 2049:
+            x_spec = F.pad(x_spec, (0, 2049 - x_spec.size(-1)))
+
+        # Ensure at least 1 time step
+        if x_spec.size(2) < 1:
+            x_spec = x_spec.repeat(1, 1, 251, 1)
+
+        temporal_seq, f_frequency = self.spectral_engine(x_spec)
+        f_rhythm, f_burst_a, tokens_audio = self.temporal_engine(temporal_seq)
 
         f_audio = self.norm_audio(f_frequency + f_rhythm + f_burst_a)
 
         return f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio
 
 
-# Default AudioBackbone uses DualBranchCadenceAudioBackbone
-AudioBackbone = DualBranchCadenceAudioBackbone
-AudioMLPBackbone = DualBranchCadenceAudioBackbone
-EfficientATAudioBackbone = DualBranchCadenceAudioBackbone
+# Default AudioBackbone uses FactorizedDualAxisAudioBackbone
+AudioBackbone = FactorizedDualAxisAudioBackbone
+AudioMLPBackbone = FactorizedDualAxisAudioBackbone
+EfficientATAudioBackbone = FactorizedDualAxisAudioBackbone
+DualBranchCadenceAudioBackbone = FactorizedDualAxisAudioBackbone
