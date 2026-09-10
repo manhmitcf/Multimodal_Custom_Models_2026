@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Any, Optional
 
-from features.motion_kinematics import FishMotionKinematics9Ch, FishMotionKinematics10Ch
+from features.motion_kinematics import FishMotionKinematics8Ch, FishMotionKinematics9Ch, FishMotionKinematics10Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone, MobileViTVideoBackbone
 from .audio_backbone import AudioMLPBackbone, AudioBackbone, PANNSCNN6AudioBackbone, EfficientATAudioBackbone
@@ -17,7 +17,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
     between adjacent fish feeding intensity classes (Strong <-> Medium <-> Weak <-> None):
 
       1. Visual-Kinematic Stream (~2.70M params):
-         9-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega + dI + a_conv)
+         8-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega + a_conv)
          for T=2 frames.
       2. Acoustic Time-Frequency Stream (~1.76M params):
          TKEO Adaptive Pre-Emphasis + Learnable Frequency Attention + PANNS-CNN6-Pro 4-stage 5x5 Conv
@@ -39,7 +39,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         audio_frontend: Optional[AudioFrontend] = None,
         image_size: int = 224,
         num_frames: int = 2,
-        in_chans: int = 9,
+        in_chans: int = 8,
         use_frequency_attention: bool = False,
         **kwargs
     ) -> None:
@@ -52,7 +52,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
-        self.motion_kinematics = FishMotionKinematics9Ch(image_size=image_size)
+        self.motion_kinematics = FishMotionKinematics8Ch(image_size=image_size)
 
         # 2. Backbones (~4.46M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
@@ -93,9 +93,9 @@ class MultimodalBoundaryAwareNet(nn.Module):
         """
         # Step 1: Preprocessing & Frontend Extraction
         if video_input.ndim == 5 and video_input.size(2) == 3:
-            frames_9ch, kinematics_summary = self.motion_kinematics(video_input)
+            frames_8ch, kinematics_summary = self.motion_kinematics(video_input)
         else:
-            frames_9ch = video_input
+            frames_8ch = video_input
             kinematics_summary = torch.zeros(video_input.size(0), 4, device=video_input.device, dtype=video_input.dtype)
 
         if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
@@ -104,7 +104,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
             stft_feat = audio_input
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
-        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_9ch)
+        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_8ch)
         f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(stft_feat)
 
         # Auxiliary Unimodal Logits & Probabilities (for standalone evaluation & Phase 1 warmup)

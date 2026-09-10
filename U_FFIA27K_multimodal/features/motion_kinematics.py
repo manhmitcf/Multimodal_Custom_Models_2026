@@ -4,20 +4,19 @@ import torch.nn.functional as F
 from typing import Tuple
 
 
-class FishMotionKinematics9Ch(nn.Module):
+class FishMotionKinematics8Ch(nn.Module):
     """
-    Differentiable 9-Channel Kinematics Extractor for Fish Feeding Intensity Assessment (T=2 frames):
+    Differentiable 8-Channel Kinematics Extractor for Fish Feeding Intensity Assessment (T=2 frames):
       - Channels 0-2 : Spatial RGB visual appearance (fish density, white water foam, surface pellets)
       - Channels 3-4 : Dense Optical Flow (u, v) representing horizontal and vertical swimming velocities
       - Channel 5    : Velocity Magnitude |V| = sqrt(u^2 + v^2) (absolute swimming kinetic intensity)
       - Channel 6    : Fluid Vorticity omega = dv/dx - du/dy (swirling vortex turbulence from feeding strike)
-      - Channel 7    : Temporal Frame Difference dI = |I2 - I1| (instantaneous high-frequency motion residual)
-      - Channel 8    : Convective Acceleration |a_conv| = sqrt(ax^2 + ay^2) (centripetal/burst acceleration field)
+      - Channel 7    : Convective Acceleration |a_conv| = sqrt(ax^2 + ay^2) (centripetal/burst acceleration field)
 
     Input:
         frames_rgb: [B, T, 3, H, W] (T=2)
     Output:
-        frames_9ch: [B, T, 9, H, W]
+        frames_8ch: [B, T, 8, H, W]
         kinematics_summary: [B, 4] summary statistics [v_mean, omega_max, v_max, convergence_flux]
     """
     def __init__(self, image_size: int = 224) -> None:
@@ -100,10 +99,7 @@ class FishMotionKinematics9Ch(nn.Module):
         omega_flat = torch.tanh((dv_dx - du_dy) * 4.0)
         omega_seq = omega_flat.view(B, T, 1, H, W)
 
-        # 7. Temporal Frame Difference dI = |I2 - I1| in [0, 1] (formerly ch 8)
-        di_seq = torch.tanh(torch.abs(it_seq) * 4.0)  # [B, T, 1, H, W]
-
-        # 8. Convective Acceleration |a_conv| = sqrt(ax^2 + ay^2) in [0, 1] (formerly ch 9)
+        # 7. Convective Acceleration |a_conv| = sqrt(ax^2 + ay^2) in [0, 1]
         # ax = u*(du/dx) + v*(du/dy), ay = u*(dv/dx) + v*(dv/dy)
         ax_flat = u_flat * du_dx + v_flat * du_dy
         ay_flat = u_flat * dv_dx + v_flat * dv_dy
@@ -111,17 +107,16 @@ class FishMotionKinematics9Ch(nn.Module):
         acc_flat = torch.tanh(a_mag_flat * 4.0)
         acc_seq = acc_flat.view(B, T, 1, H, W)
 
-        # Assemble finalized 9 channels:
-        # [R, G, B, u, v, |V|, omega, dI, acc]
-        frames_9ch = torch.cat([
+        # Assemble finalized 8 channels:
+        # [R, G, B, u, v, |V|, omega, acc]
+        frames_8ch = torch.cat([
             frames_rgb,   # 3 ch (Spatial appearance, fish clustering, white water foam)
             u_seq,        # 1 ch (Flow horizontal velocity)
             v_seq,        # 1 ch (Flow vertical velocity)
             v_mag_seq,    # 1 ch (Velocity magnitude |V|)
             omega_seq,    # 1 ch (Fluid vorticity / swirling turbulence)
-            di_seq,       # 1 ch (Temporal frame difference / high-frequency residual)
             acc_seq       # 1 ch (Convective acceleration / feeding burst)
-        ], dim=2)  # [B, T, 9, H, W]
+        ], dim=2)  # [B, T, 8, H, W]
 
         # Kinematics Summary Statistics:
         v_mean = v_mag_seq.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
@@ -134,10 +129,11 @@ class FishMotionKinematics9Ch(nn.Module):
         convergence_flux = active_flux.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
 
         kinematics_summary = torch.cat([v_mean, omega_max, v_max, convergence_flux], dim=-1)  # [B, 4]
-        return frames_9ch, kinematics_summary
+        return frames_8ch, kinematics_summary
 
 
 # Backward compatibility aliases
-FishMotionKinematics10Ch = FishMotionKinematics9Ch
-FishMotionKinematics7Ch = FishMotionKinematics9Ch
-FishMotionKinematics = FishMotionKinematics9Ch
+FishMotionKinematics9Ch = FishMotionKinematics8Ch
+FishMotionKinematics10Ch = FishMotionKinematics8Ch
+FishMotionKinematics7Ch = FishMotionKinematics8Ch
+FishMotionKinematics = FishMotionKinematics8Ch
