@@ -277,10 +277,6 @@ def run_training_session(
     config = TrainConfig.from_json(train_config_path)
     if lr_scheduler is not None:
         config.lr_scheduler = lr_scheduler
-        if lr_scheduler == "onecycle":
-            config.use_onecycle = True
-        elif lr_scheduler in ("cosine", "plateau"):
-            config.use_onecycle = False
 
     if device_str is not None:
         device = torch.device(device_str)

@@ -81,6 +81,7 @@ class MultimodalTrainer:
         # Training Setup
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
         self.steps_per_epoch = max(1, len(self.train_loader))
+        self.lr_scheduler_type = getattr(self.config, "lr_scheduler", "cosine")
 
         # Single unified optimizer for all parameters (Backbones + Aux Heads + Multimodal Fusion)
         self.optimizer = optimizer if optimizer is not None else optim.AdamW(
@@ -163,7 +164,8 @@ class MultimodalTrainer:
         logger.info(f"  - Max Epochs:               {self.config.epochs}")
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
-        logger.info(f"  - LR Scheduler:             {self.lr_scheduler_type} (T_max={self.config.epochs}, min_lr={getattr(self.config, 'min_lr', 1e-8)})")
+        lr_sched_name = getattr(self, "lr_scheduler_type", getattr(self.config, "lr_scheduler", "cosine"))
+        logger.info(f"  - LR Scheduler:             {lr_sched_name} (T_max={self.config.epochs}, min_lr={getattr(self.config, 'min_lr', 1e-8)})")
         logger.info(f"  - Auxiliary Supervision:    aux_loss_weight = {self.aux_loss_weight} (Video & Audio Aux Heads)")
         logger.info(f"  - Training Strategy:        Pure End-to-End (Unified Optimizer, No Two-Phase)")
         logger.info(f"  - Monitor Metric:           {self.config.monitor} (Validation Accuracy)")
