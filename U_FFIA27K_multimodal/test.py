@@ -28,6 +28,7 @@ from features.audio_frontend import AudioFrontend
 from utils.losses import PairwiseTournamentLoss, ClipCELoss
 from utils.profile_model import count_parameters, measure_flops
 from utils.seed import seed_everything
+from tasks.multimodal_train import build_optimizer_param_groups
 
 logger = logging.getLogger(__name__)
 
@@ -262,10 +263,29 @@ def test_optimizer_and_scheduler(
         print(f"  TEST 5: OPTIMIZER & {sched_label} STEP (EPOCH-LEVEL)")
         print("=" * 65)
 
+    param_groups, stats = build_optimizer_param_groups(
+        model,
+        weight_decay=config.weight_decay,
+        logger=logger if verbose else None
+    )
+
+    # Verification: Weight decay exclusion integrity
+    if len(param_groups) != 2:
+        raise ValueError(f"Expected 2 param groups (decay and no-decay), got {len(param_groups)}")
+    if abs(param_groups[0]["weight_decay"] - config.weight_decay) > 1e-7:
+        raise ValueError(f"Expected decay group wd={config.weight_decay}, got {param_groups[0]['weight_decay']}")
+    if abs(param_groups[1]["weight_decay"] - 0.0) > 1e-7:
+        raise ValueError(f"Expected no-decay group wd=0.0, got {param_groups[1]['weight_decay']}")
+
+    total_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    if stats["total_params"] != total_trainable:
+        raise ValueError(
+            f"Mismatch in total trainable parameters: grouped={stats['total_params']} vs actual={total_trainable}"
+        )
+
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=base_lr,
-        weight_decay=config.weight_decay
+        param_groups,
+        lr=base_lr
     )
 
     if use_warmup:
@@ -298,16 +318,22 @@ def test_optimizer_and_scheduler(
         sched_name = f"Pure CosineAnnealingLR (No Warmup, T_max={config.epochs}, min={min_lr})"
 
     max_norm = float(getattr(config, "max_norm", 1.0))
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=max_norm)
 
     init_lr = optimizer.param_groups[0]["lr"]
     optimizer.step()
     scheduler.step()
     stepped_lr = optimizer.param_groups[0]["lr"]
 
+    # Verify both parameter groups stepped in lockstep
+    for i, grp in enumerate(optimizer.param_groups):
+        if abs(grp["lr"] - stepped_lr) > 1e-12:
+            raise ValueError(f"Param group {i} LR out of sync: {grp['lr']:.6e} vs {stepped_lr:.6e}")
+
     if verbose:
-        print(f"  - Optimizer:                     AdamW (weight_decay={config.weight_decay})")
-        print(f"  - Gradient Clipping:            max_norm = {max_norm}")
+        print(f"  - Optimizer:                     AdamW (Decay wd={config.weight_decay}: {stats['decay_params']:,} params, No-Decay wd=0.0: {stats['no_decay_params']:,} params)")
+        print(f"  - Gradient Clipping:             max_norm = {max_norm}")
         print(f"  - Scheduler:                     {sched_name} [EPOCH]")
         print(f"  - Initial LR (Step 0):           {init_lr:.6e}")
         print(f"  - Stepped LR (Step 1):           {stepped_lr:.6e}")

@@ -66,6 +66,72 @@ def _safe_torch_save(obj: Any, target_path: str) -> bool:
         return False
 
 
+def build_optimizer_param_groups(
+    model: nn.Module,
+    weight_decay: float = 0.05,
+    logger: Optional[logging.Logger] = None
+) -> Tuple[list, Dict[str, Any]]:
+    """
+    Construct parameter groups for AdamW with Weight Decay Exclusion.
+
+    Standard SOTA Computer Vision & Multimodal Practice:
+    - Decay group (weight_decay = config.weight_decay):
+      All 2D and 4D weight matrices (Conv2d kernels, Linear projection weights).
+    - No-decay group (weight_decay = 0.0):
+      All 1D and scalar parameters: biases, LayerNorm affine scales/biases,
+      GroupNorm parameters, and learnable scalar fusion weights (e.g. gamma_23).
+
+    Theoretical Justification:
+    1. He et al. (CVPR 2019, 'Bag of Tricks for Image Classification with CNNs'):
+       Penalizing normalization scale and bias parameters degrades representation
+       capacity and causes early optimization stalling.
+    2. Liu et al. (CVPR 2022, 'A ConvNet for the 2020s - ConvNeXt'):
+       Explicitly set weight_decay = 0.0 on all 1D parameters (LayerNorm and bias)
+       to preserve feature variance across deep residual stages.
+    3. Loshchilov & Hutter (ICLR 2019, 'Decoupled Weight Decay Regularization'):
+       Weight decay in AdamW directly shrinks parameters each step; applying it
+       to normalization affine scales restricts the feature distribution.
+    """
+    decay_params = []
+    no_decay_params = []
+    decay_count = 0
+    no_decay_count = 0
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        # Biases, 1D normalization weights (LayerNorm, GroupNorm), and scalar weights
+        if param.ndim <= 1 or name.endswith(".bias"):
+            no_decay_params.append(param)
+            no_decay_count += param.numel()
+        else:
+            decay_params.append(param)
+            decay_count += param.numel()
+
+    param_groups = [
+        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": no_decay_params, "weight_decay": 0.0},
+    ]
+
+    stats = {
+        "decay_tensors": len(decay_params),
+        "decay_params": decay_count,
+        "no_decay_tensors": len(no_decay_params),
+        "no_decay_params": no_decay_count,
+        "total_params": decay_count + no_decay_count,
+    }
+
+    if logger is not None:
+        logger.info(
+            f"AdamW Parameter Grouping (Weight Decay Exclusion):\n"
+            f"  - Decay group    (wd={weight_decay:.4f}): {len(decay_params)} tensors, {decay_count:,} params ({decay_count/1e6:.4f}M)\n"
+            f"  - No-decay group (wd=0.0000): {len(no_decay_params)} tensors, {no_decay_count:,} params ({no_decay_count/1e6:.4f}M)\n"
+            f"  - Total trainable params:     {stats['total_params']:,} ({stats['total_params']/1e6:.4f}M)"
+        )
+
+    return param_groups, stats
+
+
 class MultimodalTrainer:
     """
     Unified Trainer class for Pure End-to-End Multimodal Fish Feeding Intensity Classification
@@ -112,11 +178,20 @@ class MultimodalTrainer:
         self.use_warmup = bool(getattr(self.config, "use_warmup", True)) and (self.warmup_pct > 0.0)
 
         # Single unified optimizer for all parameters (Backbones + Aux Heads + Multimodal Fusion)
-        self.optimizer = optimizer if optimizer is not None else optim.AdamW(
-            self.model.parameters(),
-            lr=self.config.learning_rate,
-            weight_decay=self.weight_decay
-        )
+        # SOTA Parameter Grouping: Conv2d/Linear weights get weight_decay, biases & LayerNorm get 0.0
+        if optimizer is not None:
+            self.optimizer = optimizer
+            self.param_group_stats = None
+        else:
+            param_groups, self.param_group_stats = build_optimizer_param_groups(
+                self.model,
+                weight_decay=self.weight_decay,
+                logger=logger
+            )
+            self.optimizer = optim.AdamW(
+                param_groups,
+                lr=self.config.learning_rate
+            )
 
         min_lr = float(getattr(self.config, "min_lr", 1e-8))
         base_lr = float(self.config.learning_rate)
@@ -227,6 +302,10 @@ class MultimodalTrainer:
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         sched_name = "SequentialLR (LinearLR Warmup + CosineAnnealingLR)" if self.use_warmup else "Pure CosineAnnealingLR (No Warmup)"
         logger.info(f"  - LR Scheduler:             {sched_name} (step_mode='epoch', min_lr={getattr(self.config, 'min_lr', 1e-8)})")
+        if self.param_group_stats is not None:
+            logger.info(f"  - Optimizer:                AdamW (Decay wd={self.weight_decay}: {self.param_group_stats['decay_params']:,} params, No-Decay wd=0.0: {self.param_group_stats['no_decay_params']:,} params)")
+        else:
+            logger.info(f"  - Optimizer:                AdamW (weight_decay={self.weight_decay})")
         logger.info(f"  - Gradient Clipping:        max_norm = {self.max_norm}")
         logger.info(f"  - Auxiliary Supervision:    aux_loss_weight = {self.aux_loss_weight} (Video & Audio Aux Heads)")
         logger.info(f"  - Training Strategy:        Pure End-to-End (Unified Optimizer, No Two-Phase)")
