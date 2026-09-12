@@ -17,12 +17,12 @@ class InferenceTimer:
     """
     def __init__(self, model: nn.Module, device: torch.device) -> None:
         self.model = model
-        self.device = device
+        self.device = torch.device(device) if isinstance(device, str) else device
 
     def measure_latency_per_sample(
         self,
         video_shape: Tuple[int, ...] = (1, 2, 3, 224, 224),
-        audio_shape: Tuple[int, ...] = (1, 1, 100, 128),
+        audio_shape: Tuple[int, ...] = (1, 512000),
         warm_up_steps: int = 10,
         num_steps: int = 50
     ) -> float:

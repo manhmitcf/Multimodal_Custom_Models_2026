@@ -65,6 +65,8 @@ class AudioFrontend(nn.Module):
         """
         if input_tensor.ndim == 1:
             input_tensor = input_tensor.unsqueeze(0)
+        elif input_tensor.ndim == 3 and input_tensor.size(1) == 1:
+            input_tensor = input_tensor.squeeze(1)
 
         # 1. Padding for center alignment
         pad_amt = self.n_fft // 2

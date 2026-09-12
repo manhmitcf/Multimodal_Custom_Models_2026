@@ -78,7 +78,7 @@ class MultimodalTrainer:
         optimizer: Optional[optim.Optimizer] = None,
         train_config_path: str = 'config/train_config.json'
     ) -> None:
-        self.device = device
+        self.device = torch.device(device) if isinstance(device, str) else device
         self.model = model.to(self.device)
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -86,164 +86,78 @@ class MultimodalTrainer:
         self.config = config
         self.train_config_path = train_config_path
 
-        # Setup Loss
+        # Setup Loss with 2 Auxiliary Heads Supervision (Deep Supervision)
         loss_type = getattr(self.config, "loss_type", "pairwise_tournament")
+        self.aux_loss_weight = getattr(self.config, "aux_loss_weight", 0.3)
         if loss_type == "pairwise_tournament":
             self.loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(self.config, "weight_act", 0.5),
                 weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
                 weight_ce=getattr(self.config, "weight_ce", 1.0),
+                aux_loss_weight=self.aux_loss_weight,
             ).to(self.device)
-            logger.info("Configured PairwiseTournamentLoss (Activity Gate + 3 Pairwise Cross Boundaries B12, B23, B13).")
+            logger.info(f"Configured PairwiseTournamentLoss with Deep Supervision aux heads (aux_loss_weight={self.aux_loss_weight}).")
         elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
             self.loss_fn = BilateralBoundaryLoss(
                 lambda_emd=getattr(self.config, "lambda_emd", 0.5),
                 lambda_align=getattr(self.config, "lambda_align", 0.2),
+                aux_loss_weight=self.aux_loss_weight,
             ).to(self.device)
-            logger.info("Configured BilateralBoundaryLoss (CORAL + EMD + Alignment).")
+            logger.info("Configured BilateralBoundaryLoss.")
         else:
             self.loss_fn = ClipCELoss()
             logger.info("Configured standard ClipCELoss.")
 
-        # Two-Phase Warmup settings
-        self.enable_two_phase_warmup = getattr(self.config, "enable_two_phase_warmup", True)
-        self.phase1_warmup_epochs = getattr(self.config, "phase1_warmup_epochs", 200)
-        self.aux_loss_weight = getattr(self.config, "aux_loss_weight", 0.3)
+        # Unified End-to-End Training Setup (No Two-Phase Warmup)
+        self.enable_two_phase_warmup = False
+        self.phase1_warmup_epochs = 0
+        self.current_phase = 2
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
         self.steps_per_epoch = max(1, len(self.train_loader))
-        self.lr_scheduler_type = getattr(self.config, "lr_scheduler", "flat_cosine")
+        self.lr_scheduler_type = getattr(self.config, "lr_scheduler", "cosine")
         self.use_onecycle = getattr(self.config, "use_onecycle", False) or (self.lr_scheduler_type == "onecycle")
         self.is_stepwise_scheduler = (self.lr_scheduler_type in ("flat_cosine", "onecycle")) or self.use_onecycle
 
-        if self.enable_two_phase_warmup and self.phase1_warmup_epochs > 0:
-            self.current_phase = 1
-            if hasattr(self.loss_fn, "only_backbones"):
-                self.loss_fn.only_backbones = True
+        # Single unified optimizer for all parameters (Backbones + Aux Heads + Multimodal Fusion)
+        self.optimizer = optimizer if optimizer is not None else optim.AdamW(
+            self.model.parameters(),
+            lr=self.config.learning_rate,
+            weight_decay=self.weight_decay
+        )
 
-            # Freeze fusion head for Phase 1
-            if hasattr(self.model, "fusion"):
-                for p in self.model.fusion.parameters():
-                    p.requires_grad = False
-            logger.info(f"Phase 1 Warmup active: Multimodal Fusion FROZEN for first {self.phase1_warmup_epochs} epochs.")
+        min_lr = getattr(self.config, "min_lr", 1e-8)
+        base_lr = self.config.learning_rate
 
-            # Identify disjoint parameter sets for Video and Audio
-            self.video_params = list(self.model.video_backbone.parameters())
-            if hasattr(self.model, "aux_head_video"):
-                self.video_params += list(self.model.aux_head_video.parameters())
-
-            self.audio_params = list(self.model.audio_backbone.parameters())
-            if hasattr(self.model, "audio_frontend"):
-                self.audio_params += [p for p in self.model.audio_frontend.parameters() if p.requires_grad]
-            if hasattr(self.model, "aux_head_audio"):
-                self.audio_params += list(self.model.aux_head_audio.parameters())
-
-            # Independent optimizers for Phase 1 (no cross-gradient interference)
-            self.optimizer_video = optim.AdamW(
-                self.video_params,
-                lr=self.config.learning_rate,
-                weight_decay=self.weight_decay
+        if self.lr_scheduler_type == "flat_cosine":
+            total_steps = self.config.epochs * self.steps_per_epoch
+            flat_steps = int(getattr(self.config, "flat_pct", 0.05) * total_steps)
+            min_lr_ratio = min_lr / base_lr if base_lr > 0 else 1e-3
+            self.scheduler = create_flat_cosine_scheduler(
+                self.optimizer,
+                total_steps=total_steps,
+                flat_steps=flat_steps,
+                min_lr_ratio=min_lr_ratio
             )
-            self.optimizer_audio = optim.AdamW(
-                self.audio_params,
-                lr=self.config.learning_rate,
-                weight_decay=self.weight_decay
+            logger.info(f"Configured Flat-Cosine Scheduler: total_steps={total_steps}, flat_steps={flat_steps}, lr={base_lr} -> min_lr={min_lr}.")
+        elif self.use_onecycle:
+            self.scheduler = optim.lr_scheduler.OneCycleLR(
+                self.optimizer,
+                max_lr=self.config.learning_rate,
+                epochs=self.config.epochs,
+                steps_per_epoch=self.steps_per_epoch,
+                pct_start=0.05,
+                anneal_strategy='cos',
+                div_factor=25,
+                final_div_factor=1000
             )
-            self.optimizer = self.optimizer_video  # Fallback handle
-
-            # Independent schedulers for Phase 1
-            if self.lr_scheduler_type == "flat_cosine":
-                total_steps = self.phase1_warmup_epochs * self.steps_per_epoch
-                flat_steps = int(getattr(self.config, "flat_pct", 0.05) * total_steps)
-                min_lr = getattr(self.config, "min_lr", 1e-6)
-                base_lr = self.config.learning_rate
-                min_lr_ratio = min_lr / base_lr if base_lr > 0 else 1e-3
-                self.scheduler_video = create_flat_cosine_scheduler(
-                    self.optimizer_video, total_steps, flat_steps, min_lr_ratio
-                )
-                self.scheduler_audio = create_flat_cosine_scheduler(
-                    self.optimizer_audio, total_steps, flat_steps, min_lr_ratio
-                )
-                self.scheduler = self.scheduler_video
-                logger.info(f"Phase 1 Independent Flat-Cosine configured (Video & Audio lr={self.config.learning_rate}, flat_pct={getattr(self.config, 'flat_pct', 0.05)}).")
-            elif self.use_onecycle:
-                self.scheduler_video = optim.lr_scheduler.OneCycleLR(
-                    self.optimizer_video,
-                    max_lr=self.config.learning_rate,
-                    epochs=self.phase1_warmup_epochs,
-                    steps_per_epoch=self.steps_per_epoch,
-                    pct_start=0.05,
-                    anneal_strategy='cos',
-                    div_factor=25,
-                    final_div_factor=1000
-                )
-                self.scheduler_audio = optim.lr_scheduler.OneCycleLR(
-                    self.optimizer_audio,
-                    max_lr=self.config.learning_rate,
-                    epochs=self.phase1_warmup_epochs,
-                    steps_per_epoch=self.steps_per_epoch,
-                    pct_start=0.05,
-                    anneal_strategy='cos',
-                    div_factor=25,
-                    final_div_factor=1000
-                )
-                self.scheduler = self.scheduler_video
-                logger.info(f"Phase 1 Independent OneCycleLR configured (Video & Audio max_lr={self.config.learning_rate}, epochs={self.phase1_warmup_epochs}).")
-            else:
-                self.scheduler_video = optim.lr_scheduler.CosineAnnealingLR(
-                    self.optimizer_video,
-                    T_max=self.phase1_warmup_epochs,
-                    eta_min=getattr(self.config, "min_lr", 1e-6)
-                )
-                self.scheduler_audio = optim.lr_scheduler.CosineAnnealingLR(
-                    self.optimizer_audio,
-                    T_max=self.phase1_warmup_epochs,
-                    eta_min=getattr(self.config, "min_lr", 1e-6)
-                )
-                self.scheduler = self.scheduler_video
-                logger.info(f"Phase 1 Independent CosineAnnealingLR configured (epochs={self.phase1_warmup_epochs}).")
+            logger.info(f"Configured OneCycleLR: max_lr={self.config.learning_rate}, epochs={self.config.epochs}.")
         else:
-            self.current_phase = 2
-            if hasattr(self.loss_fn, "only_backbones"):
-                self.loss_fn.only_backbones = False
-
-            self.optimizer = optimizer if optimizer is not None else optim.AdamW(
-                self.model.parameters(),
-                lr=self.config.learning_rate,
-                weight_decay=self.weight_decay
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=self.config.epochs,
+                eta_min=min_lr
             )
-
-            if self.lr_scheduler_type == "flat_cosine":
-                total_steps = self.config.epochs * self.steps_per_epoch
-                flat_steps = int(getattr(self.config, "flat_pct", 0.05) * total_steps)
-                min_lr = getattr(self.config, "min_lr", 1e-6)
-                base_lr = self.config.learning_rate
-                min_lr_ratio = min_lr / base_lr if base_lr > 0 else 1e-3
-                self.scheduler = create_flat_cosine_scheduler(
-                    self.optimizer,
-                    total_steps=total_steps,
-                    flat_steps=flat_steps,
-                    min_lr_ratio=min_lr_ratio
-                )
-                logger.info(f"Configured Flat-Cosine Scheduler: total_steps={total_steps}, flat_steps={flat_steps} ({getattr(self.config, 'flat_pct', 0.05)*100:.1f}%), lr={base_lr} -> min_lr={min_lr}.")
-            elif self.use_onecycle:
-                self.scheduler = optim.lr_scheduler.OneCycleLR(
-                    self.optimizer,
-                    max_lr=self.config.learning_rate,
-                    epochs=self.config.epochs,
-                    steps_per_epoch=self.steps_per_epoch,
-                    pct_start=0.05,
-                    anneal_strategy='cos',
-                    div_factor=25,
-                    final_div_factor=1000
-                )
-                logger.info(f"Configured OneCycleLR: max_lr={self.config.learning_rate}, epochs={self.config.epochs}, pct_start=0.05.")
-            else:
-                self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                    self.optimizer,
-                    T_max=self.config.epochs,
-                    eta_min=getattr(self.config, "min_lr", 1e-6)
-                )
-                logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min={getattr(self.config, 'min_lr', 1e-6)}.")
+            logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min={min_lr}.")
 
         # Evaluator and Timer
         self.evaluator = MultimodalEvaluator(model=self.model, loss_fn=self.loss_fn)
@@ -280,9 +194,10 @@ class MultimodalTrainer:
         logger.info(f"  - Max Epochs:               {self.config.epochs}")
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
+        logger.info(f"  - LR Scheduler:             {self.lr_scheduler_type} (T_max={self.config.epochs}, min_lr={getattr(self.config, 'min_lr', 1e-8)})")
+        logger.info(f"  - Auxiliary Supervision:    aux_loss_weight = {self.aux_loss_weight} (Video & Audio Aux Heads)")
+        logger.info(f"  - Training Strategy:        Pure End-to-End (Unified Optimizer, No Two-Phase)")
         logger.info(f"  - Monitor Metric:           {self.config.monitor}")
-        logger.info(f"  - Two-Phase Warmup:         {self.enable_two_phase_warmup} (Phase 1: {self.phase1_warmup_epochs} epochs)")
-        logger.info(f"  - Phase 2 Strategy:         {getattr(self.config, 'phase2_backbone_mode', 'freeze_all')}")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
@@ -299,83 +214,33 @@ class MultimodalTrainer:
             audio = batch_dict['audio_form'].to(self.device)
             targets = batch_dict['target'].to(self.device)
 
-            if self.current_phase == 1:
-                self.optimizer_video.zero_grad()
-                self.optimizer_audio.zero_grad()
-                outputs = self.model(video, audio)
+            self.optimizer.zero_grad()
+            outputs = self.model(video, audio)
 
-                # Raw targets for Cross-Entropy
-                if targets.ndim > 1 and targets.size(-1) > 1:
-                    y_raw = targets.argmax(dim=-1)
-                else:
-                    y_raw = targets.long().squeeze()
-                    if y_raw.ndim == 0:
-                        y_raw = y_raw.unsqueeze(0)
+            try:
+                loss = self.loss_fn(outputs, {'target': targets}, epoch=epoch)
+            except TypeError:
+                loss = self.loss_fn(outputs, {'target': targets})
+            loss.backward()
 
-                loss_v = F.cross_entropy(outputs['logits_video'], y_raw)
-                loss_a = F.cross_entropy(outputs['logits_audio'], y_raw)
+            trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=5.0)
+            self.optimizer.step()
 
-                # Backward and clip separately (zero cross-interference)
-                loss_v.backward()
-                torch.nn.utils.clip_grad_norm_(self.video_params, max_norm=5.0)
-                self.optimizer_video.step()
+            if self.is_stepwise_scheduler:
+                self.scheduler.step()
 
-                loss_a.backward()
-                torch.nn.utils.clip_grad_norm_(self.audio_params, max_norm=5.0)
-                self.optimizer_audio.step()
+            loss_val = loss.item()
+            total_loss += loss_val
 
-                if self.is_stepwise_scheduler:
-                    self.scheduler_video.step()
-                    self.scheduler_audio.step()
+            logits = outputs['clipwise_output']
+            train_preds.append(logits.detach().cpu().numpy())
+            train_targets.append(targets.detach().cpu().numpy())
 
-                loss_val = loss_v.item() + loss_a.item()
-                total_loss += loss_val
-
-                logits = (outputs['logits_video'] + outputs['logits_audio']) / 2.0
-                train_preds.append(logits.detach().cpu().numpy())
-                train_targets.append(targets.detach().cpu().numpy())
-
-                pbar.set_postfix({
-                    'l_v': f"{loss_v.item():.4f}",
-                    'l_a': f"{loss_a.item():.4f}",
-                    'lr_v': f"{self.optimizer_video.param_groups[0]['lr']:.1e}",
-                    'lr_a': f"{self.optimizer_audio.param_groups[0]['lr']:.1e}"
-                })
-            else:
-                self.optimizer.zero_grad()
-                outputs = self.model(video, audio)
-
-                try:
-                    loss = self.loss_fn(outputs, {'target': targets}, epoch=epoch)
-                except TypeError:
-                    loss = self.loss_fn(outputs, {'target': targets})
-                loss.backward()
-
-                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=5.0)
-                self.optimizer.step()
-
-                if self.is_stepwise_scheduler:
-                    self.scheduler.step()
-
-                loss_val = loss.item()
-                total_loss += loss_val
-
-                logits = outputs['clipwise_output']
-                train_preds.append(logits.detach().cpu().numpy())
-                train_targets.append(targets.detach().cpu().numpy())
-
-                if len(self.optimizer.param_groups) > 1:
-                    pbar.set_postfix({
-                        'loss': f"{loss_val:.4f}",
-                        'lr_f': f"{self.optimizer.param_groups[0]['lr']:.1e}",
-                        'lr_b': f"{self.optimizer.param_groups[1]['lr']:.1e}"
-                    })
-                else:
-                    pbar.set_postfix({
-                        'loss': f"{loss_val:.4f}",
-                        'lr': f"{self.optimizer.param_groups[0]['lr']:.1e}"
-                    })
+            pbar.set_postfix({
+                'loss': f"{loss_val:.4f}",
+                'lr': f"{self.optimizer.param_groups[0]['lr']:.1e}"
+            })
 
         epoch_loss = total_loss / max(1, len(self.train_loader))
         train_preds = np.concatenate(train_preds, axis=0)
@@ -503,170 +368,9 @@ class MultimodalTrainer:
         else:
             best_val_metric = float('inf')
 
-        best_phase1_metric = -1.0
         best_val_video_acc = -1.0
         best_val_audio_acc = -1.0
         for epoch in range(1, self.config.epochs + 1):
-            # Check for transition to Phase 2
-            if self.enable_two_phase_warmup and self.phase1_warmup_epochs > 0:
-                if epoch == self.phase1_warmup_epochs + 1 and self.current_phase == 1:
-                    logger.info("==================================================")
-                    logger.info(f">>> TRANSITION TO PHASE 2 (EPOCH {epoch:03d}): ASSEMBLING DREAM TEAM BACKBONES...")
-                    self.current_phase = 2
-                    if hasattr(self.loss_fn, "only_backbones"):
-                        self.loss_fn.only_backbones = False
-
-                    # 1. Restore Dream Team (best Video & best Audio independently)
-                    loaded_dream_team = False
-                    if os.path.exists(self.best_video_path):
-                        logger.info(f">>> Restoring PEAK Video Backbone from: '{self.best_video_path}' (Best Val Acc: {best_val_video_acc:.4f})...")
-                        v_state = torch.load(self.best_video_path, map_location=self.device, weights_only=True)
-                        self.model.load_state_dict(v_state, strict=False)
-                        loaded_dream_team = True
-
-                    if os.path.exists(self.best_audio_path):
-                        logger.info(f">>> Restoring PEAK Audio Backbone from: '{self.best_audio_path}' (Best Val Acc: {best_val_audio_acc:.4f})...")
-                        a_state = torch.load(self.best_audio_path, map_location=self.device, weights_only=True)
-                        self.model.load_state_dict(a_state, strict=False)
-                        loaded_dream_team = True
-
-                    if not loaded_dream_team and os.path.exists(self.phase1_checkpoint_path):
-                        logger.info(f">>> Fallback: Restoring joint Phase 1 backbones from: '{self.phase1_checkpoint_path}'...")
-                        best_state = torch.load(self.phase1_checkpoint_path, map_location=self.device, weights_only=True)
-                        self.model.load_state_dict(best_state, strict=False)
-
-                    # 2. Unfreeze fusion parameters
-                    if hasattr(self.model, "fusion"):
-                        for p in self.model.fusion.parameters():
-                            p.requires_grad = True
-
-                    phase2_mode = getattr(self.config, "phase2_backbone_mode", "freeze_all")
-                    logger.info(f">>> Phase 2 Backbone Strategy: '{phase2_mode}'")
-
-                    if phase2_mode == "freeze_all":
-                        # Freeze 100% of all parameters except fusion (backbones, frontends, aux heads)
-                        for n, p in self.model.named_parameters():
-                            if not n.startswith("fusion."):
-                                p.requires_grad = False
-
-                        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-                        self.optimizer = optim.AdamW(
-                            trainable_params,
-                            lr=self.config.learning_rate,
-                            weight_decay=self.weight_decay
-                        )
-                        max_lrs = self.config.learning_rate
-                        logger.info(f">>> Backbones FROZEN completely. Training ONLY Multimodal Fusion ({len(trainable_params)} param tensors, max_lr={max_lrs}).")
-
-                    elif phase2_mode == "unfreeze_last_stages":
-                        # Freeze early stages, only unfreeze late stages of backbones
-                        # Video (ConvNeXt-Nano): stem & stages 0..1 frozen; stages 2..3 + proj fine-tune
-                        if hasattr(self.model, "video_backbone"):
-                            vb = self.model.video_backbone
-                            for p in vb.stem.parameters():
-                                p.requires_grad = False
-                            if hasattr(vb, "downsample_layers") and len(vb.downsample_layers) > 0:
-                                for p in vb.downsample_layers[0].parameters():
-                                    p.requires_grad = False
-                            if hasattr(vb, "stages") and len(vb.stages) > 1:
-                                for p in vb.stages[0].parameters():
-                                    p.requires_grad = False
-                                for p in vb.stages[1].parameters():
-                                    p.requires_grad = False
-                                for p in vb.stages[2:].parameters():
-                                    p.requires_grad = True
-                            if hasattr(vb, "downsample_layers") and len(vb.downsample_layers) > 1:
-                                for p in vb.downsample_layers[1:].parameters():
-                                    p.requires_grad = True
-                            if hasattr(vb, "norm_final"):
-                                for p in vb.norm_final.parameters():
-                                    p.requires_grad = True
-                            if hasattr(vb, "proj"):
-                                for p in vb.proj.parameters():
-                                    p.requires_grad = True
-
-                        # Audio (PANNS-CNN6-Pro): conv_block 1..2 frozen; conv_block 3..4 + proj fine-tune
-                        if hasattr(self.model, "audio_backbone"):
-                            ab = self.model.audio_backbone
-                            if hasattr(ab, "conv_block1"):
-                                for p in ab.conv_block1.parameters():
-                                    p.requires_grad = False
-                            if hasattr(ab, "conv_block2"):
-                                for p in ab.conv_block2.parameters():
-                                    p.requires_grad = False
-                            if hasattr(ab, "conv_block3"):
-                                for p in ab.conv_block3.parameters():
-                                    p.requires_grad = True
-                            if hasattr(ab, "conv_block4"):
-                                for p in ab.conv_block4.parameters():
-                                    p.requires_grad = True
-                            if hasattr(ab, "proj"):
-                                for p in ab.proj.parameters():
-                                    p.requires_grad = True
-                            if hasattr(ab, "token_proj"):
-                                for p in ab.token_proj.parameters():
-                                    p.requires_grad = True
-                            if hasattr(ab, "norm_audio"):
-                                for p in ab.norm_audio.parameters():
-                                    p.requires_grad = True
-
-                        fusion_params = list(self.model.fusion.parameters()) if hasattr(self.model, "fusion") else []
-                        backbone_trainable = [p for n, p in self.model.named_parameters() if not n.startswith("fusion.") and p.requires_grad]
-                        backbone_lr = self.config.learning_rate * 0.05
-                        param_groups = [
-                            {"params": fusion_params, "lr": self.config.learning_rate},
-                            {"params": backbone_trainable, "lr": backbone_lr}
-                        ]
-                        self.optimizer = optim.AdamW(param_groups, weight_decay=self.weight_decay)
-                        max_lrs = [self.config.learning_rate, backbone_lr]
-                        logger.info(f">>> Early stages frozen, fine-tuning late stages & fusion (Fusion lr={self.config.learning_rate}, Backbones lr={backbone_lr}).")
-
-                    else:  # unfreeze_all
-                        for p in self.model.parameters():
-                            p.requires_grad = True
-                        fusion_params = list(self.model.fusion.parameters()) if hasattr(self.model, "fusion") else []
-                        other_params = [p for n, p in self.model.named_parameters() if not n.startswith("fusion.")]
-                        param_groups = [
-                            {"params": fusion_params, "lr": self.config.learning_rate},
-                            {"params": other_params, "lr": self.config.learning_rate * 0.2}
-                        ]
-                        self.optimizer = optim.AdamW(param_groups, weight_decay=self.weight_decay)
-                        max_lrs = [self.config.learning_rate, self.config.learning_rate * 0.2]
-                        logger.info(f">>> All parameters unfrozen (Fusion lr={self.config.learning_rate}, Backbones lr={self.config.learning_rate * 0.2}).")
-
-                    remaining_epochs = max(1, self.config.epochs - self.phase1_warmup_epochs)
-                    if self.lr_scheduler_type == "flat_cosine":
-                        total_steps = remaining_epochs * self.steps_per_epoch
-                        flat_steps = int(getattr(self.config, "flat_pct", 0.05) * total_steps)
-                        min_lr = getattr(self.config, "min_lr", 1e-6)
-                        base_lr = self.config.learning_rate
-                        min_lr_ratio = min_lr / base_lr if base_lr > 0 else 1e-3
-                        self.scheduler = create_flat_cosine_scheduler(
-                            self.optimizer,
-                            total_steps=total_steps,
-                            flat_steps=flat_steps,
-                            min_lr_ratio=min_lr_ratio
-                        )
-                        logger.info(f"Phase 2 Configured Flat-Cosine: total_steps={total_steps}, flat_steps={flat_steps} ({getattr(self.config, 'flat_pct', 0.05)*100:.1f}%), lr={base_lr} -> min_lr={min_lr}.")
-                    elif self.use_onecycle:
-                        self.scheduler = optim.lr_scheduler.OneCycleLR(
-                            self.optimizer,
-                            max_lr=max_lrs,
-                            epochs=remaining_epochs,
-                            steps_per_epoch=self.steps_per_epoch,
-                            pct_start=0.05,
-                            anneal_strategy='cos',
-                            div_factor=25,
-                            final_div_factor=1000
-                        )
-                    else:
-                        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                            self.optimizer,
-                            T_max=remaining_epochs,
-                            eta_min=getattr(self.config, "min_lr", 1e-6)
-                        )
-                    logger.info("==================================================")
-
             train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
             if not self.is_stepwise_scheduler:
                 self.scheduler.step()
@@ -681,90 +385,64 @@ class MultimodalTrainer:
             val_mae = float(val_stats.get('ordinal_mae', 0.0))
             val_acc_v = float(val_stats.get('acc_video', 0.0))
             val_acc_a = float(val_stats.get('acc_audio', 0.0))
-            val_mean_backbone = float(val_stats.get('mean_backbone_acc', (val_acc_v + val_acc_a) / 2.0))
 
-            # Extract current learning rates
-            if self.current_phase == 1:
-                lr_v = self.optimizer_video.param_groups[0]['lr']
-                lr_a = self.optimizer_audio.param_groups[0]['lr']
-                lr_info = f"LR = [Video: {lr_v:.2e}, Audio: {lr_a:.2e}]"
-            elif len(self.optimizer.param_groups) > 1:
-                lr_fusion = self.optimizer.param_groups[0]['lr']
-                lr_backbone = self.optimizer.param_groups[1]['lr']
-                lr_info = f"LR = [Fusion: {lr_fusion:.2e}, Backbones: {lr_backbone:.2e}]"
-            else:
-                lr_current = self.optimizer.param_groups[0]['lr']
-                lr_info = f"LR = {lr_current:.2e}"
+            # Extract current learning rate
+            lr_current = self.optimizer.param_groups[0]['lr']
+            lr_info = f"LR = {lr_current:.2e}"
 
-            if self.current_phase == 1:
-                logger.info(
-                    f"Epoch {epoch:03d} [PHASE 1 - BACKBONES WARMUP]: "
-                    f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | {lr_info} | "
-                    f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} (Peak: {max(best_val_video_acc, val_acc_v):.4f}) | "
-                    f"Val Acc Audio = {val_acc_a:.4f} (Peak: {max(best_val_audio_acc, val_acc_a):.4f}) | "
-                    f"Val Mean Acc = {val_mean_backbone:.4f} | Fusion: [FROZEN]"
-                )
-            else:
-                phase_tag = "PHASE 2 - MULTIMODAL TOURNAMENT" if self.enable_two_phase_warmup else "END-TO-END FROM SCRATCH"
-                logger.info(
-                    f"Epoch {epoch:03d} [{phase_tag}]: "
-                    f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | {lr_info} | "
-                    f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} | Val Acc Audio = {val_acc_a:.4f} | "
-                    f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
-                )
+            logger.info(
+                f"Epoch {epoch:03d} [END-TO-END + AUX HEADS]: "
+                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | {lr_info} | "
+                f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} (Peak: {max(best_val_video_acc, val_acc_v):.4f}) | "
+                f"Val Acc Audio = {val_acc_a:.4f} (Peak: {max(best_val_audio_acc, val_acc_a):.4f}) | "
+                f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
+            )
 
-            # Determine if this is the best checkpoint
+            # 1. Track and save PEAK Video Backbone independently
+            if val_acc_v > best_val_video_acc:
+                best_val_video_acc = val_acc_v
+                v_keys = [k for k in self.model.state_dict().keys() if k.startswith('video_backbone.') or k.startswith('aux_head_video.')]
+                torch.save({k: self.model.state_dict()[k] for k in v_keys}, self.best_video_path)
+                logger.info(f"[*] New PEAK Video Backbone! Saved: '{self.best_video_path}' (Val Acc = {best_val_video_acc:.4f})")
+
+            # 2. Track and save PEAK Audio Backbone independently
+            if val_acc_a > best_val_audio_acc:
+                best_val_audio_acc = val_acc_a
+                a_keys = [k for k in self.model.state_dict().keys() if k.startswith('audio_backbone.') or k.startswith('audio_frontend.') or k.startswith('aux_head_audio.')]
+                torch.save({k: self.model.state_dict()[k] for k in a_keys}, self.best_audio_path)
+                logger.info(f"[*] New PEAK Audio Backbone! Saved: '{self.best_audio_path}' (Val Acc = {best_val_audio_acc:.4f})")
+
+            # 3. Track and save best overall Multimodal checkpoint
             is_best = False
-            if self.current_phase == 1:
-                # 1. Track and save PEAK Video Backbone independently
-                if val_acc_v > best_val_video_acc:
-                    best_val_video_acc = val_acc_v
-                    v_keys = [k for k in self.model.state_dict().keys() if k.startswith('video_backbone.') or k.startswith('aux_head_video.')]
-                    torch.save({k: self.model.state_dict()[k] for k in v_keys}, self.best_video_path)
-                    logger.info(f"[*] New PEAK Video Backbone! Saved: '{self.best_video_path}' (Val Acc = {best_val_video_acc:.4f})")
-
-                # 2. Track and save PEAK Audio Backbone independently
-                if val_acc_a > best_val_audio_acc:
-                    best_val_audio_acc = val_acc_a
-                    a_keys = [k for k in self.model.state_dict().keys() if k.startswith('audio_backbone.') or k.startswith('audio_frontend.') or k.startswith('aux_head_audio.')]
-                    torch.save({k: self.model.state_dict()[k] for k in a_keys}, self.best_audio_path)
-                    logger.info(f"[*] New PEAK Audio Backbone! Saved: '{self.best_audio_path}' (Val Acc = {best_val_audio_acc:.4f})")
-
-                # 3. Track joint Phase 1 performance as fallback
-                if val_mean_backbone > best_phase1_metric:
-                    best_phase1_metric = val_mean_backbone
-                    torch.save(self.model.state_dict(), self.phase1_checkpoint_path)
-                    logger.info(f"[*] New best Phase-1 Backbones joint performance! Saved: '{self.phase1_checkpoint_path}' (Mean Acc = {best_phase1_metric:.5f})")
+            if self.config.monitor == 'qwk':
+                score = val_qwk
+                if val_qwk > best_val_metric:
+                    best_val_metric = val_qwk
+                    is_best = True
+            elif self.config.monitor == 'accuracy':
+                score = val_acc
+                if val_acc > best_val_metric:
+                    best_val_metric = val_acc
+                    is_best = True
             else:
-                if self.config.monitor == 'qwk':
-                    score = val_qwk
-                    if val_qwk > best_val_metric:
-                        best_val_metric = val_qwk
-                        is_best = True
-                elif self.config.monitor == 'accuracy':
-                    score = val_acc
-                    if val_acc > best_val_metric:
-                        best_val_metric = val_acc
-                        is_best = True
-                else:
-                    score = -val_loss
-                    if val_loss < best_val_metric:
-                        best_val_metric = val_loss
-                        is_best = True
+                score = -val_loss
+                if val_loss < best_val_metric:
+                    best_val_metric = val_loss
+                    is_best = True
 
-                if is_best:
-                    best_epoch = epoch
-                    best_acc = val_acc
-                    best_qwk = val_qwk
-                    best_mAP = val_mAP
-                    best_loss = val_loss
-                    best_val_statistics = val_stats
-                    torch.save(self.model.state_dict(), self.best_checkpoint_path)
-                    logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {best_val_metric:.5f})")
+            if is_best:
+                best_epoch = epoch
+                best_acc = val_acc
+                best_qwk = val_qwk
+                best_mAP = val_mAP
+                best_loss = val_loss
+                best_val_statistics = val_stats
+                torch.save(self.model.state_dict(), self.best_checkpoint_path)
+                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {best_val_metric:.5f})")
 
-                logger.info(
-                    f"Current best (Phase 2): Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f}"
-                )
+            logger.info(
+                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f} (Best Video: {best_val_video_acc:.4f}, Best Audio: {best_val_audio_acc:.4f})"
+            )
 
             # Always save last checkpoint
             torch.save(self.model.state_dict(), self.last_checkpoint_path)
