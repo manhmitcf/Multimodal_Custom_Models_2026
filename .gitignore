@@ -29,6 +29,7 @@ run_marimo.txt
 run_*.txt
 cli.txt
 cli_*.txt
+local_cli/
 *.secret
 *.zip
 extracted_results*/
