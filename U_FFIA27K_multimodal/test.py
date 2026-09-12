@@ -25,7 +25,7 @@ import numpy as np
 from config.train_config import TrainConfig
 from models.multimodal_sota_net import MultimodalBoundaryAwareNet, MultimodalSOTANet
 from features.audio_frontend import AudioFrontend
-from utils.losses import PairwiseTournamentLoss, BilateralBoundaryLoss, ClipCELoss
+from utils.losses import PairwiseTournamentLoss, ClipCELoss
 from utils.profile_model import count_parameters, measure_flops
 
 logger = logging.getLogger(__name__)
@@ -54,13 +54,10 @@ def build_test_model(config: TrainConfig, device: torch.device) -> nn.Module:
     model = model_cls(
         classes_num=config.model.classes_num,
         embed_dim=config.model.embed_dim,
-        num_heads=config.model.num_heads,
-        pretrained_video=False,
         audio_frontend=frontend,
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=getattr(config.video_features, "num_channels", 7),
-        use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
     ).to(device)
     return model
 
@@ -179,9 +176,6 @@ def test_forward_pass_and_aux_heads(model: nn.Module, config: TrainConfig, devic
             p_feed = outputs["p_feeding"].mean().item()
             print(f"  - Tournament Level-1 Gate:       P(Feeding) = {p_feed:.4f}")
             print(f"  - Tournament Level-2 Boundaries: P(W>M) = {outputs['p_w_over_m'].mean().item():.4f}, P(M>S) = {outputs['p_m_over_s'].mean().item():.4f}")
-        elif "cutoffs_v" in outputs:
-            print(f"  - Bilateral Cutoffs Video:       {outputs['cutoffs_v'][0].tolist()}")
-            print(f"  - Bilateral Cutoffs Audio:       {outputs['cutoffs_a'][0].tolist()}")
         print("  >>> [PASS] Forward pass and auxiliary heads output shapes 100% verified.")
 
     return True, outputs
@@ -204,7 +198,10 @@ def test_backward_and_gradient_flow(
     aux_loss_weight = getattr(config, "aux_loss_weight", 0.3)
     loss_type = getattr(config, "loss_type", "pairwise_tournament")
 
-    if loss_type == "pairwise_tournament":
+    if loss_type == "clip_ce":
+        loss_fn = ClipCELoss()
+        loss = loss_fn(outputs, {"target": dummy_targets})
+    else:
         loss_fn = PairwiseTournamentLoss(
             weight_act=getattr(config, "weight_act", 0.5),
             weight_pairwise=getattr(config, "weight_pairwise", 0.5),
@@ -212,16 +209,6 @@ def test_backward_and_gradient_flow(
             aux_loss_weight=aux_loss_weight
         ).to(device)
         loss = loss_fn(outputs, {"target": dummy_targets}, epoch=1)
-    elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
-        loss_fn = BilateralBoundaryLoss(
-            lambda_emd=getattr(config, "lambda_emd", 0.5),
-            lambda_align=getattr(config, "lambda_align", 0.2),
-            aux_loss_weight=aux_loss_weight
-        ).to(device)
-        loss = loss_fn(outputs, {"target": dummy_targets})
-    else:
-        loss_fn = ClipCELoss()
-        loss = loss_fn(outputs, {"target": dummy_targets})
 
     loss.backward()
 

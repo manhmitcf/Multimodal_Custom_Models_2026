@@ -7,40 +7,30 @@ from features.motion_kinematics import FishMotionKinematics7Ch, FishMotionKinema
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone, MobileViTVideoBackbone
 from .audio_backbone import AudioMLPBackbone, AudioBackbone, PANNSCNN6AudioBackbone, EfficientATAudioBackbone
-from .multimodal_fusion import GatedBilateralBoundaryFusion, MultimodalBoundaryAwareFusion, SOTAMultimodalFusion
+from .multimodal_fusion import MultimodalTournamentFusion, GatedBilateralBoundaryFusion, MultimodalBoundaryAwareFusion, SOTAMultimodalFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Bilateral Boundary Network (BBN-4.5M) (~4.54M Total Parameters).
-    Specifically architected to resolve continuous temporal boundary transition ambiguity
-    between adjacent fish feeding intensity classes (Strong <-> Medium <-> Weak <-> None):
-
+    Multimodal Boundary-Aware Net (4.04M Total Parameters).
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
-      2. Acoustic Time-Frequency Stream (~1.76M params):
-         TKEO Adaptive Pre-Emphasis + Learnable Frequency Attention + PANNS-CNN6-Pro 4-stage 5x5 Conv
-         with Dual Pooling (max+avg).
-      3. Gated Bilateral Boundary Fusion (~0.10M params):
-         - Dynamic Gated Fusion: g = sigma(W[f_V || f_A]).
-         - Bilateral Monotonic CORAL Decision Heads (s_V, b_V & s_A, b_A).
-         - Blended Decision: s_final = g*s_V + (1-g)*s_A with strictly monotonic cutoffs.
+      2. Acoustic Time-Frequency Stream (~1.17M params):
+         High-Resolution TKEO-STFT-MLP (2049 linear bins @ 256 kHz).
+      3. Cross-Modal Tournament Fusion (~0.17M params):
+         Hierarchical Pairwise Cross-Boundary Tournament Engine with Dual Aux Heads.
 
-    Total Parameters: ~4.54M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~4.04M (Strictly < 5.0M parameter constraint).
     """
     def __init__(
         self,
         classes_num: int = 4,
         embed_dim: int = 224,
-        num_bottlenecks: int = 4,  # Kept for config compatibility
-        num_heads: int = 4,
-        pretrained_video: bool = False,
         audio_frontend: Optional[AudioFrontend] = None,
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
-        use_frequency_attention: bool = False,
         **kwargs
     ) -> None:
         super().__init__()
@@ -54,7 +44,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~4.46M)
+        # 2. Backbones (~3.87M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
@@ -66,14 +56,14 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Gated Bilateral Boundary Fusion (~0.14M)
-        self.fusion = GatedBilateralBoundaryFusion(
+        # 3. Tournament Cross-Modal Fusion (~0.17M)
+        self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1
         )
 
         # 4. Auxiliary Unimodal Classifier Heads (~1.8K params)
-        # Allows independent supervision, accuracy tracking, and two-phase warmup
+        # Deep Supervision for backbone gradient flow & individual unimodal tracking
         self.aux_head_video = nn.Linear(embed_dim, classes_num)
         self.aux_head_audio = nn.Linear(embed_dim, classes_num)
 

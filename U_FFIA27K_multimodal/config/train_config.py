@@ -50,19 +50,16 @@ class AudioFeaturesConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Configuration for SOTA Multimodal Model (~4.78M parameters).
-    Video: MobileViT-XS (10-ch) ~2.30M
-    Audio: EfficientAT mn05_as (128 Mel-bins) ~1.80M
-    Fusion: Google MBT + Dynamic Gating + TMC Evidential Reasoning ~0.68M
+    Configuration for SOTA Multimodal Model.
+    Video: ConvNeXt-Nano (7-ch Kinematics)
+    Audio: TKEO-STFT-MLP (2049 linear bins, 256 kHz)
+    Fusion: Hierarchical Pairwise Cross-Boundary Tournament Engine
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
         description="Model architecture name exported by U_FFIA27K_multimodal.models."
     )
     embed_dim: int = Field(default=224, description="Common multimodal embedding dimension.")
-    num_bottlenecks: int = Field(default=4, description="Number of MBT bottleneck tokens.")
-    num_heads: int = Field(default=4, description="Number of cross-attention heads.")
-    pretrained_video: bool = Field(default=True, description="Initialize RGB channels from pretrained MobileViT-XS.")
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
 
 
@@ -131,13 +128,8 @@ class TrainConfig(BaseModel):
     early_stopping: bool = Field(default=False, description="Enable early stopping mechanism.")
     patience: int = Field(default=100, ge=1, description="Early stopping patience in epochs.")
     min_delta: float = Field(default=0.0, ge=0.0, description="Minimum change threshold in monitored metric.")
-    lr_scheduler: str = Field(default="cosine", description="Learning rate scheduler: 'cosine', 'flat_cosine', 'onecycle' or 'plateau'.")
-    use_onecycle: bool = Field(default=False, description="Enable OneCycleLR scheduler.")
-    flat_pct: float = Field(default=0.05, ge=0.0, le=1.0, description="Fraction of total epochs to hold LR flat at peak rate before cosine decay.")
-    warmup_epochs: int = Field(default=20, ge=0, description="Number of linear warmup epochs.")
+    lr_scheduler: str = Field(default="cosine", description="Learning rate scheduler: 'cosine' or 'plateau'.")
     min_lr: float = Field(default=1e-8, gt=0, description="Minimum learning rate.")
-    lambda_emd: float = Field(default=0.5, ge=0.0, description="Weight for Squared Earth Mover's Distance loss.")
-    lambda_align: float = Field(default=0.2, ge=0.0, description="Weight for Cross-Modal Boundary Alignment loss.")
     num_frames: int = Field(default=2, ge=2, description="Number of frames per video input.")
     image_size: int = Field(default=224, gt=0, description="Video image spatial resolution.")
     sample_rate: int = Field(default=256000, gt=0, description="Audio sampling rate in Hz.")
@@ -145,17 +137,11 @@ class TrainConfig(BaseModel):
     dataloader_workers: int = Field(default=-1, description="Number of worker processes for DataLoader (-1 = auto).")
     prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
     save_best_only: bool = Field(default=True, description="Save only the best checkpoint.")
-    loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament', 'ordinal_wasserstein' or 'clip_ce'.")
+    loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament' or 'clip_ce'.")
     weight_act: float = Field(default=0.5, ge=0.0, description="Weight for Level-1 Activity Gate BCE loss.")
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
-    enable_two_phase_warmup: bool = Field(default=False, description="Enable two-phase warmup training strategy.")
-    phase1_warmup_epochs: int = Field(default=0, ge=0, description="Number of epochs for Phase 1 backbone warmup.")
-    phase2_backbone_mode: str = Field(default="freeze_all", description="Phase 2 backbone strategy: 'freeze_all' (freeze both backbones completely, train only fusion), 'unfreeze_last_stages' (freeze stems/early stages, only unfreeze last stages), or 'unfreeze_all'.")
-    aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads in Phase 2.")
-    ordinal_sigma: float = Field(default=0.5, gt=0.0, description="Gaussian bandwidth sigma for ordinal soft label smoothing.")
-    lambda_ord_start: float = Field(default=0.2, ge=0.0, description="Initial weight for ordinal Wasserstein EMD loss.")
-    lambda_ord_end: float = Field(default=2.0, ge=0.0, description="Final weight for ordinal Wasserstein EMD loss after cosine ramp-up.")
+    aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
     model: ModelConfig = Field(default_factory=ModelConfig, description="Model architecture parameters.")
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
     video_features: VideoFeaturesConfig = Field(default_factory=VideoFeaturesConfig, description="Video preprocessing configuration.")

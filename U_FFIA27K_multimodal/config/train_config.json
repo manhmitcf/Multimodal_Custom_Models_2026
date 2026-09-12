@@ -26,10 +26,7 @@
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
-    "embed_dim": 224,
-    "num_bottlenecks": 4,
-    "num_heads": 4,
-    "pretrained_video": false
+    "embed_dim": 224
   },
   "audio_features": {
     "sample_rate": 256000,

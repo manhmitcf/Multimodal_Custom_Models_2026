@@ -57,13 +57,10 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
     return model_cls(
         classes_num=config.model.classes_num,
         embed_dim=config.model.embed_dim,
-        num_heads=config.model.num_heads,
-        pretrained_video=config.model.pretrained_video,
         audio_frontend=frontend,
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=getattr(config.video_features, "num_channels", 7),
-        use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
     )
 
 

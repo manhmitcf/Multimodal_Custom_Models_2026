@@ -145,18 +145,16 @@ class MultimodalEvaluator(BaseEvaluator):
             target_acc, clipwise_output_acc, average='macro', zero_division=0
         )
 
-        # Physical ordinal rank mapping: 0: None (rank 0), 1: Strong (rank 3), 2: Medium (rank 2), 3: Weak (rank 1)
+        # Quadratic Weighted Kappa (QWK) calculation:
         if num_classes == 4:
             rank_map = np.array([0, 3, 2, 1])
             pred_ranks = rank_map[clipwise_output_acc]
             target_ranks = rank_map[target_acc]
-            ordinal_mae = float(np.mean(np.abs(pred_ranks - target_ranks)))
             try:
                 qwk = float(metrics.cohen_kappa_score(target_ranks, pred_ranks, weights='quadratic'))
             except Exception:
                 qwk = 0.0
         else:
-            ordinal_mae = float(np.mean(np.abs(clipwise_output_acc - target_acc)))
             qwk = 0.0
 
         dict_report = classification_report(
@@ -213,7 +211,6 @@ class MultimodalEvaluator(BaseEvaluator):
             'acc_audio': acc_audio,
             'mean_backbone_acc': mean_backbone_acc,
             'qwk': qwk,
-            'ordinal_mae': ordinal_mae,
             'auc': auc,
             'message': message,
             'confu_matrix': cm,
