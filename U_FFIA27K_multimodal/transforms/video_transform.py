@@ -6,6 +6,34 @@ import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
 
 
+class ImageToPIL:
+    """Convert one RGB image in [C, H, W] or [H, W, C] format to PIL."""
+    def __call__(self, image):
+        if isinstance(image, np.ndarray):
+            if image.ndim != 3:
+                raise ValueError(f"Expected image with 3 dimensions, got shape {tuple(image.shape)}")
+
+            if image.shape[0] == 3:
+                image = image.transpose(1, 2, 0)
+            elif image.shape[-1] != 3:
+                raise ValueError(f"Expected RGB channel dimension with size 3, got shape {tuple(image.shape)}")
+
+            return TF.to_pil_image(image)
+
+        if isinstance(image, torch.Tensor):
+            if image.ndim != 3:
+                raise ValueError(f"Expected image with 3 dimensions, got shape {tuple(image.shape)}")
+
+            if image.shape[0] != 3 and image.shape[-1] == 3:
+                image = image.permute(2, 0, 1)
+            elif image.shape[0] != 3:
+                raise ValueError(f"Expected RGB channel dimension with size 3, got shape {tuple(image.shape)}")
+
+            return TF.to_pil_image(image)
+
+        return image
+
+
 class ConsistentVideoTransform:
     """
     Clip-Consistent Video Transform Pipeline.
