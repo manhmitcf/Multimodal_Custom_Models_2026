@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # UNIFIED MULTIMODAL TEST & PRE-FLIGHT VERIFICATION SUITE
 # ==============================================================================
 # This single test file consolidates and replaces all separate architecture/loss
@@ -26,7 +26,7 @@ from config.train_config import TrainConfig
 from models.multimodal_sota_net import MultimodalBoundaryAwareNet, MultimodalSOTANet
 from features.audio_frontend import AudioFrontend
 from utils.losses import PairwiseTournamentLoss, BilateralBoundaryLoss, ClipCELoss
-from utils.profile_model import count_parameters
+from utils.profile_model import count_parameters, measure_flops
 
 logger = logging.getLogger(__name__)
 
@@ -65,21 +65,33 @@ def build_test_model(config: TrainConfig, device: torch.device) -> nn.Module:
     return model
 
 
-def test_parameter_budget(model: nn.Module, verbose: bool = True) -> bool:
+def test_parameter_budget(
+    model: nn.Module,
+    config: Optional[TrainConfig] = None,
+    device: Optional[torch.device] = None,
+    verbose: bool = True
+) -> bool:
     if verbose:
         print("\n" + "=" * 65)
-        print("  TEST 1: PARAMETER BUDGET AUDIT (< 5.0M STRICT BUDGET)")
+        print("  TEST 1: PARAMETER BUDGET & GFLOPS COMPLEXITY AUDIT (< 5.0M)")
         print("=" * 65)
 
     stats = count_parameters(model)
     total_params = stats["total"]
     strict_limit = 5_000_000
 
+    num_frames = getattr(config, "num_frames", 2) if config else 2
+    image_size = getattr(config, "image_size", 224) if config else 224
+    audio_samples = int(config.audio_features.sample_rate * 2) if (config and hasattr(config, "audio_features")) else 512000
+    flops = measure_flops(model, device=device or "cpu", num_frames=num_frames, image_size=image_size, audio_samples=audio_samples)
+
     if verbose:
         print(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
         print(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
         print(f"  - Tournament Cross-Modal Fusion             : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
         print(f"  * Total Trainable Parameters                : {total_params:,} ({stats['total_million']:.3f} M)")
+        if flops > 0.0:
+            print(f"  * Inference Complexity (1 sample)           : {flops:.3f} GFLOPs ({num_frames} frames @ {image_size}x{image_size}, {audio_samples:,} audio samples)")
 
     if total_params >= strict_limit:
         raise ValueError(f"FAILED: Total parameters ({total_params:,}) exceed budget {strict_limit:,}!")
@@ -300,7 +312,7 @@ def run_all_tests(
         model = build_test_model(config, device)
 
         # Run test sequence
-        test_parameter_budget(model, verbose=verbose)
+        test_parameter_budget(model, config=config, device=device, verbose=verbose)
         test_kinematics_and_frontend(model, config, device, verbose=verbose)
         _, outputs = test_forward_pass_and_aux_heads(model, config, device, verbose=verbose)
         test_backward_and_gradient_flow(model, outputs, config, device, verbose=verbose)

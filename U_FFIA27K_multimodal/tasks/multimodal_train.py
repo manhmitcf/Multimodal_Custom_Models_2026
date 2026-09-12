@@ -32,6 +32,7 @@ from utils import (
     BilateralBoundaryLoss,
     PairwiseTournamentLoss,
 )
+from utils.profile_model import count_parameters, measure_flops
 
 # Logging configuration
 logging.basicConfig(
@@ -187,9 +188,29 @@ class MultimodalTrainer:
         self.phase1_checkpoint_path = os.path.join(self.run_dir, 'best_phase1_backbone.pth')
         self.last_checkpoint_path = os.path.join(self.run_dir, 'last_model.pth')
 
+        # Profile model parameters and inference complexity (GFLOPs)
+        self.param_stats = count_parameters(self.model)
+        num_frames = getattr(self.config, "num_frames", 2)
+        image_size = getattr(self.config, "image_size", 224)
+        sample_rate = getattr(self.config.audio_features, "sample_rate", 256000) if hasattr(self.config, "audio_features") else 256000
+        audio_samples = int(sample_rate * 2)
+        self.model_flops = measure_flops(
+            self.model,
+            device=self.device,
+            num_frames=num_frames,
+            image_size=image_size,
+            audio_samples=audio_samples
+        )
+
         logger.info("==================================================")
         logger.info("INITIALIZED MULTIMODAL TRAINING EXPERIMENT:")
         logger.info(f"  - Model Architecture:       {model_name}")
+        logger.info(f"  - Trainable Parameters:     {self.param_stats['total']:,} ({self.param_stats['total_million']:.3f} M)")
+        logger.info(f"    * Video Backbone:         {self.param_stats['video_backbone']:,} ({self.param_stats['video_backbone']/1e6:.3f} M)")
+        logger.info(f"    * Audio Backbone:         {self.param_stats['audio_backbone']:,} ({self.param_stats['audio_backbone']/1e6:.3f} M)")
+        logger.info(f"    * Tournament Fusion:      {self.param_stats['fusion']:,} ({self.param_stats['fusion']/1e6:.3f} M)")
+        if self.model_flops > 0.0:
+            logger.info(f"  - Inference Complexity:     {self.model_flops:.3f} GFLOPs (1 sample: {num_frames} frames @ {image_size}x{image_size}, {audio_samples:,} audio samples)")
         logger.info(f"  - Device:                   {self.device}")
         logger.info(f"  - Max Epochs:               {self.config.epochs}")
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
@@ -499,7 +520,9 @@ class MultimodalTrainer:
             training_time=training_duration,
             inference_time_ms=inference_latency_ms,
             val_statistics=final_val_stats,
-            test_statistics=final_test_stats
+            test_statistics=final_test_stats,
+            total_params_m=self.param_stats.get('total_million', 0.0),
+            gflops=self.model_flops
         )
 
         return {

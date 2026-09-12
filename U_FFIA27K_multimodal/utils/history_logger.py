@@ -3,6 +3,7 @@ import sys
 import csv
 import logging
 from pathlib import Path
+from typing import Optional
 import numpy as np
 
 # Logging configuration
@@ -83,7 +84,15 @@ class HistoryLogger:
             best_cm_path = os.path.join(self.log_dir, 'confusion_matrix_best.csv')
             self._save_confusion_matrix_csv(best_cm_path, cm)
 
-    def save_summary(self, training_time: float, inference_time_ms: float, val_statistics: dict, test_statistics: dict) -> None:
+    def save_summary(
+        self,
+        training_time: float,
+        inference_time_ms: float,
+        val_statistics: dict,
+        test_statistics: dict,
+        total_params_m: Optional[float] = None,
+        gflops: Optional[float] = None
+    ) -> None:
         summary_csv_path = os.path.join(self.log_dir, 'summary.csv')
         file_exists = os.path.exists(summary_csv_path)
 
@@ -91,6 +100,8 @@ class HistoryLogger:
         test_mAP = np.mean(test_statistics['average_precision'])
 
         headers = [
+            'Total Parameters (M)',
+            'Inference Complexity (GFLOPs)',
             'Training Time (s)',
             'Inference Time (ms/sample)',
             'Precision Val (Weighted)', 'Recall Val (Weighted)', 'F1-score Val (Weighted)', 'Accuracy Val', 'mAP Val',
@@ -99,7 +110,12 @@ class HistoryLogger:
             'Precision Test (Macro)', 'Recall Test (Macro)', 'F1-score Test (Macro)'
         ]
 
+        params_str = f"{total_params_m:.3f}" if total_params_m is not None else "N/A"
+        gflops_str = f"{gflops:.3f}" if gflops is not None else "N/A"
+
         row_data = [
+            params_str,
+            gflops_str,
             f"{training_time:.2f}",
             f"{inference_time_ms:.3f}",
             f"{val_statistics['prec_weighted']:.6f}",
