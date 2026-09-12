@@ -354,6 +354,8 @@ def run_training_session(
     device_str: Optional[str] = None,
     enable_two_phase_warmup: Optional[bool] = None,
     phase1_warmup_epochs: Optional[int] = None,
+    lr_scheduler: Optional[str] = None,
+    flat_pct: Optional[float] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -366,6 +368,14 @@ def run_training_session(
         config.enable_two_phase_warmup = enable_two_phase_warmup
     if phase1_warmup_epochs is not None:
         config.phase1_warmup_epochs = phase1_warmup_epochs
+    if lr_scheduler is not None:
+        config.lr_scheduler = lr_scheduler
+        if lr_scheduler == "onecycle":
+            config.use_onecycle = True
+        elif lr_scheduler in ("flat_cosine", "cosine", "plateau"):
+            config.use_onecycle = False
+    if flat_pct is not None:
+        config.flat_pct = flat_pct
 
     if device_str is not None:
         device = torch.device(device_str)
@@ -467,6 +477,8 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Run pre-flight check only without training")
     parser.add_argument("--no-two-phase", action="store_true", help="Disable two-phase warmup and train end-to-end directly")
     parser.add_argument("--phase1-epochs", type=int, default=None, help="Number of epochs for Phase 1 backbone warmup")
+    parser.add_argument("--lr-scheduler", type=str, default=None, choices=["flat_cosine", "onecycle", "cosine", "plateau"], help="LR scheduler strategy")
+    parser.add_argument("--flat-pct", type=float, default=None, help="Fraction of epochs to hold flat (e.g. 0.05)")
     args = parser.parse_args()
 
     enable_two_phase = False if args.no_two_phase else None
@@ -478,6 +490,8 @@ def main() -> None:
         device_str=args.device,
         enable_two_phase_warmup=enable_two_phase,
         phase1_warmup_epochs=args.phase1_epochs,
+        lr_scheduler=args.lr_scheduler,
+        flat_pct=args.flat_pct,
     )
 
 

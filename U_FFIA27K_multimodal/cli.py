@@ -216,6 +216,10 @@ def mode_train(args: argparse.Namespace) -> None:
         sys.argv.append("--no-two-phase")
     if getattr(args, "phase1_epochs", None) is not None:
         sys.argv.extend(["--phase1-epochs", str(args.phase1_epochs)])
+    if getattr(args, "lr_scheduler", None) is not None:
+        sys.argv.extend(["--lr-scheduler", args.lr_scheduler])
+    if getattr(args, "flat_pct", None) is not None:
+        sys.argv.extend(["--flat-pct", str(args.flat_pct)])
     run_main()
 
 
@@ -303,6 +307,19 @@ def main() -> None:
         type=int,
         default=None,
         help="Number of epochs for Phase 1 backbone warmup (default: 200)."
+    )
+    parser.add_argument(
+        "--lr-scheduler",
+        type=str,
+        default=None,
+        choices=["flat_cosine", "onecycle", "cosine", "plateau"],
+        help="Learning rate scheduler strategy."
+    )
+    parser.add_argument(
+        "--flat-pct",
+        type=float,
+        default=None,
+        help="Fraction of epochs to keep LR flat at peak rate before cosine decay (default: 0.05)."
     )
 
     args = parser.parse_args()

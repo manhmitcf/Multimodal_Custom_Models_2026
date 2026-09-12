@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 import time
 import json
 import logging
@@ -38,6 +39,27 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def create_flat_cosine_scheduler(
+    optimizer: optim.Optimizer,
+    total_steps: int,
+    flat_steps: int,
+    min_lr_ratio: float = 1e-3
+) -> optim.lr_scheduler.LambdaLR:
+    """
+    Creates a Flat-Cosine LR Scheduler:
+    - Step 0 -> flat_steps: LR stays constant at initial LR (multiplier 1.0).
+    - flat_steps -> total_steps: LR decays via cosine curve down to min_lr_ratio.
+    """
+    def lr_lambda(current_step: int) -> float:
+        if current_step < flat_steps:
+            return 1.0
+        decay_steps = max(1, total_steps - flat_steps)
+        progress = min(1.0, max(0.0, (current_step - flat_steps) / decay_steps))
+        return min_lr_ratio + (1.0 - min_lr_ratio) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
 
 class MultimodalTrainer:
@@ -89,7 +111,9 @@ class MultimodalTrainer:
         self.aux_loss_weight = getattr(self.config, "aux_loss_weight", 0.3)
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
         self.steps_per_epoch = max(1, len(self.train_loader))
-        self.use_onecycle = getattr(self.config, "use_onecycle", True)
+        self.lr_scheduler_type = getattr(self.config, "lr_scheduler", "flat_cosine")
+        self.use_onecycle = getattr(self.config, "use_onecycle", False) or (self.lr_scheduler_type == "onecycle")
+        self.is_stepwise_scheduler = (self.lr_scheduler_type in ("flat_cosine", "onecycle")) or self.use_onecycle
 
         if self.enable_two_phase_warmup and self.phase1_warmup_epochs > 0:
             self.current_phase = 1
@@ -126,8 +150,22 @@ class MultimodalTrainer:
             )
             self.optimizer = self.optimizer_video  # Fallback handle
 
-            # Independent OneCycleLR schedulers for Phase 1
-            if self.use_onecycle:
+            # Independent schedulers for Phase 1
+            if self.lr_scheduler_type == "flat_cosine":
+                total_steps = self.phase1_warmup_epochs * self.steps_per_epoch
+                flat_steps = int(getattr(self.config, "flat_pct", 0.05) * total_steps)
+                min_lr = getattr(self.config, "min_lr", 1e-6)
+                base_lr = self.config.learning_rate
+                min_lr_ratio = min_lr / base_lr if base_lr > 0 else 1e-3
+                self.scheduler_video = create_flat_cosine_scheduler(
+                    self.optimizer_video, total_steps, flat_steps, min_lr_ratio
+                )
+                self.scheduler_audio = create_flat_cosine_scheduler(
+                    self.optimizer_audio, total_steps, flat_steps, min_lr_ratio
+                )
+                self.scheduler = self.scheduler_video
+                logger.info(f"Phase 1 Independent Flat-Cosine configured (Video & Audio lr={self.config.learning_rate}, flat_pct={getattr(self.config, 'flat_pct', 0.05)}).")
+            elif self.use_onecycle:
                 self.scheduler_video = optim.lr_scheduler.OneCycleLR(
                     self.optimizer_video,
                     max_lr=self.config.learning_rate,
@@ -154,14 +192,15 @@ class MultimodalTrainer:
                 self.scheduler_video = optim.lr_scheduler.CosineAnnealingLR(
                     self.optimizer_video,
                     T_max=self.phase1_warmup_epochs,
-                    eta_min=1e-6
+                    eta_min=getattr(self.config, "min_lr", 1e-6)
                 )
                 self.scheduler_audio = optim.lr_scheduler.CosineAnnealingLR(
                     self.optimizer_audio,
                     T_max=self.phase1_warmup_epochs,
-                    eta_min=1e-6
+                    eta_min=getattr(self.config, "min_lr", 1e-6)
                 )
                 self.scheduler = self.scheduler_video
+                logger.info(f"Phase 1 Independent CosineAnnealingLR configured (epochs={self.phase1_warmup_epochs}).")
         else:
             self.current_phase = 2
             if hasattr(self.loss_fn, "only_backbones"):
@@ -173,7 +212,20 @@ class MultimodalTrainer:
                 weight_decay=self.weight_decay
             )
 
-            if self.use_onecycle:
+            if self.lr_scheduler_type == "flat_cosine":
+                total_steps = self.config.epochs * self.steps_per_epoch
+                flat_steps = int(getattr(self.config, "flat_pct", 0.05) * total_steps)
+                min_lr = getattr(self.config, "min_lr", 1e-6)
+                base_lr = self.config.learning_rate
+                min_lr_ratio = min_lr / base_lr if base_lr > 0 else 1e-3
+                self.scheduler = create_flat_cosine_scheduler(
+                    self.optimizer,
+                    total_steps=total_steps,
+                    flat_steps=flat_steps,
+                    min_lr_ratio=min_lr_ratio
+                )
+                logger.info(f"Configured Flat-Cosine Scheduler: total_steps={total_steps}, flat_steps={flat_steps} ({getattr(self.config, 'flat_pct', 0.05)*100:.1f}%), lr={base_lr} -> min_lr={min_lr}.")
+            elif self.use_onecycle:
                 self.scheduler = optim.lr_scheduler.OneCycleLR(
                     self.optimizer,
                     max_lr=self.config.learning_rate,
@@ -189,9 +241,9 @@ class MultimodalTrainer:
                 self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                     self.optimizer,
                     T_max=self.config.epochs,
-                    eta_min=1e-6
+                    eta_min=getattr(self.config, "min_lr", 1e-6)
                 )
-                logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min=1e-6.")
+                logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min={getattr(self.config, 'min_lr', 1e-6)}.")
 
         # Evaluator and Timer
         self.evaluator = MultimodalEvaluator(model=self.model, loss_fn=self.loss_fn)
@@ -272,7 +324,7 @@ class MultimodalTrainer:
                 torch.nn.utils.clip_grad_norm_(self.audio_params, max_norm=5.0)
                 self.optimizer_audio.step()
 
-                if self.use_onecycle:
+                if self.is_stepwise_scheduler:
                     self.scheduler_video.step()
                     self.scheduler_audio.step()
 
@@ -303,7 +355,7 @@ class MultimodalTrainer:
                 torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=5.0)
                 self.optimizer.step()
 
-                if self.use_onecycle:
+                if self.is_stepwise_scheduler:
                     self.scheduler.step()
 
                 loss_val = loss.item()
@@ -583,7 +635,20 @@ class MultimodalTrainer:
                         logger.info(f">>> All parameters unfrozen (Fusion lr={self.config.learning_rate}, Backbones lr={self.config.learning_rate * 0.2}).")
 
                     remaining_epochs = max(1, self.config.epochs - self.phase1_warmup_epochs)
-                    if self.use_onecycle:
+                    if self.lr_scheduler_type == "flat_cosine":
+                        total_steps = remaining_epochs * self.steps_per_epoch
+                        flat_steps = int(getattr(self.config, "flat_pct", 0.05) * total_steps)
+                        min_lr = getattr(self.config, "min_lr", 1e-6)
+                        base_lr = self.config.learning_rate
+                        min_lr_ratio = min_lr / base_lr if base_lr > 0 else 1e-3
+                        self.scheduler = create_flat_cosine_scheduler(
+                            self.optimizer,
+                            total_steps=total_steps,
+                            flat_steps=flat_steps,
+                            min_lr_ratio=min_lr_ratio
+                        )
+                        logger.info(f"Phase 2 Configured Flat-Cosine: total_steps={total_steps}, flat_steps={flat_steps} ({getattr(self.config, 'flat_pct', 0.05)*100:.1f}%), lr={base_lr} -> min_lr={min_lr}.")
+                    elif self.use_onecycle:
                         self.scheduler = optim.lr_scheduler.OneCycleLR(
                             self.optimizer,
                             max_lr=max_lrs,
@@ -598,12 +663,12 @@ class MultimodalTrainer:
                         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                             self.optimizer,
                             T_max=remaining_epochs,
-                            eta_min=1e-6
+                            eta_min=getattr(self.config, "min_lr", 1e-6)
                         )
                     logger.info("==================================================")
 
             train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
-            if not self.use_onecycle:
+            if not self.is_stepwise_scheduler:
                 self.scheduler.step()
 
             # Evaluate on validation split
