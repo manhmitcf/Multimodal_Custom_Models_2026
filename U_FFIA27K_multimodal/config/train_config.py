@@ -40,8 +40,15 @@ class AudioFeaturesConfig(BaseModel):
     window_size: int = Field(default=4096, description="STFT window size in samples.")
     hop_size: int = Field(default=2048, description="STFT hop size in samples.")
     mel_bins: int = Field(default=2049, description="Number of STFT linear frequency bins (window_size // 2 + 1).")
+    fmin: int = Field(default=0, description="Minimum frequency in Hz.")
+    fmax: int = Field(default=128000, description="Maximum frequency in Hz.")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
+    use_spec_augment: bool = Field(default=True, description="Enable SpecAugment during training.")
+    time_drop_width: int = Field(default=24, description="Width of time drop stripes (frames).")
+    time_stripes_num: int = Field(default=2, description="Number of time drop stripes.")
+    freq_drop_width: int = Field(default=128, description="Width of frequency drop stripes (STFT linear bins).")
+    freq_stripes_num: int = Field(default=2, description="Number of frequency drop stripes.")
 
 
 

@@ -12,6 +12,7 @@ if project_root not in sys.path:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchlibrosa.augmentation import SpecAugmentation
 
 from config.train_config import AudioFeaturesConfig
 
@@ -22,7 +23,8 @@ class AudioFrontend(nn.Module):
     """
     GPU-based High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 frequency bins).
     Applies Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis, cuFFT RFFT,
-    Log Magnitude, and Temporal Mean Pooling to extract a 2049-dimensional spectral vector.
+    Log Magnitude, SpecAugment (Time & Frequency Masking on STFT spectrogram),
+    and Temporal Mean Pooling to extract a 2049-dimensional spectral vector.
     """
     def __init__(self, config: Optional[AudioFeaturesConfig] = None) -> None:
         super().__init__()
@@ -38,21 +40,41 @@ class AudioFrontend(nn.Module):
         self.alpha_max = float(getattr(self.config, 'alpha_max', 0.99))
         self.use_tkeo = bool(getattr(self.config, 'use_tkeo', True))
 
+        self.use_spec_augment = bool(getattr(self.config, 'use_spec_augment', True))
+        self.time_drop_width = int(getattr(self.config, 'time_drop_width', 24))
+        self.time_stripes_num = int(getattr(self.config, 'time_stripes_num', 2))
+        self.freq_drop_width = int(getattr(self.config, 'freq_drop_width', 128))
+        self.freq_stripes_num = int(getattr(self.config, 'freq_stripes_num', 2))
+
         # Register Hann window buffer
         window = torch.hann_window(self.n_fft)
         self.register_buffer('window', window)
+
+        # SpecAugment Extractor on GPU using torchlibrosa
+        if self.use_spec_augment:
+            self.spec_augmenter = SpecAugmentation(
+                time_drop_width=self.time_drop_width,
+                time_stripes_num=self.time_stripes_num,
+                freq_drop_width=self.freq_drop_width,
+                freq_stripes_num=self.freq_stripes_num
+            )
+        else:
+            self.spec_augmenter = None
 
         # Normalization layer over 2049 frequency bins
         self.norm = nn.LayerNorm(self.stft_bins)
 
         logger.info("==================================================")
-        logger.info("Initialized TKEO-STFT Audio Frontend (256 kHz, Pure Spectral):")
+        logger.info("Initialized TKEO-STFT Audio Frontend (256 kHz, Spectral + SpecAugment):")
         logger.info(f"  - Sample Rate:        {self.sample_rate} Hz (256 kHz)")
         logger.info(f"  - FFT Size (n_fft):   {self.n_fft}")
         logger.info(f"  - Hop Length:         {self.hop_length}")
         logger.info(f"  - STFT Output Bins:   {self.stft_bins} linear bins")
         logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max})")
-        logger.info(f"  - SpecAugment:        DISABLED (Pure Log-Magnitude)")
+        logger.info(f"  - SpecAugment:        {'ENABLED' if self.use_spec_augment else 'DISABLED'}")
+        if self.use_spec_augment:
+            logger.info(f"    * Time Masking: Width={self.time_drop_width} frames, Stripes={self.time_stripes_num}")
+            logger.info(f"    * Freq Masking: Width={self.freq_drop_width} bins, Stripes={self.freq_stripes_num}")
         logger.info("==================================================")
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
@@ -102,10 +124,17 @@ class AudioFrontend(nn.Module):
         # 5. Log Magnitude: log(|X| + 1e-8)
         log_mag = torch.log(torch.abs(complex_spec) + 1e-8)
 
-        # 6. Mean over time axis -> [Batch, 2049]
+        # 6. SpecAugment during training (Time & Frequency Masking on GPU)
+        if self.training and self.use_spec_augment and self.spec_augmenter is not None:
+            # torchlibrosa SpecAugmentation expects 4D tensor: [Batch, Channels, Time_Steps, Freq_Bins]
+            log_mag_4d = log_mag.unsqueeze(1)
+            log_mag_4d = self.spec_augmenter(log_mag_4d)
+            log_mag = log_mag_4d.squeeze(1)
+
+        # 7. Mean over time axis -> [Batch, 2049]
         spec_vector = log_mag.mean(dim=1)
 
-        # 7. Layer Normalization
+        # 8. Layer Normalization
         out = self.norm(spec_vector)
 
         return out

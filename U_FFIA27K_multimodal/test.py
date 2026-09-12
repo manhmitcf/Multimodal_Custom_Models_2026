@@ -119,12 +119,23 @@ def test_kinematics_and_frontend(model: nn.Module, config: TrainConfig, device: 
     if hasattr(model, "audio_frontend") and model.audio_frontend is not None:
         audio_samples = config.audio_features.sample_rate * 2
         dummy_wave = torch.randn(B, audio_samples, device=device)
-        stft_feat = model.audio_frontend(dummy_wave)
+        
+        # Test train mode (SpecAugment active)
+        model.audio_frontend.train()
+        stft_feat_train = model.audio_frontend(dummy_wave)
         expected_bins = config.audio_features.mel_bins
-        if stft_feat.shape[-1] != expected_bins:
-            raise ValueError(f"STFT frequency bins mismatch! Got {stft_feat.shape[-1]}, expected {expected_bins}")
+        if stft_feat_train.shape[-1] != expected_bins:
+            raise ValueError(f"STFT frequency bins mismatch! Got {stft_feat_train.shape[-1]}, expected {expected_bins}")
+
+        # Test eval mode (SpecAugment bypassed)
+        model.audio_frontend.eval()
+        stft_feat_eval = model.audio_frontend(dummy_wave)
+        if stft_feat_eval.shape[-1] != expected_bins:
+            raise ValueError(f"STFT frequency bins mismatch in eval! Got {stft_feat_eval.shape[-1]}, expected {expected_bins}")
+
         if verbose:
-            print(f"  - Audio TKEO-STFT feature shape: {list(stft_feat.shape)} ({expected_bins} linear bins)")
+            aug_str = f"SpecAugment: {config.audio_features.time_drop_width}t x {config.audio_features.freq_drop_width}f" if getattr(config.audio_features, 'use_spec_augment', False) else "SpecAugment: Off"
+            print(f"  - Audio TKEO-STFT feature shape: {list(stft_feat_train.shape)} ({expected_bins} linear bins, {aug_str})")
 
     if verbose:
         print("  >>> [PASS] Video kinematics and audio frontend pipelines 100% verified.")
