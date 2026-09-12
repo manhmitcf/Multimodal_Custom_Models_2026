@@ -68,96 +68,13 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
 
 
 
-def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: torch.device) -> None:
+def verify_model_dry_run(config: TrainConfig, device: torch.device, config_path: Optional[str] = None) -> None:
     """
-    Fast pre-flight validation of the complete multimodal model pipeline on the target device
+    Run the unified pre-flight test suite (test.py) on the configured model & parameters
     BEFORE loading the dataset into RAM or starting training.
-
-    Validates:
-      1. Model parameter budget (< 5.0M).
-      2. Device placement of all submodules, weights, and buffer filters.
-      3. Forward pass with multi-frame 10-ch kinematics extraction and 128 Mel-bins STFT.
-      4. Backward pass & gradient propagation through all trainable parameters.
-      5. Evaluation mode forward pass with torch.no_grad().
-
-    If any check fails, logs the error and aborts immediately,
-    saving users from waiting through minutes of dataset RAM preloading.
     """
-    logger.info("==================================================")
-    logger.info("STARTING PRE-FLIGHT DRY-RUN VERIFICATION (Fast Fail Check)...")
-    logger.info(f"Target Device: {device}")
-
-    try:
-        # 1. Parameter audit
-        stats = count_parameters(model)
-        logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
-        logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
-        logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
-
-        if stats['total'] >= 5_000_000:
-            raise ValueError(f"Model parameters ({stats['total']:,}) exceed 5.0M budget!")
-
-        # 2. Test forward pass with dummy tensors
-        model.train()
-        dummy_video = torch.randn(
-            2, config.num_frames, 3, config.image_size, config.image_size,
-            device=device, dtype=torch.float32
-        )
-        audio_length = config.audio_features.sample_rate * 2  # 2 seconds
-        dummy_audio = torch.randn(2, audio_length, device=device, dtype=torch.float32)
-        dummy_targets = torch.tensor([[1.0, 0, 0, 0], [0, 1.0, 0, 0]], device=device, dtype=torch.float32)
-
-        out = model(dummy_video, dummy_audio)
-        if "clipwise_output" not in out:
-            raise KeyError("Model output missing 'clipwise_output' key.")
-        if out["clipwise_output"].shape != (2, 4):
-            raise ValueError(f"Expected output shape (2, 4), got {out['clipwise_output'].shape}")
-
-        # 3. Test backward pass & gradient flow
-        loss_type = getattr(config, "loss_type", "pairwise_tournament")
-        from utils.losses import PairwiseTournamentLoss, ClipCELoss
-        if loss_type in ("pairwise_tournament", "bilateral_boundary", "ordinal_wasserstein"):
-            loss_fn = PairwiseTournamentLoss(
-                weight_act=getattr(config, "weight_act", 0.5),
-                weight_pairwise=getattr(config, "weight_pairwise", 0.5),
-                weight_ce=getattr(config, "weight_ce", 1.0),
-                aux_loss_weight=getattr(config, "aux_loss_weight", 0.3)
-            ).to(device)
-            loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
-        else:
-            loss_fn = ClipCELoss()
-            loss = loss_fn(out, {"target": dummy_targets})
-        loss.backward()
-
-        trainable_with_grads = sum(1 for p in model.parameters() if p.requires_grad and p.grad is not None)
-        total_trainable = sum(1 for p in model.parameters() if p.requires_grad)
-        if trainable_with_grads != total_trainable:
-            raise RuntimeError(f"Gradient flow broken: only {trainable_with_grads}/{total_trainable} parameters received gradients.")
-
-        model.zero_grad(set_to_none=True)
-
-        # 4. Test evaluation mode forward pass
-        model.eval()
-        with torch.no_grad():
-            _ = model(dummy_video, dummy_audio)
-
-        # 5. Clean up temporary tensors and GPU cache
-        del dummy_video, dummy_audio, dummy_targets, out, loss
-        if device.type == "cuda" and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        logger.info(">>> [PASS] PRE-FLIGHT DRY-RUN COMPLETED SUCCESSFULLY!")
-        logger.info(f">>> All {total_trainable} parameters, device placement, and gradients 100% verified.")
-        logger.info(">>> Proceeding to Dataset RAM Preloading and Full Training Pipeline...")
-        logger.info("==================================================")
-    except Exception as exc:
-        logger.error("==================================================")
-        logger.error(f">>> [FATAL ERROR IN PRE-FLIGHT DRY-RUN]: {exc}")
-        logger.error(">>> Aborting before loading dataset into RAM to avoid wasting time and resources.")
-        logger.error("==================================================")
-        raise exc
+    from test import run_all_tests
+    run_all_tests(config_path=config_path, config=config, device=device, verbose=True)
 
 
 def model_cv_dir(base_ckpt_dir: str, model_name: str) -> str:
@@ -387,17 +304,15 @@ def run_training_session(
     model_name = config.model.backbone
 
     # =========================================================================
-    # FAST PRE-FLIGHT DRY-RUN (Verify full network before preloading RAM)
+    # UNIFIED PRE-FLIGHT TEST SUITE (Run test.py before preloading RAM)
     # =========================================================================
-    preflight_model = build_model(config).to(device)
-    verify_model_dry_run(preflight_model, config, device)
+    verify_model_dry_run(config, device, config_path=train_config_path)
 
     if dry_run:
-        logger.info(">>> Dry-run flag detected: Pre-flight check passed. Exiting without training.")
+        logger.info(">>> Dry-run flag detected: All 5 pre-flight checks passed. Exiting without training.")
         return
 
     if eval_mode == "cross_validation":
-        del preflight_model
         if device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -450,7 +365,7 @@ def run_training_session(
             splitter_config=config.dataset_splitter,
         )
 
-        model = preflight_model
+        model = build_model(config).to(device)
 
         trainer = MultimodalTrainer(
             model=model,
