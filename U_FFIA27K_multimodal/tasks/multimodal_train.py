@@ -39,6 +39,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _safe_torch_save(obj: Any, target_path: str) -> bool:
+    """
+    Atomic fail-safe saving for PyTorch checkpoints.
+    Saves to a temporary file first, then atomically renames to target_path.
+    Prevents corrupt/truncated files if training is interrupted or if disk is slow.
+    """
+    tmp_path = f"{target_path}.tmp"
+    try:
+        torch.save(obj, tmp_path)
+        if os.path.exists(target_path):
+            try:
+                os.replace(tmp_path, target_path)
+            except OSError:
+                os.remove(target_path)
+                os.rename(tmp_path, target_path)
+        else:
+            os.rename(tmp_path, target_path)
+        return True
+    except Exception as exc:
+        logger.error(f"[Checkpoint Save Error] Could not safely write '{target_path}': {exc}")
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        return False
+
+
 class MultimodalTrainer:
     """
     Unified Trainer class for Pure End-to-End Multimodal Fish Feeding Intensity Classification
@@ -81,7 +109,9 @@ class MultimodalTrainer:
         # Training Setup
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
         self.steps_per_epoch = max(1, len(self.train_loader))
-        self.lr_scheduler_type = getattr(self.config, "lr_scheduler", "cosine")
+        self.lr_scheduler_type = str(getattr(self.config, "lr_scheduler", "cosine")).lower()
+        self.lr_step_mode = str(getattr(self.config, "lr_step_mode", "epoch")).lower()
+        self.warmup_pct = float(getattr(self.config, "warmup_pct", 0.05))
 
         # Single unified optimizer for all parameters (Backbones + Aux Heads + Multimodal Fusion)
         self.optimizer = optimizer if optimizer is not None else optim.AdamW(
@@ -90,13 +120,38 @@ class MultimodalTrainer:
             weight_decay=self.weight_decay
         )
 
-        min_lr = getattr(self.config, "min_lr", 1e-8)
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer,
-            T_max=self.config.epochs,
-            eta_min=min_lr
-        )
-        logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min={min_lr}.")
+        min_lr = float(getattr(self.config, "min_lr", 1e-8))
+        base_lr = float(self.config.learning_rate)
+
+        if self.lr_scheduler_type == "onecycle":
+            total_steps = (self.config.epochs * self.steps_per_epoch) if self.lr_step_mode == "batch" else self.config.epochs
+            div_factor = 25.0
+            final_div_factor = max(1.0, (base_lr / max(min_lr, 1e-12)) / div_factor)
+            self.scheduler = optim.lr_scheduler.OneCycleLR(
+                self.optimizer,
+                max_lr=base_lr,
+                total_steps=total_steps,
+                pct_start=self.warmup_pct,
+                div_factor=div_factor,
+                final_div_factor=final_div_factor
+            )
+            logger.info(
+                f"Configured OneCycleLR: total_steps={total_steps} (step_mode='{self.lr_step_mode}'), "
+                f"max_lr={base_lr}, min_lr={min_lr}, warmup_pct={self.warmup_pct*100:.1f}%."
+            )
+        else:
+            # Default: CosineAnnealingLR
+            T_max = (self.config.epochs * self.steps_per_epoch) if self.lr_step_mode == "batch" else self.config.epochs
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=T_max,
+                eta_min=min_lr
+            )
+            logger.info(
+                f"Configured CosineAnnealingLR: T_max={T_max} (step_mode='{self.lr_step_mode}'), "
+                f"base_lr={base_lr}, eta_min={min_lr}."
+            )
+
 
         # Evaluator and Timer
         self.evaluator = MultimodalEvaluator(model=self.model, loss_fn=self.loss_fn)
@@ -165,10 +220,11 @@ class MultimodalTrainer:
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
         lr_sched_name = getattr(self, "lr_scheduler_type", getattr(self.config, "lr_scheduler", "cosine"))
-        logger.info(f"  - LR Scheduler:             {lr_sched_name} (T_max={self.config.epochs}, min_lr={getattr(self.config, 'min_lr', 1e-8)})")
+        step_mode_name = getattr(self, "lr_step_mode", "epoch")
+        logger.info(f"  - LR Scheduler:             {lr_sched_name} (step_mode='{step_mode_name}', min_lr={getattr(self.config, 'min_lr', 1e-8)})")
         logger.info(f"  - Auxiliary Supervision:    aux_loss_weight = {self.aux_loss_weight} (Video & Audio Aux Heads)")
         logger.info(f"  - Training Strategy:        Pure End-to-End (Unified Optimizer, No Two-Phase)")
-        logger.info(f"  - Monitor Metric:           {self.config.monitor} (Validation Accuracy)")
+        logger.info(f"  - Monitor Metric:           {self.config.monitor} (Default: Validation Accuracy)")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
@@ -197,6 +253,9 @@ class MultimodalTrainer:
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
             torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=5.0)
             self.optimizer.step()
+
+            if self.lr_step_mode == "batch":
+                self.scheduler.step()
 
             loss_val = loss.item()
             total_loss += loss_val
@@ -228,10 +287,11 @@ class MultimodalTrainer:
 
     def train(self) -> Dict[str, Any]:
         monitor_metric = str(getattr(self.config, 'monitor', 'val_acc')).lower()
-        logger.info(f"Starting training pipeline (Monitor metric: {monitor_metric} [Validation Accuracy])...")
+        logger.info(f"Starting training pipeline (Monitor metric: {monitor_metric})...")
         training_start_time = time.perf_counter()
 
         best_acc = 0.0
+        best_qwk = -1.0
         best_mAP = 0.0
         best_loss = float('inf')
         best_epoch = 1
@@ -245,13 +305,15 @@ class MultimodalTrainer:
         for epoch in range(1, self.config.epochs + 1):
             epoch_start_time = time.perf_counter()
             train_loss, train_acc, train_mAP = self._train_epoch(epoch)
-            self.scheduler.step()
+            if self.lr_step_mode == "epoch":
+                self.scheduler.step()
 
             # Evaluate on validation split
             self.model.eval()
             val_stats = self.evaluator.evaluate(self.val_loader)
             val_loss = float(val_stats.get('loss', 0.0))
             val_acc = float(np.mean(val_stats['accuracy']))
+            val_qwk = float(val_stats.get('qwk', 0.0))
             val_mAP = float(np.mean(val_stats['average_precision']))
             val_acc_v = float(val_stats.get('acc_video', 0.0))
             val_acc_a = float(val_stats.get('acc_audio', 0.0))
@@ -265,19 +327,24 @@ class MultimodalTrainer:
             logger.info(
                 f"Epoch {epoch:03d} ({epoch_time:.1f}s): "
                 f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | {lr_info} | "
-                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | "
+                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | "
                 f"(Aux Video Acc = {val_acc_v:.4f}, Aux Audio Acc = {val_acc_a:.4f})"
             )
 
-            # Track and save best overall Multimodal checkpoint (Monitored by Validation Accuracy)
+            # Track and save best overall Multimodal checkpoint
             is_best = False
             if monitor_metric == 'loss':
                 score = -val_loss
                 if val_loss < best_val_metric:
                     best_val_metric = val_loss
                     is_best = True
+            elif monitor_metric == 'qwk':
+                score = val_qwk
+                if val_qwk > best_val_metric:
+                    best_val_metric = val_qwk
+                    is_best = True
             else:
-                # Default & primary monitor: Validation Accuracy (acc val)
+                # Default & primary monitor: Validation Accuracy (val_acc / accuracy)
                 score = val_acc
                 if val_acc > best_val_metric:
                     best_val_metric = val_acc
@@ -286,30 +353,31 @@ class MultimodalTrainer:
             if is_best:
                 best_epoch = epoch
                 best_acc = val_acc
+                best_qwk = val_qwk
                 best_mAP = val_mAP
                 best_loss = val_loss
                 best_val_statistics = val_stats
 
                 # 1. Save full Multimodal model
-                torch.save(self.model.state_dict(), self.best_checkpoint_path)
+                _safe_torch_save(self.model.state_dict(), self.best_checkpoint_path)
 
                 # 2. Extract & save Video Backbone + Aux Head Video
                 v_keys = [k for k in self.model.state_dict().keys() if k.startswith('video_backbone.') or k.startswith('aux_head_video.')]
                 if v_keys:
-                    torch.save({k: self.model.state_dict()[k] for k in v_keys}, self.best_video_path)
+                    _safe_torch_save({k: self.model.state_dict()[k] for k in v_keys}, self.best_video_path)
 
                 # 3. Extract & save Audio Backbone + Audio Frontend + Aux Head Audio
                 a_keys = [k for k in self.model.state_dict().keys() if k.startswith('audio_backbone.') or k.startswith('audio_frontend.') or k.startswith('aux_head_audio.')]
                 if a_keys:
-                    torch.save({k: self.model.state_dict()[k] for k in a_keys}, self.best_audio_path)
+                    _safe_torch_save({k: self.model.state_dict()[k] for k in a_keys}, self.best_audio_path)
 
                 logger.info(f"[*] New best validation performance! Saved checkpoints:")
-                logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f})")
+                logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f}, Val QWK = {best_qwk:.4f})")
                 logger.info(f"    - Peak Video Backbone:     '{self.best_video_path}'")
                 logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path}'")
 
             logger.info(
-                f"Current best: Epoch {best_epoch:03d} | Val Acc: {best_acc:.4f} (Loss: {best_loss:.5f})"
+                f"Current best: Epoch {best_epoch:03d} | Val Acc: {best_acc:.4f} | Val QWK: {best_qwk:.4f} (Loss: {best_loss:.5f})"
             )
 
             # Always save last checkpoint with full resumption state
@@ -321,9 +389,10 @@ class MultimodalTrainer:
                 'best_epoch': best_epoch,
                 'best_val_metric': best_val_metric,
                 'best_acc': best_acc,
+                'best_qwk': best_qwk,
                 'val_statistics': val_stats
             }
-            torch.save(resumption_checkpoint, self.last_checkpoint_path)
+            _safe_torch_save(resumption_checkpoint, self.last_checkpoint_path)
 
             # Log to history CSV
             self.logger.log_epoch(
@@ -356,33 +425,60 @@ class MultimodalTrainer:
         logger.info("==================================================")
         logger.info("Training complete. Starting evaluation on Test split...")
         if os.path.exists(self.best_checkpoint_path):
-            self.model.load_state_dict(torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=True))
-            logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
+            try:
+                state_dict = torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=True)
+                self.model.load_state_dict(state_dict)
+                logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
+            except Exception as exc:
+                logger.warning(f"Failed to load checkpoint with weights_only=True ({exc}), attempting with weights_only=False...")
+                try:
+                    state_dict = torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=False)
+                    self.model.load_state_dict(state_dict)
+                    logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
+                except Exception as exc2:
+                    logger.error(f"Could not reload best checkpoint: {exc2}. Proceeding with current in-memory model weights.")
+        else:
+            logger.warning(f"Best checkpoint '{self.best_checkpoint_path}' not found. Evaluating in-memory model weights.")
 
         self.model.eval()
         final_val_stats = best_val_statistics if best_val_statistics is not None else self.evaluator.evaluate(self.val_loader)
         final_test_stats = self.evaluator.evaluate(self.test_loader)
 
         test_acc = float(np.mean(final_test_stats['accuracy']))
+        test_qwk = float(final_test_stats.get('qwk', 0.0))
         test_mAP = float(np.mean(final_test_stats['average_precision']))
-        logger.info(f"TEST Results -> Accuracy: {test_acc:.4f} | mAP: {test_mAP:.4f}")
+        logger.info(f"TEST Results -> Accuracy: {test_acc:.4f} | QWK: {test_qwk:.4f} | mAP: {test_mAP:.4f}")
         logger.info(f"Detailed Classification Report:\n{final_test_stats.get('message', '')}")
         if 'confu_matrix' in final_test_stats:
             logger.info(f"Confusion Matrix:\n{final_test_stats['confu_matrix']}")
 
         # Measure inference latency
         logger.info("Measuring model Inference Latency on device...")
-        inference_latency_ms = self.timer.measure_latency_per_sample()
+        try:
+            num_frames = getattr(self.config, "num_frames", 2)
+            image_size = getattr(self.config, "image_size", 224)
+            sample_rate = getattr(getattr(self.config, "audio_features", None), "sample_rate", 256000)
+            audio_samples = int(sample_rate * 2)
+            inference_latency_ms = self.timer.measure_latency_per_sample(
+                video_shape=(1, num_frames, 3, image_size, image_size),
+                audio_shape=(1, audio_samples)
+            )
+        except Exception as exc:
+            logger.warning(f"Inference latency measurement failed: {exc}. Defaulting to 0.0 ms.")
+            inference_latency_ms = 0.0
 
         # Save summary report
-        self.logger.save_summary(
-            training_time=training_duration,
-            inference_time_ms=inference_latency_ms,
-            val_statistics=final_val_stats,
-            test_statistics=final_test_stats,
-            total_params_m=self.param_stats.get('total_million', 0.0),
-            gflops=self.model_flops
-        )
+        try:
+            self.logger.save_summary(
+                training_time=training_duration,
+                inference_time_ms=inference_latency_ms,
+                val_statistics=final_val_stats,
+                test_statistics=final_test_stats,
+                total_params_m=self.param_stats.get('total_million', 0.0),
+                gflops=self.model_flops
+            )
+        except Exception as exc:
+            logger.error(f"Failed to export summary report: {exc}")
 
         # Export consolidated detailed evaluation report (.txt and .json)
         try:

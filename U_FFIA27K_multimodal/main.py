@@ -163,7 +163,16 @@ def zip_directory(source_dir: str, output_path: str) -> str:
             if not file_path.is_file():
                 continue
             resolved_file = file_path.resolve()
-            if resolved_file == target_path or ".git" in resolved_file.parts or resolved_file.suffix == ".zip":
+            # Exclude target zip, git history, zip archives, temporary files, and local-only secrets
+            if (
+                resolved_file == target_path
+                or ".git" in resolved_file.parts
+                or resolved_file.suffix in (".zip", ".tmp")
+                or "cli.txt" in resolved_file.name
+                or "run_marimo.txt" in resolved_file.name
+                or "local_cli" in resolved_file.parts
+                or "AGENTS.md" in resolved_file.name
+            ):
                 continue
             zip_file.write(resolved_file, arcname=resolved_file.relative_to(source_path))
 
@@ -231,7 +240,15 @@ def upload_artifact_if_enabled(upload_config: ArtifactUploadConfig, config: Trai
         # Fallback to current project root
         source_dir = str(Path(__file__).resolve().parent.parent)
 
-    zip_parent = Path(upload_config.zip_path).parent if upload_config.zip_path else Path(source_dir).parent
+    try:
+        if upload_config.zip_path and Path(upload_config.zip_path).parent.exists():
+            zip_parent = Path(upload_config.zip_path).parent
+        else:
+            zip_parent = Path(source_dir).parent
+        zip_parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        zip_parent = Path(source_dir)
+
     output_zip_path = str(zip_parent / artifact_filename)
     artifact_zip = zip_directory(source_dir, output_zip_path)
 
@@ -251,14 +268,18 @@ def upload_artifact_if_enabled(upload_config: ArtifactUploadConfig, config: Trai
     logger.info(f"Repo type:                            '{upload_config.repo_type}'")
     logger.info("==================================================")
 
-    upload_file(
-        path_or_fileobj=artifact_zip,
-        path_in_repo=artifact_filename,
-        repo_id=upload_config.repo_id,
-        repo_type=upload_config.repo_type,
-        token=token,
-    )
-    logger.info("Artifact upload to Hugging Face completed successfully!")
+    try:
+        upload_file(
+            path_or_fileobj=artifact_zip,
+            path_in_repo=artifact_filename,
+            repo_id=upload_config.repo_id,
+            repo_type=upload_config.repo_type,
+            token=token,
+        )
+        logger.info("Artifact upload to Hugging Face completed successfully!")
+    except Exception as exc:
+        logger.error(f"Hugging Face upload encountered an issue: {exc}")
+        logger.info(f"All training artifacts and checkpoints remain 100% safely preserved locally at '{source_dir}'.")
 
 
 def run_training_session(

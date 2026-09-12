@@ -250,21 +250,44 @@ def test_optimizer_and_scheduler(
     config: TrainConfig,
     verbose: bool = True
 ) -> bool:
+    sched_type = str(getattr(config, "lr_scheduler", "cosine")).lower()
+    step_mode = str(getattr(config, "lr_step_mode", "epoch")).lower()
+    min_lr = float(getattr(config, "min_lr", 1e-8))
+    base_lr = float(config.learning_rate)
+    warmup_pct = float(getattr(config, "warmup_pct", 0.05))
+
     if verbose:
         print("\n" + "=" * 65)
-        print("  TEST 5: OPTIMIZER & COSINE-ANNEALING SCHEDULER STEP")
+        print(f"  TEST 5: OPTIMIZER & LR SCHEDULER STEP ({sched_type.upper()} - {step_mode.upper()})")
         print("=" * 65)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=config.learning_rate,
+        lr=base_lr,
         weight_decay=config.weight_decay
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=config.epochs,
-        eta_min=getattr(config, "min_lr", 1e-8)
-    )
+
+    if sched_type == "onecycle":
+        total_steps = (config.epochs * 10) if step_mode == "batch" else config.epochs
+        div_factor = 25.0
+        final_div_factor = max(1.0, (base_lr / max(min_lr, 1e-12)) / div_factor)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=base_lr,
+            total_steps=total_steps,
+            pct_start=warmup_pct,
+            div_factor=div_factor,
+            final_div_factor=final_div_factor
+        )
+        sched_name = f"OneCycleLR (max={base_lr}, min={min_lr}, warmup={warmup_pct*100:.1f}%)"
+    else:
+        T_max = (config.epochs * 10) if step_mode == "batch" else config.epochs
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=T_max,
+            eta_min=min_lr
+        )
+        sched_name = f"CosineAnnealingLR (T_max={T_max}, min={min_lr})"
 
     init_lr = optimizer.param_groups[0]["lr"]
     optimizer.step()
@@ -273,16 +296,21 @@ def test_optimizer_and_scheduler(
 
     if verbose:
         print(f"  - Optimizer:                     AdamW (weight_decay={config.weight_decay})")
-        print(f"  - Scheduler:                     CosineAnnealingLR (T_max={config.epochs}, eta_min={getattr(config, 'min_lr', 1e-8)})")
-        print(f"  - Initial LR (Epoch 0):          {init_lr:.6e}")
-        print(f"  - Stepped LR (Epoch 1):          {stepped_lr:.6e}")
+        print(f"  - Scheduler:                     {sched_name} [{step_mode.upper()}]")
+        print(f"  - Initial LR (Step 0):           {init_lr:.6e}")
+        print(f"  - Stepped LR (Step 1):           {stepped_lr:.6e}")
 
-    if stepped_lr >= init_lr:
-        raise ValueError("Scheduler did not decay learning rate as expected!")
+    if sched_type == "onecycle":
+        if stepped_lr <= init_lr:
+            raise ValueError("OneCycleLR did not increase learning rate during warmup as expected!")
+    else:
+        if stepped_lr >= init_lr:
+            raise ValueError("CosineAnnealingLR did not decay learning rate as expected!")
 
     if verbose:
-        print("  >>> [PASS] Optimizer & CosineAnnealingLR verified smoothly.")
+        print(f"  >>> [PASS] Optimizer & {sched_type.upper()} verified smoothly.")
     return True
+
 
 
 def run_all_tests(
