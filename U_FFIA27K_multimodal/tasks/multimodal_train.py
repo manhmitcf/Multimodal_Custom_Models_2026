@@ -173,7 +173,7 @@ class MultimodalTrainer:
 
         # Training Setup
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
-        self.max_norm = float(getattr(self.config, "max_norm", 1.0))
+        self.max_norm = float(getattr(self.config, "max_norm", 5.0))
         self.warmup_pct = float(getattr(self.config, "warmup_pct", 0.05))
         self.use_warmup = bool(getattr(self.config, "use_warmup", True)) and (self.warmup_pct > 0.0)
 
@@ -193,7 +193,7 @@ class MultimodalTrainer:
                 lr=self.config.learning_rate
             )
 
-        min_lr = float(getattr(self.config, "min_lr", 1e-8))
+        min_lr = float(getattr(self.config, "min_lr", 1e-6))
         base_lr = float(self.config.learning_rate)
 
         if self.use_warmup:
@@ -301,7 +301,7 @@ class MultimodalTrainer:
         logger.info(f"  - Max Epochs:               {self.config.epochs}")
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         sched_name = "SequentialLR (LinearLR Warmup + CosineAnnealingLR)" if self.use_warmup else "Pure CosineAnnealingLR (No Warmup)"
-        logger.info(f"  - LR Scheduler:             {sched_name} (step_mode='epoch', min_lr={getattr(self.config, 'min_lr', 1e-8)})")
+        logger.info(f"  - LR Scheduler:             {sched_name} (step_mode='epoch', min_lr={getattr(self.config, 'min_lr', 1e-6)})")
         if self.param_group_stats is not None:
             logger.info(f"  - Optimizer:                AdamW (Decay wd={self.weight_decay}: {self.param_group_stats['decay_params']:,} params, No-Decay wd=0.0: {self.param_group_stats['no_decay_params']:,} params)")
         else:

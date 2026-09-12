@@ -252,7 +252,7 @@ def test_optimizer_and_scheduler(
     config: TrainConfig,
     verbose: bool = True
 ) -> bool:
-    min_lr = float(getattr(config, "min_lr", 1e-8))
+    min_lr = float(getattr(config, "min_lr", 1e-6))
     base_lr = float(config.learning_rate)
     warmup_pct = float(getattr(config, "warmup_pct", 0.05))
     use_warmup = bool(getattr(config, "use_warmup", True)) and (warmup_pct > 0.0)
@@ -317,7 +317,7 @@ def test_optimizer_and_scheduler(
         )
         sched_name = f"Pure CosineAnnealingLR (No Warmup, T_max={config.epochs}, min={min_lr})"
 
-    max_norm = float(getattr(config, "max_norm", 1.0))
+    max_norm = float(getattr(config, "max_norm", 5.0))
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=max_norm)
 

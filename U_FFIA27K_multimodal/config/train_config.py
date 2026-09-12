@@ -125,7 +125,7 @@ class TrainConfig(BaseModel):
     batch_size: int = Field(default=32, gt=0, description="Training batch size.")
     learning_rate: float = Field(default=1e-3, gt=0, description="Initial learning rate.")
     weight_decay: float = Field(default=0.05, ge=0, description="Weight decay factor for AdamW applied to 2D/4D weights (biases and 1D normalization weights are excluded at weight_decay=0.0).")
-    max_norm: float = Field(default=1.0, ge=0.1, le=50.0, description="Maximum gradient norm threshold for gradient clipping (torch.nn.utils.clip_grad_norm_).")
+    max_norm: float = Field(default=5.0, ge=0.1, le=50.0, description="Maximum gradient norm threshold for gradient clipping (torch.nn.utils.clip_grad_norm_).")
     seed: int = Field(default=42, ge=0, description="Master random seed for full reproducibility (PyTorch, NumPy, Python, CUDA, Dataset).")
     ckpt_dir: str = Field(default="checkpoint/", description="Directory path to save checkpoints.")
     monitor: str = Field(default="val_acc", description="Metric to monitor for early stopping and best checkpoint: 'val_acc' (default), 'qwk', or 'loss'.")
@@ -136,7 +136,7 @@ class TrainConfig(BaseModel):
     lr_scheduler: str = Field(default="cosine", description="Learning rate scheduler: 'cosine' (CosineAnnealingLR with optional LinearLR warmup).")
     use_warmup: bool = Field(default=True, description="Enable LinearLR warmup before CosineAnnealingLR. If False, start immediately at learning_rate.")
     warmup_pct: float = Field(default=0.05, ge=0.0, le=1.0, description="Warmup percentage for LinearLR (default: 0.05 = 5% of total epochs).")
-    min_lr: float = Field(default=1e-8, gt=0, description="Minimum learning rate.")
+    min_lr: float = Field(default=1e-6, gt=0, description="Minimum learning rate.")
 
     num_frames: int = Field(default=2, ge=2, description="Number of frames per video input.")
     image_size: int = Field(default=224, gt=0, description="Video image spatial resolution.")
