@@ -183,7 +183,21 @@ class MultimodalTrainer:
         os.makedirs(self.run_dir, exist_ok=True)
         self.logger = HistoryLogger(log_dir=self.run_dir)
         self.best_checkpoint_path = os.path.join(self.run_dir, 'best_model.pth')
+        self.best_video_path = os.path.join(self.run_dir, 'best_video_backbone.pth')
+        self.best_audio_path = os.path.join(self.run_dir, 'best_audio_backbone.pth')
         self.last_checkpoint_path = os.path.join(self.run_dir, 'last_model.pth')
+
+        # Save actual runtime train_config.json copy to checkpoint directory
+        try:
+            cfg_copy_path = os.path.join(self.run_dir, 'train_config.json')
+            if self.train_config_path and os.path.exists(self.train_config_path):
+                shutil.copy2(self.train_config_path, cfg_copy_path)
+            elif hasattr(self.config, 'model_dump'):
+                with open(cfg_copy_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.config.model_dump(), f, indent=2)
+            logger.info(f"Saved runtime training configuration copy to: '{cfg_copy_path}'")
+        except Exception as exc:
+            logger.warning(f"Could not save copy of config into checkpoint dir: {exc}")
 
         # Profile model parameters and inference complexity (GFLOPs)
         self.param_stats = count_parameters(self.model)
@@ -381,6 +395,7 @@ class MultimodalTrainer:
             best_val_metric = -1.0
 
         for epoch in range(1, self.config.epochs + 1):
+            epoch_start_time = time.perf_counter()
             train_loss, train_acc, train_mAP = self._train_epoch(epoch)
             if not self.is_stepwise_scheduler:
                 self.scheduler.step()
@@ -394,12 +409,14 @@ class MultimodalTrainer:
             val_acc_v = float(val_stats.get('acc_video', 0.0))
             val_acc_a = float(val_stats.get('acc_audio', 0.0))
 
+            epoch_time = time.perf_counter() - epoch_start_time
+
             # Extract current learning rate
             lr_current = self.optimizer.param_groups[0]['lr']
             lr_info = f"LR = {lr_current:.2e}"
 
             logger.info(
-                f"Epoch {epoch:03d}: "
+                f"Epoch {epoch:03d} ({epoch_time:.1f}s): "
                 f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | {lr_info} | "
                 f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | "
                 f"(Aux Video Acc = {val_acc_v:.4f}, Aux Audio Acc = {val_acc_a:.4f})"
@@ -425,15 +442,41 @@ class MultimodalTrainer:
                 best_mAP = val_mAP
                 best_loss = val_loss
                 best_val_statistics = val_stats
+
+                # 1. Save full Multimodal model
                 torch.save(self.model.state_dict(), self.best_checkpoint_path)
-                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f})")
+
+                # 2. Extract & save Video Backbone + Aux Head Video
+                v_keys = [k for k in self.model.state_dict().keys() if k.startswith('video_backbone.') or k.startswith('aux_head_video.')]
+                if v_keys:
+                    torch.save({k: self.model.state_dict()[k] for k in v_keys}, self.best_video_path)
+
+                # 3. Extract & save Audio Backbone + Audio Frontend + Aux Head Audio
+                a_keys = [k for k in self.model.state_dict().keys() if k.startswith('audio_backbone.') or k.startswith('audio_frontend.') or k.startswith('aux_head_audio.')]
+                if a_keys:
+                    torch.save({k: self.model.state_dict()[k] for k in a_keys}, self.best_audio_path)
+
+                logger.info(f"[*] New best validation performance! Saved checkpoints:")
+                logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f})")
+                logger.info(f"    - Peak Video Backbone:     '{self.best_video_path}'")
+                logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path}'")
 
             logger.info(
                 f"Current best: Epoch {best_epoch:03d} | Val Acc: {best_acc:.4f} (Loss: {best_loss:.5f})"
             )
 
-            # Always save last checkpoint
-            torch.save(self.model.state_dict(), self.last_checkpoint_path)
+            # Always save last checkpoint with full resumption state
+            resumption_checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'scheduler_state_dict': self.scheduler.state_dict(),
+                'best_epoch': best_epoch,
+                'best_val_metric': best_val_metric,
+                'best_acc': best_acc,
+                'val_statistics': val_stats
+            }
+            torch.save(resumption_checkpoint, self.last_checkpoint_path)
 
             # Log to history CSV
             self.logger.log_epoch(
@@ -443,6 +486,8 @@ class MultimodalTrainer:
                 train_mAP=train_mAP,
                 val_loss=val_loss,
                 val_statistics=val_stats,
+                lr=lr_current,
+                epoch_time_seconds=epoch_time,
                 is_best=is_best
             )
 
@@ -497,6 +542,21 @@ class MultimodalTrainer:
             total_params_m=self.param_stats.get('total_million', 0.0),
             gflops=self.model_flops
         )
+
+        # Export consolidated detailed evaluation report (.txt and .json)
+        try:
+            self.logger.save_detailed_evaluation_report(
+                val_statistics=final_val_stats,
+                test_statistics=final_test_stats
+            )
+        except Exception as exc:
+            logger.warning(f"Could not export detailed evaluation report: {exc}")
+
+        # Plot test confusion matrices comparison heatmap (.png)
+        try:
+            self.logger.plot_test_confusion_matrices(final_test_stats)
+        except Exception as exc:
+            logger.warning(f"Could not plot test confusion matrices: {exc}")
 
         return {
             'training_time': training_duration,

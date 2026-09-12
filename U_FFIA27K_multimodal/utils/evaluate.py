@@ -159,14 +159,50 @@ class MultimodalEvaluator(BaseEvaluator):
             ordinal_mae = float(np.mean(np.abs(clipwise_output_acc - target_acc)))
             qwk = 0.0
 
+        dict_report = classification_report(
+            target_acc, clipwise_output_acc, labels=all_labels, target_names=class_names, digits=4, zero_division=0, output_dict=True
+        )
+
         acc_video = 0.0
-        acc_audio = 0.0
+        cm_video = None
+        message_video = ""
+        dict_report_video = None
+        prec_macro_v, rec_macro_v, f1_macro_v = 0.0, 0.0, 0.0
+        prec_weighted_v, rec_weighted_v, f1_weighted_v = 0.0, 0.0, 0.0
+
         if 'logits_video' in output_dict:
             pred_v = np.argmax(output_dict['logits_video'], axis=1)
             acc_video = float(accuracy_score(target_acc, pred_v))
+            cm_video = confusion_matrix(target_acc, pred_v, labels=all_labels)
+            if class_names is not None:
+                message_video = classification_report(target_acc, pred_v, labels=all_labels, target_names=class_names, digits=4, zero_division=0)
+                dict_report_video = classification_report(target_acc, pred_v, labels=all_labels, target_names=class_names, digits=4, zero_division=0, output_dict=True)
+            else:
+                message_video = classification_report(target_acc, pred_v, digits=4, zero_division=0)
+                dict_report_video = classification_report(target_acc, pred_v, digits=4, zero_division=0, output_dict=True)
+            prec_weighted_v, rec_weighted_v, f1_weighted_v, _ = precision_recall_fscore_support(target_acc, pred_v, average='weighted', zero_division=0)
+            prec_macro_v, rec_macro_v, f1_macro_v, _ = precision_recall_fscore_support(target_acc, pred_v, average='macro', zero_division=0)
+
+        acc_audio = 0.0
+        cm_audio = None
+        message_audio = ""
+        dict_report_audio = None
+        prec_macro_a, rec_macro_a, f1_macro_a = 0.0, 0.0, 0.0
+        prec_weighted_a, rec_weighted_a, f1_weighted_a = 0.0, 0.0, 0.0
+
         if 'logits_audio' in output_dict:
             pred_a = np.argmax(output_dict['logits_audio'], axis=1)
             acc_audio = float(accuracy_score(target_acc, pred_a))
+            cm_audio = confusion_matrix(target_acc, pred_a, labels=all_labels)
+            if class_names is not None:
+                message_audio = classification_report(target_acc, pred_a, labels=all_labels, target_names=class_names, digits=4, zero_division=0)
+                dict_report_audio = classification_report(target_acc, pred_a, labels=all_labels, target_names=class_names, digits=4, zero_division=0, output_dict=True)
+            else:
+                message_audio = classification_report(target_acc, pred_a, digits=4, zero_division=0)
+                dict_report_audio = classification_report(target_acc, pred_a, digits=4, zero_division=0, output_dict=True)
+            prec_weighted_a, rec_weighted_a, f1_weighted_a, _ = precision_recall_fscore_support(target_acc, pred_a, average='weighted', zero_division=0)
+            prec_macro_a, rec_macro_a, f1_macro_a, _ = precision_recall_fscore_support(target_acc, pred_a, average='macro', zero_division=0)
+
         mean_backbone_acc = float((acc_video + acc_audio) / 2.0)
 
         statistics = {
@@ -181,12 +217,33 @@ class MultimodalEvaluator(BaseEvaluator):
             'auc': auc,
             'message': message,
             'confu_matrix': cm,
+            'dict_report': dict_report,
             'prec_weighted': prec_weighted,
             'rec_weighted': rec_weighted,
             'f1_weighted': f1_weighted,
             'prec_macro': prec_macro,
             'rec_macro': rec_macro,
-            'f1_macro': f1_macro
+            'f1_macro': f1_macro,
+            # Video Aux Branch
+            'confu_matrix_video': cm_video,
+            'message_video': message_video,
+            'dict_report_video': dict_report_video,
+            'prec_macro_video': prec_macro_v,
+            'rec_macro_video': rec_macro_v,
+            'f1_macro_video': f1_macro_v,
+            'prec_weighted_video': prec_weighted_v,
+            'rec_weighted_video': rec_weighted_v,
+            'f1_weighted_video': f1_weighted_v,
+            # Audio Aux Branch
+            'confu_matrix_audio': cm_audio,
+            'message_audio': message_audio,
+            'dict_report_audio': dict_report_audio,
+            'prec_macro_audio': prec_macro_a,
+            'rec_macro_audio': rec_macro_a,
+            'f1_macro_audio': f1_macro_a,
+            'prec_weighted_audio': prec_weighted_a,
+            'rec_weighted_audio': rec_weighted_a,
+            'f1_weighted_audio': f1_weighted_a,
         }
 
         return statistics
