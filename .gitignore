@@ -34,3 +34,6 @@ local_cli/
 *.zip
 extracted_results*/
 hf_results/
+
+# Agent Rules & Workspace Customizations (Local only)
+AGENTS.md
