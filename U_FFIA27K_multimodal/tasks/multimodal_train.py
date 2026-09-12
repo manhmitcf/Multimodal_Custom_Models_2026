@@ -220,7 +220,7 @@ class MultimodalTrainer:
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
 
-    def _train_epoch(self, epoch: int) -> Tuple[float, float, float, float]:
+    def _train_epoch(self, epoch: int) -> Tuple[float, float, float]:
         self.model.train()
         total_loss = 0.0
         train_preds = []
@@ -268,19 +268,13 @@ class MultimodalTrainer:
         pred_acc_labels = np.argmax(train_preds, axis=1)
         train_acc = float(np.mean(target_acc_labels == pred_acc_labels))
 
-        rank_map = np.array([0, 3, 2, 1])
-        try:
-            train_mae = float(np.mean(np.abs(rank_map[pred_acc_labels] - rank_map[target_acc_labels])))
-        except Exception:
-            train_mae = 0.0
-
         try:
             from sklearn import metrics as sklearn_metrics
             train_mAP = float(np.mean(sklearn_metrics.average_precision_score(train_targets, train_preds, average=None)))
         except Exception:
             train_mAP = train_acc
 
-        return epoch_loss, train_acc, train_mAP, train_mae
+        return epoch_loss, train_acc, train_mAP
 
     def nelder_mead_calibrate(self) -> Dict[str, Any]:
         """
@@ -387,7 +381,7 @@ class MultimodalTrainer:
             best_val_metric = -1.0
 
         for epoch in range(1, self.config.epochs + 1):
-            train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
+            train_loss, train_acc, train_mAP = self._train_epoch(epoch)
             if not self.is_stepwise_scheduler:
                 self.scheduler.step()
 
@@ -397,7 +391,6 @@ class MultimodalTrainer:
             val_loss = float(val_stats.get('loss', 0.0))
             val_acc = float(np.mean(val_stats['accuracy']))
             val_mAP = float(np.mean(val_stats['average_precision']))
-            val_mae = float(val_stats.get('ordinal_mae', 0.0))
             val_acc_v = float(val_stats.get('acc_video', 0.0))
             val_acc_a = float(val_stats.get('acc_audio', 0.0))
 
@@ -407,8 +400,8 @@ class MultimodalTrainer:
 
             logger.info(
                 f"Epoch {epoch:03d}: "
-                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | {lr_info} | "
-                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val MAE = {val_mae:.4f} | "
+                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | {lr_info} | "
+                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | "
                 f"(Aux Video Acc = {val_acc_v:.4f}, Aux Audio Acc = {val_acc_a:.4f})"
             )
 
