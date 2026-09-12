@@ -183,9 +183,6 @@ class MultimodalTrainer:
         os.makedirs(self.run_dir, exist_ok=True)
         self.logger = HistoryLogger(log_dir=self.run_dir)
         self.best_checkpoint_path = os.path.join(self.run_dir, 'best_model.pth')
-        self.best_video_path = os.path.join(self.run_dir, 'best_video_backbone.pth')
-        self.best_audio_path = os.path.join(self.run_dir, 'best_audio_backbone.pth')
-        self.phase1_checkpoint_path = os.path.join(self.run_dir, 'best_phase1_backbone.pth')
         self.last_checkpoint_path = os.path.join(self.run_dir, 'last_model.pth')
 
         # Profile model parameters and inference complexity (GFLOPs)
@@ -389,8 +386,6 @@ class MultimodalTrainer:
         else:
             best_val_metric = -1.0
 
-        best_val_video_acc = -1.0
-        best_val_audio_acc = -1.0
         for epoch in range(1, self.config.epochs + 1):
             train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
             if not self.is_stepwise_scheduler:
@@ -411,28 +406,13 @@ class MultimodalTrainer:
             lr_info = f"LR = {lr_current:.2e}"
 
             logger.info(
-                f"Epoch {epoch:03d} [END-TO-END + AUX HEADS]: "
+                f"Epoch {epoch:03d}: "
                 f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | {lr_info} | "
-                f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} (Peak: {max(best_val_video_acc, val_acc_v):.4f}) | "
-                f"Val Acc Audio = {val_acc_a:.4f} (Peak: {max(best_val_audio_acc, val_acc_a):.4f}) | "
-                f"Val Acc Fusion = {val_acc:.4f} | Val MAE = {val_mae:.4f}"
+                f"Val Loss = {val_loss:.5f} | Val Acc = {val_acc:.4f} | Val MAE = {val_mae:.4f} | "
+                f"(Aux Video Acc = {val_acc_v:.4f}, Aux Audio Acc = {val_acc_a:.4f})"
             )
 
-            # 1. Track and save PEAK Video Backbone independently
-            if val_acc_v > best_val_video_acc:
-                best_val_video_acc = val_acc_v
-                v_keys = [k for k in self.model.state_dict().keys() if k.startswith('video_backbone.') or k.startswith('aux_head_video.')]
-                torch.save({k: self.model.state_dict()[k] for k in v_keys}, self.best_video_path)
-                logger.info(f"[*] New PEAK Video Backbone! Saved: '{self.best_video_path}' (Val Acc = {best_val_video_acc:.4f})")
-
-            # 2. Track and save PEAK Audio Backbone independently
-            if val_acc_a > best_val_audio_acc:
-                best_val_audio_acc = val_acc_a
-                a_keys = [k for k in self.model.state_dict().keys() if k.startswith('audio_backbone.') or k.startswith('audio_frontend.') or k.startswith('aux_head_audio.')]
-                torch.save({k: self.model.state_dict()[k] for k in a_keys}, self.best_audio_path)
-                logger.info(f"[*] New PEAK Audio Backbone! Saved: '{self.best_audio_path}' (Val Acc = {best_val_audio_acc:.4f})")
-
-            # 3. Track and save best overall Multimodal checkpoint (Monitored by Validation Accuracy)
+            # Track and save best overall Multimodal checkpoint (Monitored by Validation Accuracy)
             is_best = False
             if monitor_metric == 'loss':
                 score = -val_loss
@@ -456,7 +436,7 @@ class MultimodalTrainer:
                 logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f})")
 
             logger.info(
-                f"Current best: Epoch {best_epoch:03d} | Val Acc: {best_acc:.4f} (Loss: {best_loss:.5f}) | Best Video: {best_val_video_acc:.4f} | Best Audio: {best_val_audio_acc:.4f}"
+                f"Current best: Epoch {best_epoch:03d} | Val Acc: {best_acc:.4f} (Loss: {best_loss:.5f})"
             )
 
             # Always save last checkpoint
