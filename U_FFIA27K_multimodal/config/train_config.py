@@ -126,7 +126,7 @@ class TrainConfig(BaseModel):
     learning_rate: float = Field(default=1e-3, gt=0, description="Initial learning rate.")
     weight_decay: float = Field(default=0.05, ge=0, description="Weight decay factor for AdamW.")
     ckpt_dir: str = Field(default="checkpoint/", description="Directory path to save checkpoints.")
-    monitor: str = Field(default="qwk", description="Metric to monitor for early stopping and best checkpoint.")
+    monitor: str = Field(default="val_acc", description="Metric to monitor for early stopping and best checkpoint (default: val_acc).")
     mode: Literal["min", "max"] = Field(default="max", description="Optimization direction for monitored metric.")
     early_stopping: bool = Field(default=False, description="Enable early stopping mechanism.")
     patience: int = Field(default=100, ge=1, description="Early stopping patience in epochs.")

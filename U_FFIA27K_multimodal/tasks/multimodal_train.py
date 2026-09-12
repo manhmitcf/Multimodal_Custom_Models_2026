@@ -197,7 +197,7 @@ class MultimodalTrainer:
         logger.info(f"  - LR Scheduler:             {self.lr_scheduler_type} (T_max={self.config.epochs}, min_lr={getattr(self.config, 'min_lr', 1e-8)})")
         logger.info(f"  - Auxiliary Supervision:    aux_loss_weight = {self.aux_loss_weight} (Video & Audio Aux Heads)")
         logger.info(f"  - Training Strategy:        Pure End-to-End (Unified Optimizer, No Two-Phase)")
-        logger.info(f"  - Monitor Metric:           {self.config.monitor}")
+        logger.info(f"  - Monitor Metric:           {self.config.monitor} (Validation Accuracy)")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
@@ -353,20 +353,20 @@ class MultimodalTrainer:
         return calibrated_cutoffs
 
     def train(self) -> Dict[str, Any]:
-        logger.info(f"Starting training pipeline (Monitor metric: {self.config.monitor})...")
+        monitor_metric = str(getattr(self.config, 'monitor', 'val_acc')).lower()
+        logger.info(f"Starting training pipeline (Monitor metric: {monitor_metric} [Validation Accuracy])...")
         training_start_time = time.perf_counter()
 
         best_acc = 0.0
-        best_qwk = -1.0
         best_mAP = 0.0
         best_loss = float('inf')
         best_epoch = 1
         best_val_statistics = None
 
-        if self.config.monitor in ('accuracy', 'qwk'):
-            best_val_metric = -1.0
-        else:
+        if monitor_metric == 'loss':
             best_val_metric = float('inf')
+        else:
+            best_val_metric = -1.0
 
         best_val_video_acc = -1.0
         best_val_audio_acc = -1.0
@@ -380,7 +380,6 @@ class MultimodalTrainer:
             val_stats = self.evaluator.evaluate(self.val_loader)
             val_loss = float(val_stats.get('loss', 0.0))
             val_acc = float(np.mean(val_stats['accuracy']))
-            val_qwk = float(val_stats.get('qwk', 0.0))
             val_mAP = float(np.mean(val_stats['average_precision']))
             val_mae = float(val_stats.get('ordinal_mae', 0.0))
             val_acc_v = float(val_stats.get('acc_video', 0.0))
@@ -395,7 +394,7 @@ class MultimodalTrainer:
                 f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | {lr_info} | "
                 f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} (Peak: {max(best_val_video_acc, val_acc_v):.4f}) | "
                 f"Val Acc Audio = {val_acc_a:.4f} (Peak: {max(best_val_audio_acc, val_acc_a):.4f}) | "
-                f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
+                f"Val Acc Fusion = {val_acc:.4f} | Val MAE = {val_mae:.4f}"
             )
 
             # 1. Track and save PEAK Video Backbone independently
@@ -412,36 +411,31 @@ class MultimodalTrainer:
                 torch.save({k: self.model.state_dict()[k] for k in a_keys}, self.best_audio_path)
                 logger.info(f"[*] New PEAK Audio Backbone! Saved: '{self.best_audio_path}' (Val Acc = {best_val_audio_acc:.4f})")
 
-            # 3. Track and save best overall Multimodal checkpoint
+            # 3. Track and save best overall Multimodal checkpoint (Monitored by Validation Accuracy)
             is_best = False
-            if self.config.monitor == 'qwk':
-                score = val_qwk
-                if val_qwk > best_val_metric:
-                    best_val_metric = val_qwk
-                    is_best = True
-            elif self.config.monitor == 'accuracy':
-                score = val_acc
-                if val_acc > best_val_metric:
-                    best_val_metric = val_acc
-                    is_best = True
-            else:
+            if monitor_metric == 'loss':
                 score = -val_loss
                 if val_loss < best_val_metric:
                     best_val_metric = val_loss
+                    is_best = True
+            else:
+                # Default & primary monitor: Validation Accuracy (acc val)
+                score = val_acc
+                if val_acc > best_val_metric:
+                    best_val_metric = val_acc
                     is_best = True
 
             if is_best:
                 best_epoch = epoch
                 best_acc = val_acc
-                best_qwk = val_qwk
                 best_mAP = val_mAP
                 best_loss = val_loss
                 best_val_statistics = val_stats
                 torch.save(self.model.state_dict(), self.best_checkpoint_path)
-                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Monitor value = {best_val_metric:.5f})")
+                logger.info(f"[*] New best validation performance! Saved checkpoint: '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f})")
 
             logger.info(
-                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f} (Best Video: {best_val_video_acc:.4f}, Best Audio: {best_val_audio_acc:.4f})"
+                f"Current best: Epoch {best_epoch:03d} | Val Acc: {best_acc:.4f} (Loss: {best_loss:.5f}) | Best Video: {best_val_video_acc:.4f} | Best Audio: {best_val_audio_acc:.4f}"
             )
 
             # Always save last checkpoint
@@ -490,9 +484,8 @@ class MultimodalTrainer:
         final_test_stats = self.evaluator.evaluate(self.test_loader)
 
         test_acc = float(np.mean(final_test_stats['accuracy']))
-        test_qwk = float(final_test_stats.get('qwk', 0.0))
         test_mAP = float(np.mean(final_test_stats['average_precision']))
-        logger.info(f"TEST Results -> Accuracy: {test_acc:.4f} | QWK: {test_qwk:.4f} | mAP: {test_mAP:.4f}")
+        logger.info(f"TEST Results -> Accuracy: {test_acc:.4f} | mAP: {test_mAP:.4f}")
         logger.info(f"Detailed Classification Report:\n{final_test_stats.get('message', '')}")
         if 'confu_matrix' in final_test_stats:
             logger.info(f"Confusion Matrix:\n{final_test_stats['confu_matrix']}")
