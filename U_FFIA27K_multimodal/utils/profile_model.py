@@ -61,14 +61,15 @@ def measure_latency(
     device: str = "cpu",
     warmup: int = 5,
     iterations: int = 20,
-    num_frames: int = 4
+    num_frames: int = 2,
+    audio_samples: int = 512000
 ) -> float:
     """Measure average inference latency in milliseconds."""
     model.to(device)
     model.eval()
 
     dummy_video = torch.randn(1, num_frames, 3, 224, 224, device=device)
-    dummy_audio = torch.randn(1, 128000, device=device)
+    dummy_audio = torch.randn(1, audio_samples, device=device)
 
     # Warmup
     with torch.no_grad():

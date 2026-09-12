@@ -20,14 +20,13 @@ import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
 
-from config import MultimodalTrainConfig
+from config import TrainConfig
 from utils import (
     EarlyStopping,
     HistoryLogger,
     MultimodalEvaluator,
     InferenceTimer,
     ClipCELoss,
-    BilateralBoundaryLoss,
     PairwiseTournamentLoss,
 )
 from utils.profile_model import count_parameters, measure_flops
@@ -42,8 +41,8 @@ logger = logging.getLogger(__name__)
 
 class MultimodalTrainer:
     """
-    Unified Trainer class for Multimodal Fish Feeding Intensity Classification.
-    Supports Bilateral Boundary Loss, OneCycleLR, QWK monitoring, and Nelder-Mead post-calibration.
+    Unified Trainer class for Pure End-to-End Multimodal Fish Feeding Intensity Classification
+    with Dual Auxiliary Heads and CosineAnnealingLR.
     """
     def __init__(
         self,
@@ -51,7 +50,7 @@ class MultimodalTrainer:
         train_loader: Any,
         val_loader: Any,
         test_loader: Any,
-        config: MultimodalTrainConfig,
+        config: TrainConfig,
         device: torch.device,
         optimizer: Optional[optim.Optimizer] = None,
         train_config_path: str = 'config/train_config.json'
@@ -67,7 +66,10 @@ class MultimodalTrainer:
         # Setup Loss with 2 Auxiliary Heads Supervision (Deep Supervision)
         loss_type = getattr(self.config, "loss_type", "pairwise_tournament")
         self.aux_loss_weight = getattr(self.config, "aux_loss_weight", 0.3)
-        if loss_type == "pairwise_tournament":
+        if loss_type == "clip_ce":
+            self.loss_fn = ClipCELoss()
+            logger.info("Configured standard ClipCELoss.")
+        else:
             self.loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(self.config, "weight_act", 0.5),
                 weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
@@ -75,23 +77,10 @@ class MultimodalTrainer:
                 aux_loss_weight=self.aux_loss_weight,
             ).to(self.device)
             logger.info(f"Configured PairwiseTournamentLoss with Deep Supervision aux heads (aux_loss_weight={self.aux_loss_weight}).")
-        elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
-            self.loss_fn = BilateralBoundaryLoss(
-                lambda_emd=getattr(self.config, "lambda_emd", 0.5),
-                lambda_align=getattr(self.config, "lambda_align", 0.2),
-                aux_loss_weight=self.aux_loss_weight,
-            ).to(self.device)
-            logger.info("Configured BilateralBoundaryLoss.")
-        else:
-            self.loss_fn = ClipCELoss()
-            logger.info("Configured standard ClipCELoss.")
 
         # Training Setup
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
         self.steps_per_epoch = max(1, len(self.train_loader))
-        self.lr_scheduler_type = getattr(self.config, "lr_scheduler", "cosine")
-        self.use_onecycle = getattr(self.config, "use_onecycle", False) or (self.lr_scheduler_type == "onecycle")
-        self.is_stepwise_scheduler = self.use_onecycle
 
         # Single unified optimizer for all parameters (Backbones + Aux Heads + Multimodal Fusion)
         self.optimizer = optimizer if optimizer is not None else optim.AdamW(
@@ -101,26 +90,12 @@ class MultimodalTrainer:
         )
 
         min_lr = getattr(self.config, "min_lr", 1e-8)
-
-        if self.use_onecycle:
-            self.scheduler = optim.lr_scheduler.OneCycleLR(
-                self.optimizer,
-                max_lr=self.config.learning_rate,
-                epochs=self.config.epochs,
-                steps_per_epoch=self.steps_per_epoch,
-                pct_start=0.05,
-                anneal_strategy='cos',
-                div_factor=25,
-                final_div_factor=1000
-            )
-            logger.info(f"Configured OneCycleLR: max_lr={self.config.learning_rate}, epochs={self.config.epochs}.")
-        else:
-            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=self.config.epochs,
-                eta_min=min_lr
-            )
-            logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min={min_lr}.")
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=self.config.epochs,
+            eta_min=min_lr
+        )
+        logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min={min_lr}.")
 
         # Evaluator and Timer
         self.evaluator = MultimodalEvaluator(model=self.model, loss_fn=self.loss_fn)
@@ -221,9 +196,6 @@ class MultimodalTrainer:
             torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=5.0)
             self.optimizer.step()
 
-            if self.is_stepwise_scheduler:
-                self.scheduler.step()
-
             loss_val = loss.item()
             total_loss += loss_val
 
@@ -271,8 +243,7 @@ class MultimodalTrainer:
         for epoch in range(1, self.config.epochs + 1):
             epoch_start_time = time.perf_counter()
             train_loss, train_acc, train_mAP = self._train_epoch(epoch)
-            if not self.is_stepwise_scheduler:
-                self.scheduler.step()
+            self.scheduler.step()
 
             # Evaluate on validation split
             self.model.eval()

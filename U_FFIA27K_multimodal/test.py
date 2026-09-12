@@ -106,16 +106,14 @@ def test_kinematics_and_frontend(model: nn.Module, config: TrainConfig, device: 
         print("=" * 65)
 
     B = 2
-    # 1. Kinematics test
     if hasattr(model, "motion_kinematics") and model.motion_kinematics is not None:
         dummy_rgb = torch.randn(B, config.num_frames, 3, config.image_size, config.image_size, device=device)
-        frames_7ch, k_summary = model.motion_kinematics(dummy_rgb)
+        frames_7ch = model.motion_kinematics(dummy_rgb)
         expected_shape = (B, config.num_frames, 7, config.image_size, config.image_size)
         if frames_7ch.shape != expected_shape:
             raise ValueError(f"Kinematics output shape mismatch! Got {frames_7ch.shape}, expected {expected_shape}")
         if verbose:
-            print(f"  - Kinematics 7-ch tensor shape:  {list(frames_7ch.shape)} (RGB + u, v, vorticity, decel)")
-            print(f"  - Kinematics summary shape:      {list(k_summary.shape)}")
+            print(f"  - Kinematics 7-ch tensor shape:  {list(frames_7ch.shape)} (RGB + u, v, |V|, vorticity omega)")
 
     # 2. Audio frontend test
     if hasattr(model, "audio_frontend") and model.audio_frontend is not None:

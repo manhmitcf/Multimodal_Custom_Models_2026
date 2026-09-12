@@ -160,6 +160,5 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         return f_video, f_spatial, f_motion, f_burst_v, tokens_video
 
 
-# Backward compatibility alias
-MobileViTVideoBackbone = ConvNeXtNanoVideoBackbone
+# Canonical alias
 VideoBackbone = ConvNeXtNanoVideoBackbone

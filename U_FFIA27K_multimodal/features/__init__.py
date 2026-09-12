@@ -1,4 +1,4 @@
 from .audio_frontend import AudioFrontend
-from .motion_kinematics import FishMotionKinematics10Ch
+from .motion_kinematics import FishMotionKinematics7Ch, FishMotionKinematics
 
-__all__ = ["AudioFrontend", "FishMotionKinematics10Ch"]
+__all__ = ["AudioFrontend", "FishMotionKinematics7Ch", "FishMotionKinematics"]

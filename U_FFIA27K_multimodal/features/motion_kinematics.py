@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple
-
 
 class FishMotionKinematics7Ch(nn.Module):
     """
@@ -16,7 +14,6 @@ class FishMotionKinematics7Ch(nn.Module):
         frames_rgb: [B, T, 3, H, W] (T=2)
     Output:
         frames_7ch: [B, T, 7, H, W]
-        kinematics_summary: [B, 4] summary statistics [v_mean, omega_max, v_max, convergence_flux]
     """
     def __init__(self, image_size: int = 224) -> None:
         super().__init__()
@@ -32,16 +29,7 @@ class FishMotionKinematics7Ch(nn.Module):
         self.register_buffer("sobel_x", sobel_x)
         self.register_buffer("sobel_y", sobel_y)
 
-        # Precompute radial centripetal vector field pointing to feeding center (H/2, W/2)
-        y_grid = torch.linspace(-1.0, 1.0, image_size).view(image_size, 1).repeat(1, image_size)
-        x_grid = torch.linspace(-1.0, 1.0, image_size).view(1, image_size).repeat(image_size, 1)
-        dx = -x_grid
-        dy = -y_grid
-        dist = torch.sqrt(dx ** 2 + dy ** 2) + 1e-6
-        center_field = torch.stack([dx / dist, dy / dist], dim=0).unsqueeze(0)  # [1, 2, H, W]
-        self.register_buffer("center_field", center_field)
-
-    def forward(self, frames_rgb: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, frames_rgb: torch.Tensor) -> torch.Tensor:
         B, T, C, H, W = frames_rgb.shape
         device = frames_rgb.device
         dtype = frames_rgb.dtype
@@ -55,10 +43,8 @@ class FishMotionKinematics7Ch(nn.Module):
         else:
             rgb_01 = torch.clamp(rgb_flat, 0.0, 1.0)
 
-        # Ensure buffers match input device and dtype dynamically
         sobel_x = self.sobel_x.to(device=device, dtype=dtype)
         sobel_y = self.sobel_y.to(device=device, dtype=dtype)
-        center_field = self.center_field.to(device=device, dtype=dtype)
 
         # 1. Grayscale luminance [B, T, 1, H, W]
         gray_flat = 0.299 * rgb_01[:, 0:1] + 0.587 * rgb_01[:, 1:2] + 0.114 * rgb_01[:, 2:3]
@@ -104,20 +90,9 @@ class FishMotionKinematics7Ch(nn.Module):
             omega_seq     # 1 ch (Fluid vorticity / swirling turbulence)
         ], dim=2)  # [B, T, 7, H, W]
 
-        # 7. Kinematics Summary Statistics:
-        v_mean = v_mag_seq.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
-        omega_max = torch.amax(torch.abs(omega_seq), dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
-        v_max = torch.amax(v_mag_seq, dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
-
-        flow_2d = torch.cat([u_seq, v_seq], dim=2)  # [B, T, 2, H, W]
-        flux_pixel = (flow_2d * center_field.unsqueeze(1)).sum(dim=2, keepdim=True)
-        active_flux = flux_pixel * (v_mag_seq > 0.05).float()
-        convergence_flux = active_flux.mean(dim=(1, 2, 3, 4), keepdim=True).view(B, 1)
-
-        kinematics_summary = torch.cat([v_mean, omega_max, v_max, convergence_flux], dim=-1)  # [B, 4]
-        return frames_7ch, kinematics_summary
+        return frames_7ch
 
 
-# Backward compatibility aliases
-FishMotionKinematics10Ch = FishMotionKinematics7Ch
+# Canonical alias
 FishMotionKinematics = FishMotionKinematics7Ch
+

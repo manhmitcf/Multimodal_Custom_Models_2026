@@ -1,16 +1,14 @@
-from .video_backbone import ConvNeXtNanoVideoBackbone, MobileViTVideoBackbone
-from .audio_backbone import AudioMLPBackbone, EfficientATAudioBackbone
-from .multimodal_fusion import MultimodalTournamentFusion, MultimodalBoundaryAwareFusion, SOTAMultimodalFusion
+from .video_backbone import ConvNeXtNanoVideoBackbone, VideoBackbone
+from .audio_backbone import AudioMLPBackbone, AudioBackbone
+from .multimodal_fusion import MultimodalTournamentFusion
 from .multimodal_sota_net import MultimodalBoundaryAwareNet, MultimodalSOTANet
 
 __all__ = [
     "ConvNeXtNanoVideoBackbone",
-    "MobileViTVideoBackbone",
+    "VideoBackbone",
     "AudioMLPBackbone",
-    "EfficientATAudioBackbone",
+    "AudioBackbone",
     "MultimodalTournamentFusion",
-    "MultimodalBoundaryAwareFusion",
-    "SOTAMultimodalFusion",
     "MultimodalBoundaryAwareNet",
     "MultimodalSOTANet",
 ]

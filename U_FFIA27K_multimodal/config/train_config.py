@@ -28,24 +28,21 @@ class VideoFeaturesConfig(BaseModel):
     Video frame extraction & spatiotemporal kinematics parameters.
     """
     image_size: int = Field(default=224, description="Target spatial resolution H=W.")
-    num_frames: int = Field(default=4, description="Number of uniform frames sampled per video clip (T=4).")
-    num_channels: int = Field(default=7, description="7-channel representation (RGB + 4 Kinematics: u, v, vorticity, decel).")
+    num_frames: int = Field(default=2, description="Number of temporal frames sampled per video clip (T=2).")
+    num_channels: int = Field(default=7, description="7-channel representation (RGB + 4 Kinematics: u, v, |V|, vorticity omega).")
 
 
 class AudioFeaturesConfig(BaseModel):
     """
-    Audio Log-Mel Spectrogram extraction parameters (EfficientAT compatible).
+    High-Resolution TKEO-STFT Audio Frontend parameters (256 kHz, 2049 linear bins).
     """
     sample_rate: int = Field(default=256000, description="Audio sampling rate in Hz.")
     window_size: int = Field(default=4096, description="STFT window size in samples.")
     hop_size: int = Field(default=2048, description="STFT hop size in samples.")
-    mel_bins: int = Field(default=2049, description="Number of STFT frequency bins.")
-    fmin: int = Field(default=0, description="Minimum frequency for STFT in Hz.")
-    fmax: int = Field(default=128000, description="Maximum frequency for STFT in Hz.")
+    mel_bins: int = Field(default=2049, description="Number of STFT linear frequency bins (window_size // 2 + 1).")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
-    use_frequency_attention: bool = Field(default=False, description="Enable Learnable Frequency Attention across Mel-bins.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
-    beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
+
 
 
 class ModelConfig(BaseModel):
@@ -162,6 +159,3 @@ class TrainConfig(BaseModel):
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls(**data)
-
-
-MultimodalTrainConfig = TrainConfig

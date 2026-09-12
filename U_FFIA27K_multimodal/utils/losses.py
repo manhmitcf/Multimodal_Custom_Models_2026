@@ -131,9 +131,3 @@ class PairwiseTournamentLoss(BaseLoss):
         )
 
         return total_loss
-
-
-# Backward compatibility aliases
-BilateralBoundaryLoss = PairwiseTournamentLoss
-OrdinalWassersteinEvidentialLoss = PairwiseTournamentLoss
-TMCEvidentialLoss = PairwiseTournamentLoss

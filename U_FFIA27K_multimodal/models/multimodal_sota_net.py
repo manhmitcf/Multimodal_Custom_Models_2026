@@ -3,11 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Any, Optional
 
-from features.motion_kinematics import FishMotionKinematics7Ch, FishMotionKinematics10Ch
+from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
-from .video_backbone import ConvNeXtNanoVideoBackbone, MobileViTVideoBackbone
-from .audio_backbone import AudioMLPBackbone, AudioBackbone, PANNSCNN6AudioBackbone, EfficientATAudioBackbone
-from .multimodal_fusion import MultimodalTournamentFusion, GatedBilateralBoundaryFusion, MultimodalBoundaryAwareFusion, SOTAMultimodalFusion
+from .video_backbone import ConvNeXtNanoVideoBackbone
+from .audio_backbone import AudioMLPBackbone
+from .multimodal_fusion import MultimodalTournamentFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
@@ -83,10 +83,9 @@ class MultimodalBoundaryAwareNet(nn.Module):
         """
         # Step 1: Preprocessing & Frontend Extraction
         if video_input.ndim == 5 and video_input.size(2) == 3:
-            frames_7ch, kinematics_summary = self.motion_kinematics(video_input)
+            frames_7ch = self.motion_kinematics(video_input)
         else:
             frames_7ch = video_input
-            kinematics_summary = torch.zeros(video_input.size(0), 4, device=video_input.device, dtype=video_input.dtype)
 
         if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
             stft_feat = self.audio_frontend(audio_input)
@@ -139,7 +138,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "p_w_over_s": fusion_outputs.get("p_w_over_s"),
             "v_voting": fusion_outputs.get("v_voting"),
             # Feature diagnostics
-            "kinematics_summary": kinematics_summary,
             "f_spatial": f_spatial,
             "f_motion": f_motion,
             "f_burst_v": f_burst_v,

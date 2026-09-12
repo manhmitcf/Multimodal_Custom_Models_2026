@@ -88,7 +88,5 @@ class AudioMLPBackbone(nn.Module):
         return f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio
 
 
-# Default AudioBackbone uses AudioMLPBackbone
+# Canonical alias
 AudioBackbone = AudioMLPBackbone
-EfficientATAudioBackbone = AudioMLPBackbone
-PANNSCNN6AudioBackbone = AudioMLPBackbone
