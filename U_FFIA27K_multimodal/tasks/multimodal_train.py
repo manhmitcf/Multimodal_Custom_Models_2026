@@ -107,6 +107,7 @@ class MultimodalTrainer:
 
         # Training Setup
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
+        self.max_norm = float(getattr(self.config, "max_norm", 1.0))
         self.warmup_pct = float(getattr(self.config, "warmup_pct", 0.05))
         self.use_warmup = bool(getattr(self.config, "use_warmup", True)) and (self.warmup_pct > 0.0)
 
@@ -226,6 +227,7 @@ class MultimodalTrainer:
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
         sched_name = "SequentialLR (LinearLR Warmup + CosineAnnealingLR)" if self.use_warmup else "Pure CosineAnnealingLR (No Warmup)"
         logger.info(f"  - LR Scheduler:             {sched_name} (step_mode='epoch', min_lr={getattr(self.config, 'min_lr', 1e-8)})")
+        logger.info(f"  - Gradient Clipping:        max_norm = {self.max_norm}")
         logger.info(f"  - Auxiliary Supervision:    aux_loss_weight = {self.aux_loss_weight} (Video & Audio Aux Heads)")
         logger.info(f"  - Training Strategy:        Pure End-to-End (Unified Optimizer, No Two-Phase)")
         logger.info(f"  - Monitor Metric:           {self.config.monitor} (mode='{getattr(self.config, 'mode', 'max')}')")
@@ -255,7 +257,7 @@ class MultimodalTrainer:
             loss.backward()
 
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=5.0)
+            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=self.max_norm)
             self.optimizer.step()
 
             loss_val = loss.item()

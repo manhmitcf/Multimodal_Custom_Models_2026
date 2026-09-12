@@ -27,6 +27,7 @@ from models.multimodal_sota_net import MultimodalBoundaryAwareNet, MultimodalSOT
 from features.audio_frontend import AudioFrontend
 from utils.losses import PairwiseTournamentLoss, ClipCELoss
 from utils.profile_model import count_parameters, measure_flops
+from utils.seed import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -296,6 +297,9 @@ def test_optimizer_and_scheduler(
         )
         sched_name = f"Pure CosineAnnealingLR (No Warmup, T_max={config.epochs}, min={min_lr})"
 
+    max_norm = float(getattr(config, "max_norm", 1.0))
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_norm)
+
     init_lr = optimizer.param_groups[0]["lr"]
     optimizer.step()
     scheduler.step()
@@ -303,6 +307,7 @@ def test_optimizer_and_scheduler(
 
     if verbose:
         print(f"  - Optimizer:                     AdamW (weight_decay={config.weight_decay})")
+        print(f"  - Gradient Clipping:            max_norm = {max_norm}")
         print(f"  - Scheduler:                     {sched_name} [EPOCH]")
         print(f"  - Initial LR (Step 0):           {init_lr:.6e}")
         print(f"  - Stepped LR (Step 1):           {stepped_lr:.6e}")
@@ -337,6 +342,10 @@ def run_all_tests(
 
     if use_warmup is not None:
         config.use_warmup = use_warmup
+
+    # Lock deterministic master seed across PyTorch, CUDA, NumPy, Random
+    active_seed = int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
+    seed_everything(active_seed)
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

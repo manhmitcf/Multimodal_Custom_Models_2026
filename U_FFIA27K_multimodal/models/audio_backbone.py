@@ -1,21 +1,9 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Tuple
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def init_layer(layer: nn.Module) -> None:
-    """Initialize a Linear or Convolutional layer."""
-    if hasattr(layer, 'weight') and layer.weight is not None:
-        nn.init.xavier_uniform_(layer.weight)
-    if hasattr(layer, 'bias') and layer.bias is not None:
-        layer.bias.data.fill_(0.)
-
-
-
 
 
 class AudioMLPBackbone(nn.Module):
@@ -53,8 +41,15 @@ class AudioMLPBackbone(nn.Module):
         self._init_weights()
 
     def _init_weights(self) -> None:
-        init_layer(self.fc1)
-        init_layer(self.fc2)
+        """
+        Orthogonal weight initialization (Saxe et al., ICLR 2014) for high-dimensional spectral MLP.
+        Preserves the vector norm and angular geometry when projecting 2049 -> 512 -> 224,
+        preventing energy compression or gradient explosion across dense linear layers.
+        """
+        for layer in (self.fc1, self.fc2):
+            nn.init.orthogonal_(layer.weight, gain=1.0)
+            if layer.bias is not None:
+                nn.init.constant_(layer.bias, 0.0)
 
     def forward(
         self, x: torch.Tensor

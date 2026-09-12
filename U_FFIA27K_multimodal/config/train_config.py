@@ -125,6 +125,8 @@ class TrainConfig(BaseModel):
     batch_size: int = Field(default=32, gt=0, description="Training batch size.")
     learning_rate: float = Field(default=1e-3, gt=0, description="Initial learning rate.")
     weight_decay: float = Field(default=0.05, ge=0, description="Weight decay factor for AdamW.")
+    max_norm: float = Field(default=1.0, ge=0.1, le=50.0, description="Maximum gradient norm threshold for gradient clipping (torch.nn.utils.clip_grad_norm_).")
+    seed: int = Field(default=42, ge=0, description="Master random seed for full reproducibility (PyTorch, NumPy, Python, CUDA, Dataset).")
     ckpt_dir: str = Field(default="checkpoint/", description="Directory path to save checkpoints.")
     monitor: str = Field(default="val_acc", description="Metric to monitor for early stopping and best checkpoint: 'val_acc' (default), 'qwk', or 'loss'.")
     mode: Literal["min", "max"] = Field(default="max", description="Optimization direction for monitored metric.")

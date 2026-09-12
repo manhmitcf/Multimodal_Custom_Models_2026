@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Tuple
 import logging
 
@@ -100,6 +99,34 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
 
         # Residual normalization
         self.norm_video = nn.LayerNorm(embed_dim)
+
+        # Apply principled SOTA weight initialization
+        self.apply(self._init_weights)
+
+        # Zero-Init on the final projection (pwconv2) of every ConvNeXtBlock
+        # Grounded in Goyal et al. (FAIR, 2017) & Fixup (Zhang et al., ICLR 2019):
+        # Guarantees exact identity mapping at Step 0: x + F(x) = x.
+        # Completely eliminates early gradient explosion through 6 blocks of depthwise convs.
+        for stage in self.stages:
+            for block in stage:
+                if isinstance(block, ConvNeXtBlock):
+                    nn.init.constant_(block.pwconv2.weight, 0.0)
+                    if block.pwconv2.bias is not None:
+                        nn.init.constant_(block.pwconv2.bias, 0.0)
+
+    def _init_weights(self, m: nn.Module) -> None:
+        """
+        SOTA ConvNeXt weight initialization (Liu et al., CVPR 2022).
+        - Truncated Normal (std=0.02) for Conv2d and Linear layers.
+        - Constant 1.0/0.0 for Normalization layers (LayerNorm, GroupNorm).
+        """
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0.0)
+        elif isinstance(m, (nn.LayerNorm, nn.GroupNorm)):
+            nn.init.constant_(m.weight, 1.0)
+            nn.init.constant_(m.bias, 0.0)
 
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         """

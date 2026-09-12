@@ -67,6 +67,20 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.aux_head_video = nn.Linear(embed_dim, classes_num)
         self.aux_head_audio = nn.Linear(embed_dim, classes_num)
 
+        self._init_aux_heads()
+
+    def _init_aux_heads(self) -> None:
+        """
+        Maximum-Entropy initialization for auxiliary classification heads.
+        - Truncated Normal (std=0.01) and zero bias forces initial logits near 0.
+        - Produces uniform class probabilities P_k = 1/C = 0.25 at Step 0,
+          completely preventing early degenerate mode collapse to a single majority class.
+        """
+        for head in (self.aux_head_video, self.aux_head_audio):
+            nn.init.trunc_normal_(head.weight, std=0.01)
+            if head.bias is not None:
+                nn.init.constant_(head.bias, 0.0)
+
     def forward(
         self,
         video_input: torch.Tensor,
