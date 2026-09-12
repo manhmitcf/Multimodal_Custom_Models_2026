@@ -2,8 +2,8 @@
   "enabled": true,
   "source_dir": "/marimo/Capstone_2026_Fish_Feeding_Intensity",
   "zip_path": "/marimo/Capstone_2026_Fish_Feeding_Intensity.zip",
-  "repo_id": "manhmitcf/Results_U_FFIA27K_multimodal_flat_cosine_1e3",
+  "repo_id": "manhmitcf/Results_U_FFIA27K_multimodal_cosine_annealing_1e3_1e8",
   "repo_type": "dataset",
-  "path_in_repo": "Results_U_FFIA27K_multimodal_flat_cosine_1e3.zip",
+  "path_in_repo": "Results_U_FFIA27K_multimodal_cosine_annealing_1e3_1e8.zip",
   "create_repo": true
 }
