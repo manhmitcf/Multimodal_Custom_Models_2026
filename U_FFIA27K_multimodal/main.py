@@ -395,7 +395,7 @@ def main() -> None:
     parser.add_argument("--upload-config", type=str, default=None, help="Path to artifact_upload_config.json")
     parser.add_argument("--device", type=str, default=None, help="Target compute device (cuda or cpu)")
     parser.add_argument("--dry-run", action="store_true", help="Run pre-flight check only without training")
-    parser.add_argument("--lr-scheduler", type=str, default=None, choices=["cosine", "plateau"], help="LR scheduler strategy")
+    parser.add_argument("--lr-scheduler", type=str, default=None, choices=["cosine", "onecycle"], help="LR scheduler strategy ('cosine' or 'onecycle')")
     args = parser.parse_args()
 
     run_training_session(

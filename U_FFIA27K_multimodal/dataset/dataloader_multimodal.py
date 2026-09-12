@@ -318,9 +318,8 @@ class FishMultimodalDataLoader:
         def __getitem__(self, idx: int) -> Dict[str, Any]:
             if self.ram_cache is not None and self.ram_cache[idx] is not None:
                 video_raw, audio_raw, target_onehot, clip_name = self.ram_cache[idx]
-                frames = [self.transform(frame) for frame in video_raw]
-                video_tensor = torch.stack(frames[:self.parent.num_frames])  # [T, 3, H, W]
-                audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)  # [128000]
+                video_tensor = self.transform(video_raw[:self.parent.num_frames])  # [T, 3, H, W]
+                audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
                 return {
                     'clip_name': clip_name,
                     'video_form': video_tensor,
@@ -359,8 +358,7 @@ class FishMultimodalDataLoader:
             audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
             clip_name = os.path.basename(video_p or audio_p or f"sample_{idx}")
 
-            frames = [self.transform(frame) for frame in video_raw]
-            video_tensor = torch.stack(frames[:self.parent.num_frames])
+            video_tensor = self.transform(video_raw[:self.parent.num_frames])
             audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
 
             return {

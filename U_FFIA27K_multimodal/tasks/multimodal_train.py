@@ -47,6 +47,7 @@ def _safe_torch_save(obj: Any, target_path: str) -> bool:
     """
     tmp_path = f"{target_path}.tmp"
     try:
+        os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
         torch.save(obj, tmp_path)
         if os.path.exists(target_path):
             try:
@@ -358,18 +359,21 @@ class MultimodalTrainer:
                 best_loss = val_loss
                 best_val_statistics = val_stats
 
+                # Single unified state_dict snapshot (eliminates ~120 redundant clone calls)
+                current_state_dict = self.model.state_dict()
+
                 # 1. Save full Multimodal model
-                _safe_torch_save(self.model.state_dict(), self.best_checkpoint_path)
+                _safe_torch_save(current_state_dict, self.best_checkpoint_path)
 
                 # 2. Extract & save Video Backbone + Aux Head Video
-                v_keys = [k for k in self.model.state_dict().keys() if k.startswith('video_backbone.') or k.startswith('aux_head_video.')]
-                if v_keys:
-                    _safe_torch_save({k: self.model.state_dict()[k] for k in v_keys}, self.best_video_path)
+                v_dict = {k: v for k, v in current_state_dict.items() if k.startswith('video_backbone.') or k.startswith('aux_head_video.')}
+                if v_dict:
+                    _safe_torch_save(v_dict, self.best_video_path)
 
                 # 3. Extract & save Audio Backbone + Audio Frontend + Aux Head Audio
-                a_keys = [k for k in self.model.state_dict().keys() if k.startswith('audio_backbone.') or k.startswith('audio_frontend.') or k.startswith('aux_head_audio.')]
-                if a_keys:
-                    _safe_torch_save({k: self.model.state_dict()[k] for k in a_keys}, self.best_audio_path)
+                a_dict = {k: v for k, v in current_state_dict.items() if k.startswith('audio_backbone.') or k.startswith('audio_frontend.') or k.startswith('aux_head_audio.')}
+                if a_dict:
+                    _safe_torch_save(a_dict, self.best_audio_path)
 
                 logger.info(f"[*] New best validation performance! Saved checkpoints:")
                 logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f}, Val QWK = {best_qwk:.4f})")

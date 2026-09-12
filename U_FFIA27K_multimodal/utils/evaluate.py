@@ -114,9 +114,12 @@ class MultimodalEvaluator(BaseEvaluator):
         clipwise_output = output_dict['clipwise_output']
         target = output_dict['target']
 
-        average_precision = metrics.average_precision_score(
-            target, clipwise_output, average=None
-        )
+        try:
+            average_precision = metrics.average_precision_score(
+                target, clipwise_output, average=None
+            )
+        except Exception:
+            average_precision = np.zeros(clipwise_output.shape[1])
 
         try:
             auc = metrics.roc_auc_score(target, clipwise_output, average=None)
