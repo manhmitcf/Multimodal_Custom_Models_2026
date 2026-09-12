@@ -44,11 +44,11 @@ class AudioFeaturesConfig(BaseModel):
     fmax: int = Field(default=128000, description="Maximum frequency in Hz.")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
-    use_spec_augment: bool = Field(default=True, description="Enable SpecAugment during training.")
-    time_drop_width: int = Field(default=24, description="Width of time drop stripes (frames).")
-    time_stripes_num: int = Field(default=2, description="Number of time drop stripes.")
-    freq_drop_width: int = Field(default=128, description="Width of frequency drop stripes (STFT linear bins).")
-    freq_stripes_num: int = Field(default=2, description="Number of frequency drop stripes.")
+    use_spectral_aug: bool = Field(default=True, description="Enable 1D Spectral Augmentation for MLP during training.")
+    cutout_width: int = Field(default=24, description="Width of 1D frequency cutout band in linear bins.")
+    cutout_prob: float = Field(default=0.5, ge=0.0, le=1.0, description="Probability of applying 1D frequency cutout.")
+    noise_std: float = Field(default=0.02, ge=0.0, description="Standard deviation of additive Gaussian noise.")
+
 
 
 
