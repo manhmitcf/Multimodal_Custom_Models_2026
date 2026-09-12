@@ -554,7 +554,10 @@ class MultimodalTrainer:
 
         # Plot test confusion matrices comparison heatmap (.png)
         try:
-            self.logger.plot_test_confusion_matrices(final_test_stats)
+            self.logger.plot_test_confusion_matrices(
+                test_statistics=final_test_stats,
+                val_statistics=final_val_stats
+            )
         except Exception as exc:
             logger.warning(f"Could not plot test confusion matrices: {exc}")
 
