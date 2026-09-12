@@ -9,8 +9,6 @@
   "patience": 100,
   "min_delta": 0.0,
   "lr_scheduler": "cosine",
-  "use_onecycle": false,
-  "flat_pct": 0.05,
   "min_lr": 1e-8,
   "num_frames": 2,
   "image_size": 224,
@@ -24,8 +22,6 @@
   "weight_act": 0.5,
   "weight_pairwise": 0.5,
   "weight_ce": 1.0,
-  "enable_two_phase_warmup": false,
-  "phase1_warmup_epochs": 0,
   "aux_loss_weight": 0.3,
   "model": {
     "backbone": "MultimodalSOTANet",

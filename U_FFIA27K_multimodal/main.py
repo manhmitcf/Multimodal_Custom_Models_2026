@@ -269,10 +269,7 @@ def run_training_session(
     artifact_upload_config_path: Optional[str] = None,
     dry_run: bool = False,
     device_str: Optional[str] = None,
-    enable_two_phase_warmup: Optional[bool] = None,
-    phase1_warmup_epochs: Optional[int] = None,
     lr_scheduler: Optional[str] = None,
-    flat_pct: Optional[float] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -281,18 +278,12 @@ def run_training_session(
         artifact_upload_config_path = str(pkg_dir / "config" / "artifact_upload_config.json")
 
     config = TrainConfig.from_json(train_config_path)
-    if enable_two_phase_warmup is not None:
-        config.enable_two_phase_warmup = enable_two_phase_warmup
-    if phase1_warmup_epochs is not None:
-        config.phase1_warmup_epochs = phase1_warmup_epochs
     if lr_scheduler is not None:
         config.lr_scheduler = lr_scheduler
         if lr_scheduler == "onecycle":
             config.use_onecycle = True
-        elif lr_scheduler in ("flat_cosine", "cosine", "plateau"):
+        elif lr_scheduler in ("cosine", "plateau"):
             config.use_onecycle = False
-    if flat_pct is not None:
-        config.flat_pct = flat_pct
 
     if device_str is not None:
         device = torch.device(device_str)
@@ -390,23 +381,15 @@ def main() -> None:
     parser.add_argument("--upload-config", type=str, default=None, help="Path to artifact_upload_config.json")
     parser.add_argument("--device", type=str, default=None, help="Target compute device (cuda or cpu)")
     parser.add_argument("--dry-run", action="store_true", help="Run pre-flight check only without training")
-    parser.add_argument("--no-two-phase", action="store_true", help="Disable two-phase warmup and train end-to-end directly")
-    parser.add_argument("--phase1-epochs", type=int, default=None, help="Number of epochs for Phase 1 backbone warmup")
-    parser.add_argument("--lr-scheduler", type=str, default=None, choices=["flat_cosine", "onecycle", "cosine", "plateau"], help="LR scheduler strategy")
-    parser.add_argument("--flat-pct", type=float, default=None, help="Fraction of epochs to hold flat (e.g. 0.05)")
+    parser.add_argument("--lr-scheduler", type=str, default=None, choices=["onecycle", "cosine", "plateau"], help="LR scheduler strategy")
     args = parser.parse_args()
-
-    enable_two_phase = False if args.no_two_phase else None
 
     run_training_session(
         train_config_path=args.config,
         artifact_upload_config_path=args.upload_config,
         dry_run=args.dry_run,
         device_str=args.device,
-        enable_two_phase_warmup=enable_two_phase,
-        phase1_warmup_epochs=args.phase1_epochs,
         lr_scheduler=args.lr_scheduler,
-        flat_pct=args.flat_pct,
     )
 
 
