@@ -23,7 +23,7 @@ class ArtifactUploadConfig(BaseModel):
         description="Path of the zip file to create."
     )
     repo_id: str = Field(
-        default="manhmitcf/Results_U_FFIA27K_multimodal_main",
+        default="manhmitcf/Results_main_architecture_main",
         description="Hugging Face repository ID, for example 'username/repo-name'."
     )
     repo_type: str = Field(
@@ -31,7 +31,7 @@ class ArtifactUploadConfig(BaseModel):
         description="Hugging Face repository type: 'dataset', 'model', or 'space'."
     )
     path_in_repo: str = Field(
-        default="Results_U_FFIA27K_multimodal_main.zip",
+        default="Results_main_architecture_main.zip",
         description="Destination file path inside the Hugging Face repository."
     )
     create_repo: bool = Field(

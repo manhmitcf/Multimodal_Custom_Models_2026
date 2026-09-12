@@ -2,8 +2,8 @@
   "enabled": true,
   "source_dir": "/marimo/Capstone_2026_Fish_Feeding_Intensity",
   "zip_path": "/marimo/Capstone_2026_Fish_Feeding_Intensity.zip",
-  "repo_id": "manhmitcf/Results_U_FFIA27K_multimodal_main",
+  "repo_id": "manhmitcf/Results_main_architecture_main",
   "repo_type": "dataset",
-  "path_in_repo": "Results_U_FFIA27K_multimodal_main.zip",
+  "path_in_repo": "Results_main_architecture_main.zip",
   "create_repo": true
 }
