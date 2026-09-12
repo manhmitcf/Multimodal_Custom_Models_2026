@@ -1,4 +1,3 @@
-import os
 import sys
 import json
 import logging
@@ -132,9 +131,9 @@ class TrainConfig(BaseModel):
     early_stopping: bool = Field(default=False, description="Enable early stopping mechanism.")
     patience: int = Field(default=100, ge=1, description="Early stopping patience in epochs.")
     min_delta: float = Field(default=0.0, ge=0.0, description="Minimum change threshold in monitored metric.")
-    lr_scheduler: str = Field(default="cosine", description="Learning rate scheduler: 'cosine' (CosineAnnealingLR) or 'onecycle' (OneCycleLR).")
-    lr_step_mode: str = Field(default="epoch", description="Scheduler stepping frequency: 'epoch' (default) or 'batch' (step-wise).")
-    warmup_pct: float = Field(default=0.05, ge=0.0, le=1.0, description="Warmup percentage for OneCycleLR (default: 0.05 = 5%).")
+    lr_scheduler: str = Field(default="cosine", description="Learning rate scheduler: 'cosine' (CosineAnnealingLR with optional LinearLR warmup).")
+    use_warmup: bool = Field(default=True, description="Enable LinearLR warmup before CosineAnnealingLR. If False, start immediately at learning_rate.")
+    warmup_pct: float = Field(default=0.05, ge=0.0, le=1.0, description="Warmup percentage for LinearLR (default: 0.05 = 5% of total epochs).")
     min_lr: float = Field(default=1e-8, gt=0, description="Minimum learning rate.")
 
     num_frames: int = Field(default=2, ge=2, description="Number of frames per video input.")

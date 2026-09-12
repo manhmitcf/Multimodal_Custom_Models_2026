@@ -9,7 +9,7 @@
   "patience": 100,
   "min_delta": 0.0,
   "lr_scheduler": "cosine",
-  "lr_step_mode": "epoch",
+  "use_warmup": true,
   "warmup_pct": 0.05,
   "min_lr": 1e-8,
   "num_frames": 2,

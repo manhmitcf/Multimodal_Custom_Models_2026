@@ -1,6 +1,5 @@
 import os
 import sys
-import math
 import time
 import json
 import logging
@@ -16,7 +15,6 @@ if project_root not in sys.path:
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
 
@@ -71,7 +69,7 @@ def _safe_torch_save(obj: Any, target_path: str) -> bool:
 class MultimodalTrainer:
     """
     Unified Trainer class for Pure End-to-End Multimodal Fish Feeding Intensity Classification
-    with Dual Auxiliary Heads and CosineAnnealingLR.
+    with Dual Auxiliary Heads and SequentialLR (LinearLR Warmup + CosineAnnealingLR) or Pure CosineAnnealingLR.
     """
     def __init__(
         self,
@@ -109,10 +107,8 @@ class MultimodalTrainer:
 
         # Training Setup
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
-        self.steps_per_epoch = max(1, len(self.train_loader))
-        self.lr_scheduler_type = str(getattr(self.config, "lr_scheduler", "cosine")).lower()
-        self.lr_step_mode = str(getattr(self.config, "lr_step_mode", "epoch")).lower()
         self.warmup_pct = float(getattr(self.config, "warmup_pct", 0.05))
+        self.use_warmup = bool(getattr(self.config, "use_warmup", True)) and (self.warmup_pct > 0.0)
 
         # Single unified optimizer for all parameters (Backbones + Aux Heads + Multimodal Fusion)
         self.optimizer = optimizer if optimizer is not None else optim.AdamW(
@@ -124,33 +120,42 @@ class MultimodalTrainer:
         min_lr = float(getattr(self.config, "min_lr", 1e-8))
         base_lr = float(self.config.learning_rate)
 
-        if self.lr_scheduler_type == "onecycle":
-            total_steps = (self.config.epochs * self.steps_per_epoch) if self.lr_step_mode == "batch" else self.config.epochs
-            div_factor = 25.0
-            final_div_factor = max(1.0, (base_lr / max(min_lr, 1e-12)) / div_factor)
-            self.scheduler = optim.lr_scheduler.OneCycleLR(
+        if self.use_warmup:
+            # Epoch-level SequentialLR: LinearLR Warmup followed by CosineAnnealingLR decay
+            warmup_epochs = max(1, int(self.config.epochs * self.warmup_pct))
+            cosine_epochs = max(1, self.config.epochs - warmup_epochs)
+
+            sched_warmup = optim.lr_scheduler.LinearLR(
                 self.optimizer,
-                max_lr=base_lr,
-                total_steps=total_steps,
-                pct_start=self.warmup_pct,
-                div_factor=div_factor,
-                final_div_factor=final_div_factor
+                start_factor=1e-3,
+                end_factor=1.0,
+                total_iters=warmup_epochs
+            )
+            sched_cosine = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=cosine_epochs,
+                eta_min=min_lr
+            )
+            self.scheduler = optim.lr_scheduler.SequentialLR(
+                self.optimizer,
+                schedulers=[sched_warmup, sched_cosine],
+                milestones=[warmup_epochs]
             )
             logger.info(
-                f"Configured OneCycleLR: total_steps={total_steps} (step_mode='{self.lr_step_mode}'), "
-                f"max_lr={base_lr}, min_lr={min_lr}, warmup_pct={self.warmup_pct*100:.1f}%."
+                f"Configured SequentialLR (LinearLR Warmup + CosineAnnealingLR): "
+                f"warmup_epochs={warmup_epochs} ({self.warmup_pct*100:.1f}%), "
+                f"cosine_epochs={cosine_epochs}, base_lr={base_lr}, min_lr={min_lr} (step_mode='epoch')."
             )
         else:
-            # Default: CosineAnnealingLR
-            T_max = (self.config.epochs * self.steps_per_epoch) if self.lr_step_mode == "batch" else self.config.epochs
+            # Direct Pure CosineAnnealingLR (No Warmup, starts directly at base_lr)
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
-                T_max=T_max,
+                T_max=self.config.epochs,
                 eta_min=min_lr
             )
             logger.info(
-                f"Configured CosineAnnealingLR: T_max={T_max} (step_mode='{self.lr_step_mode}'), "
-                f"base_lr={base_lr}, eta_min={min_lr}."
+                f"Configured pure CosineAnnealingLR (NO WARMUP - starts directly at {base_lr}): "
+                f"T_max={self.config.epochs}, base_lr={base_lr}, min_lr={min_lr} (step_mode='epoch')."
             )
 
 
@@ -160,8 +165,8 @@ class MultimodalTrainer:
 
         # Early stopping setup
         self.early_stopping = EarlyStopping(
-            patience=getattr(self.config, "patience", 80),
-            delta=getattr(self.config, "delta", 0.0),
+            patience=getattr(self.config, "patience", 100),
+            delta=getattr(self.config, "min_delta", getattr(self.config, "delta", 0.0)),
             verbose=True
         ) if getattr(self.config, "early_stopping", False) else None
 
@@ -219,13 +224,11 @@ class MultimodalTrainer:
         logger.info(f"  - Device:                   {self.device}")
         logger.info(f"  - Max Epochs:               {self.config.epochs}")
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
-        logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
-        lr_sched_name = getattr(self, "lr_scheduler_type", getattr(self.config, "lr_scheduler", "cosine"))
-        step_mode_name = getattr(self, "lr_step_mode", "epoch")
-        logger.info(f"  - LR Scheduler:             {lr_sched_name} (step_mode='{step_mode_name}', min_lr={getattr(self.config, 'min_lr', 1e-8)})")
+        sched_name = "SequentialLR (LinearLR Warmup + CosineAnnealingLR)" if self.use_warmup else "Pure CosineAnnealingLR (No Warmup)"
+        logger.info(f"  - LR Scheduler:             {sched_name} (step_mode='epoch', min_lr={getattr(self.config, 'min_lr', 1e-8)})")
         logger.info(f"  - Auxiliary Supervision:    aux_loss_weight = {self.aux_loss_weight} (Video & Audio Aux Heads)")
         logger.info(f"  - Training Strategy:        Pure End-to-End (Unified Optimizer, No Two-Phase)")
-        logger.info(f"  - Monitor Metric:           {self.config.monitor} (Default: Validation Accuracy)")
+        logger.info(f"  - Monitor Metric:           {self.config.monitor} (mode='{getattr(self.config, 'mode', 'max')}')")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
@@ -254,9 +257,6 @@ class MultimodalTrainer:
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
             torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=5.0)
             self.optimizer.step()
-
-            if self.lr_step_mode == "batch":
-                self.scheduler.step()
 
             loss_val = loss.item()
             total_loss += loss_val
@@ -306,8 +306,7 @@ class MultimodalTrainer:
         for epoch in range(1, self.config.epochs + 1):
             epoch_start_time = time.perf_counter()
             train_loss, train_acc, train_mAP = self._train_epoch(epoch)
-            if self.lr_step_mode == "epoch":
-                self.scheduler.step()
+            self.scheduler.step()
 
             # Evaluate on validation split
             self.model.eval()

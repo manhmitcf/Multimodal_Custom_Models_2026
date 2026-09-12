@@ -250,15 +250,15 @@ def test_optimizer_and_scheduler(
     config: TrainConfig,
     verbose: bool = True
 ) -> bool:
-    sched_type = str(getattr(config, "lr_scheduler", "cosine")).lower()
-    step_mode = str(getattr(config, "lr_step_mode", "epoch")).lower()
     min_lr = float(getattr(config, "min_lr", 1e-8))
     base_lr = float(config.learning_rate)
     warmup_pct = float(getattr(config, "warmup_pct", 0.05))
+    use_warmup = bool(getattr(config, "use_warmup", True)) and (warmup_pct > 0.0)
 
     if verbose:
         print("\n" + "=" * 65)
-        print(f"  TEST 5: OPTIMIZER & LR SCHEDULER STEP ({sched_type.upper()} - {step_mode.upper()})")
+        sched_label = "SEQUENTIAL LR (WARMUP + COSINE)" if use_warmup else "PURE COSINE ANNEALING (NO WARMUP)"
+        print(f"  TEST 5: OPTIMIZER & {sched_label} STEP (EPOCH-LEVEL)")
         print("=" * 65)
 
     optimizer = torch.optim.AdamW(
@@ -267,27 +267,34 @@ def test_optimizer_and_scheduler(
         weight_decay=config.weight_decay
     )
 
-    if sched_type == "onecycle":
-        total_steps = (config.epochs * 10) if step_mode == "batch" else config.epochs
-        div_factor = 25.0
-        final_div_factor = max(1.0, (base_lr / max(min_lr, 1e-12)) / div_factor)
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    if use_warmup:
+        warmup_epochs = max(1, int(config.epochs * warmup_pct))
+        cosine_epochs = max(1, config.epochs - warmup_epochs)
+
+        sched_warmup = torch.optim.lr_scheduler.LinearLR(
             optimizer,
-            max_lr=base_lr,
-            total_steps=total_steps,
-            pct_start=warmup_pct,
-            div_factor=div_factor,
-            final_div_factor=final_div_factor
+            start_factor=1e-3,
+            end_factor=1.0,
+            total_iters=warmup_epochs
         )
-        sched_name = f"OneCycleLR (max={base_lr}, min={min_lr}, warmup={warmup_pct*100:.1f}%)"
-    else:
-        T_max = (config.epochs * 10) if step_mode == "batch" else config.epochs
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        sched_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=T_max,
+            T_max=cosine_epochs,
             eta_min=min_lr
         )
-        sched_name = f"CosineAnnealingLR (T_max={T_max}, min={min_lr})"
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[sched_warmup, sched_cosine],
+            milestones=[warmup_epochs]
+        )
+        sched_name = f"SequentialLR (LinearLR Warmup [{warmup_epochs} eps] + CosineAnnealingLR [{cosine_epochs} eps], min={min_lr})"
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=config.epochs,
+            eta_min=min_lr
+        )
+        sched_name = f"Pure CosineAnnealingLR (No Warmup, T_max={config.epochs}, min={min_lr})"
 
     init_lr = optimizer.param_groups[0]["lr"]
     optimizer.step()
@@ -296,19 +303,20 @@ def test_optimizer_and_scheduler(
 
     if verbose:
         print(f"  - Optimizer:                     AdamW (weight_decay={config.weight_decay})")
-        print(f"  - Scheduler:                     {sched_name} [{step_mode.upper()}]")
+        print(f"  - Scheduler:                     {sched_name} [EPOCH]")
         print(f"  - Initial LR (Step 0):           {init_lr:.6e}")
         print(f"  - Stepped LR (Step 1):           {stepped_lr:.6e}")
 
-    if sched_type == "onecycle":
+    if use_warmup:
         if stepped_lr <= init_lr:
-            raise ValueError("OneCycleLR did not increase learning rate during warmup as expected!")
+            raise ValueError(f"SequentialLR Warmup did not increase learning rate as expected! init={init_lr:.6e}, stepped={stepped_lr:.6e}")
     else:
         if stepped_lr >= init_lr:
-            raise ValueError("CosineAnnealingLR did not decay learning rate as expected!")
+            raise ValueError(f"CosineAnnealingLR did not decay learning rate as expected! init={init_lr:.6e}, stepped={stepped_lr:.6e}")
 
     if verbose:
-        print(f"  >>> [PASS] Optimizer & {sched_type.upper()} verified smoothly.")
+        pass_name = "SequentialLR (LinearLR Warmup + CosineAnnealingLR)" if use_warmup else "Pure CosineAnnealingLR (No Warmup)"
+        print(f"  >>> [PASS] Optimizer & {pass_name} verified smoothly.")
     return True
 
 
@@ -317,7 +325,8 @@ def run_all_tests(
     config_path: Optional[str] = None,
     config: Optional[TrainConfig] = None,
     device: Optional[torch.device] = None,
-    verbose: bool = True
+    verbose: bool = True,
+    use_warmup: Optional[bool] = None,
 ) -> bool:
     """
     Runs the complete pre-flight test suite against the target configuration.
@@ -325,6 +334,9 @@ def run_all_tests(
     """
     if config is None:
         config = load_config(config_path)
+
+    if use_warmup is not None:
+        config.use_warmup = use_warmup
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -372,8 +384,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Unified Multimodal Test Suite")
     parser.add_argument("--config", type=str, default=None, help="Path to train_config.json")
     parser.add_argument("--device", type=str, default="cpu", help="Target device (cpu or cuda)")
+    parser.add_argument("--use-warmup", action=argparse.BooleanOptionalAction, default=None, help="Enable or disable LinearLR warmup (default: from config)")
     args = parser.parse_args()
 
     dev = torch.device(args.device)
-    success = run_all_tests(config_path=args.config, device=dev, verbose=True)
+    success = run_all_tests(config_path=args.config, device=dev, verbose=True, use_warmup=args.use_warmup)
     sys.exit(0 if success else 1)
