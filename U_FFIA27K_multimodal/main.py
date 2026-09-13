@@ -48,11 +48,13 @@ def validate_model_config(config: TrainConfig) -> None:
         raise ValueError(f"Unknown multimodal model '{backbone_name}'. Available: {available}.")
 
 
-def build_model(config: TrainConfig) -> torch.nn.Module:
+def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Module:
     validate_model_config(config)
     model_cls = MODEL_REGISTRY[config.model.backbone]
     from features.audio_frontend import AudioFrontend
     frontend = AudioFrontend(config.audio_features)
+
+    active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
 
     return model_cls(
         classes_num=config.model.classes_num,
@@ -61,6 +63,7 @@ def build_model(config: TrainConfig) -> torch.nn.Module:
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=getattr(config.video_features, "num_channels", 7),
+        seed=active_seed,
     )
 
 
@@ -352,7 +355,9 @@ def run_training_session(
                 splitter_config=fold_config.dataset_splitter,
             )
 
-            model = build_model(fold_config).to(device)
+            fold_seed = active_seed + fold_idx
+            seed_everything(fold_seed)
+            model = build_model(fold_config, seed=fold_seed).to(device)
             stats = count_parameters(model)
             logger.info(f"Fold {fold_idx} Model Parameters: {stats['total']:,} ({stats['total_million']:.3f} M)")
 
@@ -381,7 +386,9 @@ def run_training_session(
             splitter_config=config.dataset_splitter,
         )
 
-        model = build_model(config).to(device)
+        # Re-lock deterministic seed right before building model to ensure 100% reproducible weight init
+        seed_everything(active_seed)
+        model = build_model(config, seed=active_seed).to(device)
 
         trainer = MultimodalTrainer(
             model=model,

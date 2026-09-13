@@ -42,13 +42,12 @@ class AudioMLPBackbone(nn.Module):
 
     def _init_weights(self) -> None:
         """
-        Orthogonal weight initialization (Saxe et al., ICLR 2014) for high-dimensional spectral MLP.
-        Preserves the vector norm and angular geometry when projecting 2049 -> 512 -> 224,
-        preventing energy compression or gradient explosion across dense linear layers.
+        Original Xavier uniform (Glorot) initialization for STFT Audio MLP layers.
         """
         for layer in (self.fc1, self.fc2):
-            nn.init.orthogonal_(layer.weight, gain=1.0)
-            if layer.bias is not None:
+            if hasattr(layer, "weight") and layer.weight is not None:
+                nn.init.xavier_uniform_(layer.weight)
+            if hasattr(layer, "bias") and layer.bias is not None:
                 nn.init.constant_(layer.bias, 0.0)
 
     def forward(

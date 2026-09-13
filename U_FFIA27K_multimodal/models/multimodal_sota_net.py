@@ -31,9 +31,15 @@ class MultimodalBoundaryAwareNet(nn.Module):
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
+        seed: Optional[int] = None,
         **kwargs
     ) -> None:
         super().__init__()
+        if seed is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+
         self.classes_num = classes_num
         self.embed_dim = embed_dim
         self.num_frames = num_frames
@@ -66,20 +72,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
         # Deep Supervision for backbone gradient flow & individual unimodal tracking
         self.aux_head_video = nn.Linear(embed_dim, classes_num)
         self.aux_head_audio = nn.Linear(embed_dim, classes_num)
-
-        self._init_aux_heads()
-
-    def _init_aux_heads(self) -> None:
-        """
-        Maximum-Entropy initialization for auxiliary classification heads.
-        - Truncated Normal (std=0.01) and zero bias forces initial logits near 0.
-        - Produces uniform class probabilities P_k = 1/C = 0.25 at Step 0,
-          completely preventing early degenerate mode collapse to a single majority class.
-        """
-        for head in (self.aux_head_video, self.aux_head_audio):
-            nn.init.trunc_normal_(head.weight, std=0.01)
-            if head.bias is not None:
-                nn.init.constant_(head.bias, 0.0)
 
     def forward(
         self,

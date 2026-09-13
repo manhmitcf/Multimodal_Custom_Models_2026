@@ -1,59 +1,59 @@
 {
+  "seed": 42,
   "epochs": 400,
   "batch_size": 32,
+
   "learning_rate": 1e-3,
+  "min_lr": 1e-6,
   "weight_decay": 0.05,
   "max_norm": 5.0,
-  "seed": 42,
-  "monitor": "val_acc",
-  "mode": "max",
-  "early_stopping": false,
-  "patience": 100,
-  "min_delta": 0.0,
+
   "lr_scheduler": "cosine",
   "use_warmup": true,
   "warmup_pct": 0.05,
-  "min_lr": 1e-6,
-  "num_frames": 2,
+
+  "monitor": "qwk",
+  "mode": "max",
+  "early_stopping": false,
+  "patience": 100,
+
+  "loss_type": "pairwise_tournament",
+  "weight_ce": 1.0,
+  "weight_act": 0.5,
+  "weight_pairwise": 0.5,
+  "aux_loss_weight": 0.3,
+
   "image_size": 224,
+  "num_frames": 2,
   "sample_rate": 256000,
+
   "cache_mode": "ram",
   "dataloader_workers": -1,
   "prefetch_factor": 2,
   "ckpt_dir": "checkpoint",
   "save_best_only": true,
-  "loss_type": "pairwise_tournament",
-  "weight_act": 0.5,
-  "weight_pairwise": 0.5,
-  "weight_ce": 1.0,
-  "aux_loss_weight": 0.3,
+
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
     "embed_dim": 224
   },
+
   "audio_features": {
     "sample_rate": 256000,
     "window_size": 4096,
     "hop_size": 2048,
     "mel_bins": 2049,
-    "fmin": 0,
-    "fmax": 128000,
-    "use_spectral_aug": true,
-    "cutout_width": 24,
-    "cutout_prob": 0.5,
-    "noise_std": 0.02
+    "use_tkeo": true,
+    "alpha_max": 0.99,
+    "use_spectral_aug": false
   },
+
   "dataset_splitter": {
     "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",
-    "seed": 42,
-    "test_sample_per_class": 700,
-    "save_results": true,
-    "include_video": true,
     "split_strategy": "random_sample",
     "evaluation_mode": "holdout",
-    "num_folds": 5,
-    "fold_index": null,
-    "cv_val_ratio": 0.2
+    "test_sample_per_class": 700,
+    "seed": 42
   }
 }

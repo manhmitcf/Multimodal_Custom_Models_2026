@@ -72,31 +72,6 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             nn.Linear(112, 1)
         )
 
-        self._init_weights()
-
-    def _init_weights(self) -> None:
-        """
-        Principled initialization for Pairwise Boundary Tournament Head:
-        - Truncated Normal (std=0.02) for feature projection layers.
-        - Small Normal (std=0.01) + zero bias for final boundary classification projections,
-          ensuring neutral head-to-head winning probabilities P=0.5 at Step 0.
-        """
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0.0)
-            elif isinstance(m, nn.LayerNorm):
-                nn.init.constant_(m.weight, 1.0)
-                nn.init.constant_(m.bias, 0.0)
-
-        # Zero-bias and tight std on boundary decision heads for perfectly neutral Step-0 voting
-        for head in (self.activity_head, self.head_b12, self.head_b23, self.head_b23_a, self.head_b13):
-            last_linear = head[-1]
-            if isinstance(last_linear, nn.Linear):
-                nn.init.trunc_normal_(last_linear.weight, std=0.01)
-                if last_linear.bias is not None:
-                    nn.init.constant_(last_linear.bias, 0.0)
 
     def forward(self, f: torch.Tensor, f_audio: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
         B = f.size(0)
@@ -221,29 +196,6 @@ class MultimodalTournamentFusion(nn.Module):
         # 3. Pairwise Boundary Tournament Decision Head
         self.tournament_head = PairwiseBoundaryTournamentHead(dim=dim, temperature=2.0)
 
-        self._init_weights()
-
-    def _init_weights(self) -> None:
-        """
-        Neutral 50/50 Reliability Gating (Arevalo et al., 2017) & Truncated Normal feature projection.
-        - Setting gate weights & bias to 0 guarantees Sigmoid(0) = 0.5 at Step 0.
-        - Neither modality is unfairly favored or suppressed initially.
-        """
-        # Neutral 50/50 Gating at Step 0: Sigmoid(0) = 0.5
-        nn.init.constant_(self.gate[0].weight, 0.0)
-        nn.init.constant_(self.gate[0].bias, 0.0)
-
-        for m in self.proj_joint.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.trunc_normal_(m.weight, std=0.02)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0.0)
-            elif isinstance(m, nn.LayerNorm):
-                nn.init.constant_(m.weight, 1.0)
-                nn.init.constant_(m.bias, 0.0)
-
-        nn.init.constant_(self.norm_fused.weight, 1.0)
-        nn.init.constant_(self.norm_fused.bias, 0.0)
 
     def forward(
         self,

@@ -53,6 +53,7 @@ def build_test_model(config: TrainConfig, device: torch.device) -> nn.Module:
     else:
         model_cls = MultimodalBoundaryAwareNet
 
+    active_seed = int(getattr(config, "seed", 42))
     model = model_cls(
         classes_num=config.model.classes_num,
         embed_dim=config.model.embed_dim,
@@ -60,6 +61,7 @@ def build_test_model(config: TrainConfig, device: torch.device) -> nn.Module:
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=getattr(config.video_features, "num_channels", 7),
+        seed=active_seed,
     ).to(device)
     return model
 
