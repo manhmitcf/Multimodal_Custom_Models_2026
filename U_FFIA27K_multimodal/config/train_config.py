@@ -43,7 +43,7 @@ class AudioFeaturesConfig(BaseModel):
     use_frequency_attention: bool = Field(default=False, description="Enable Learnable Frequency Attention across Mel-bins.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
     beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
-    use_spectral_aug: bool = Field(default=False, description="Enable 1D Spectral Augmentation (Cutout & Jitter) for STFT.")
+    use_spectral_aug: bool = Field(default=True, description="Enable 1D Spectral Augmentation (Cutout & Jitter) for STFT.")
     cutout_width: int = Field(default=24, description="Width of contiguous frequency cutout mask in bins.")
     cutout_prob: float = Field(default=0.5, description="Probability of applying frequency cutout per sample.")
     noise_std: float = Field(default=0.02, description="Standard deviation of Gaussian spectral jitter noise.")
