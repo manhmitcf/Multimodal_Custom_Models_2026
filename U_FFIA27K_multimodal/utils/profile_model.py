@@ -30,14 +30,14 @@ def count_parameters(model: nn.Module) -> Dict[str, Any]:
     return breakdown
 
 
-def measure_flops(model: nn.Module, device: str = "cpu", num_frames: int = 4) -> float:
+def measure_flops(model: nn.Module, device: str = "cpu", num_frames: int = 2) -> float:
     """Measure total FLOPs for 1 sample inference using native PyTorch FlopCounterMode."""
     if FlopCounterMode is None:
         return 0.0
 
     model.eval()
     dummy_video = torch.randn(1, num_frames, 3, 224, 224, device=device)
-    dummy_audio = torch.randn(1, 128000, device=device)
+    dummy_audio = torch.randn(1, 512000, device=device)
 
     with FlopCounterMode(display=False) as flop_counter:
         with torch.no_grad():
@@ -52,14 +52,14 @@ def measure_latency(
     device: str = "cpu",
     warmup: int = 5,
     iterations: int = 20,
-    num_frames: int = 4
+    num_frames: int = 2
 ) -> float:
     """Measure average inference latency in milliseconds."""
     model.to(device)
     model.eval()
 
     dummy_video = torch.randn(1, num_frames, 3, 224, 224, device=device)
-    dummy_audio = torch.randn(1, 128000, device=device)
+    dummy_audio = torch.randn(1, 512000, device=device)
 
     # Warmup
     with torch.no_grad():

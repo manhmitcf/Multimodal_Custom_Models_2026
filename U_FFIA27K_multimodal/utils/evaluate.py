@@ -160,13 +160,37 @@ class MultimodalEvaluator(BaseEvaluator):
             qwk = 0.0
 
         acc_video = 0.0
-        acc_audio = 0.0
+        cm_video = None
+        message_video = None
+        f1_macro_video = 0.0
+        f1_weighted_video = 0.0
         if 'logits_video' in output_dict:
             pred_v = np.argmax(output_dict['logits_video'], axis=1)
             acc_video = float(accuracy_score(target_acc, pred_v))
+            cm_video = confusion_matrix(target_acc, pred_v, labels=all_labels)
+            if class_names is not None:
+                message_video = '\n' + classification_report(target_acc, pred_v, labels=all_labels, target_names=class_names, digits=4, zero_division=0)
+            else:
+                message_video = '\n' + classification_report(target_acc, pred_v, digits=4, zero_division=0)
+            _, _, f1_weighted_video, _ = precision_recall_fscore_support(target_acc, pred_v, average='weighted', zero_division=0)
+            _, _, f1_macro_video, _ = precision_recall_fscore_support(target_acc, pred_v, average='macro', zero_division=0)
+
+        acc_audio = 0.0
+        cm_audio = None
+        message_audio = None
+        f1_macro_audio = 0.0
+        f1_weighted_audio = 0.0
         if 'logits_audio' in output_dict:
             pred_a = np.argmax(output_dict['logits_audio'], axis=1)
             acc_audio = float(accuracy_score(target_acc, pred_a))
+            cm_audio = confusion_matrix(target_acc, pred_a, labels=all_labels)
+            if class_names is not None:
+                message_audio = '\n' + classification_report(target_acc, pred_a, labels=all_labels, target_names=class_names, digits=4, zero_division=0)
+            else:
+                message_audio = '\n' + classification_report(target_acc, pred_a, digits=4, zero_division=0)
+            _, _, f1_weighted_audio, _ = precision_recall_fscore_support(target_acc, pred_a, average='weighted', zero_division=0)
+            _, _, f1_macro_audio, _ = precision_recall_fscore_support(target_acc, pred_a, average='macro', zero_division=0)
+
         mean_backbone_acc = float((acc_video + acc_audio) / 2.0)
 
         statistics = {
@@ -181,6 +205,14 @@ class MultimodalEvaluator(BaseEvaluator):
             'auc': auc,
             'message': message,
             'confu_matrix': cm,
+            'confu_matrix_video': cm_video,
+            'confu_matrix_audio': cm_audio,
+            'message_video': message_video,
+            'message_audio': message_audio,
+            'f1_macro_video': float(f1_macro_video),
+            'f1_weighted_video': float(f1_weighted_video),
+            'f1_macro_audio': float(f1_macro_audio),
+            'f1_weighted_audio': float(f1_weighted_audio),
             'prec_weighted': prec_weighted,
             'rec_weighted': rec_weighted,
             'f1_weighted': f1_weighted,

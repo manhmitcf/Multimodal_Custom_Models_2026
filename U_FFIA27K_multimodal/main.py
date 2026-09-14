@@ -77,7 +77,7 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     Validates:
       1. Model parameter budget (< 5.0M).
       2. Device placement of all submodules, weights, and buffer filters.
-      3. Forward pass with multi-frame 10-ch kinematics extraction and 128 Mel-bins STFT.
+      3. Forward pass with multi-frame 7-ch kinematics extraction and 2049 STFT bins.
       4. Backward pass & gradient propagation through all trainable parameters.
       5. Evaluation mode forward pass with torch.no_grad().
 

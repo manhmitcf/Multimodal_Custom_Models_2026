@@ -29,7 +29,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames: int = 4) -> np.ndarray:
+def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames: int = 2) -> np.ndarray:
     """
     Decode video frames into uint8 NumPy array [num_frames, image_size, image_size, 3] RGB.
     Uses decord with cv2 fallback.
@@ -67,10 +67,10 @@ def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames:
     return np.stack(frames[:num_frames])
 
 
-def _decode_audio_waveform_raw(audio_path: str, sample_rate: int = 64000) -> np.ndarray:
+def _decode_audio_waveform_raw(audio_path: str, sample_rate: int = 256000) -> np.ndarray:
     """
     Load raw audio waveform into float32 NumPy array [sample_rate * 2].
-    Zero pads or truncates to exactly 2 seconds.
+    Zero pads or truncates to exactly 2 seconds (512,000 samples @ 256 kHz).
     """
     target_len = sample_rate * 2
     if audio_path and os.path.exists(audio_path):
@@ -115,7 +115,7 @@ def _decode_audio_waveform_raw(audio_path: str, sample_rate: int = 64000) -> np.
 class FishMultimodalDataLoader:
     """
     Unified DataLoader Manager for Multimodal Fish Feeding Intensity Assessment.
-    Loads paired Video Frames [B, T, 3, H, W] and Audio Waveforms [B, 128000].
+    Loads paired Video Frames [B, T, 3, H, W] and Audio Waveforms [B, 512000].
     Implements multi-threaded RAM preloading for zero disk I/O in epochs 2+.
     """
     def __init__(
@@ -125,8 +125,8 @@ class FishMultimodalDataLoader:
         prefetch_factor: Optional[int] = None,
         cache_mode: str = "ram",
         image_size: int = 224,
-        num_frames: int = 4,
-        sample_rate: int = 64000,
+        num_frames: int = 2,
+        sample_rate: int = 256000,
         splitter_config: Optional[SplitterConfig] = None,
     ) -> None:
         self.batch_size = batch_size
@@ -320,7 +320,7 @@ class FishMultimodalDataLoader:
                 video_raw, audio_raw, target_onehot, clip_name = self.ram_cache[idx]
                 frames = [self.transform(frame) for frame in video_raw]
                 video_tensor = torch.stack(frames[:self.parent.num_frames])  # [T, 3, H, W]
-                audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)  # [128000]
+                audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)  # [512000] (2.0s @ 256 kHz)
                 return {
                     'clip_name': clip_name,
                     'video_form': video_tensor,

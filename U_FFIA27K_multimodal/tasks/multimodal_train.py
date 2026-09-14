@@ -18,8 +18,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
-from scipy.optimize import minimize
-from sklearn.metrics import cohen_kappa_score
 
 from config import MultimodalTrainConfig
 from utils import (
@@ -28,7 +26,6 @@ from utils import (
     MultimodalEvaluator,
     InferenceTimer,
     ClipCELoss,
-    BilateralBoundaryLoss,
     PairwiseTournamentLoss,
 )
 
@@ -242,94 +239,6 @@ class MultimodalTrainer:
 
         return epoch_loss, train_acc, train_mAP, train_mae
 
-    def nelder_mead_calibrate(self) -> Dict[str, Any]:
-        """
-        Nelder-Mead Post-Calibration on Validation split to optimize cutoffs without gradients.
-        """
-        if not hasattr(self.model.fusion, 'head_v') or not hasattr(self.model.fusion.head_v, 'get_cutoffs'):
-            logger.info("Tournament architecture uses direct Pairwise Voting (no 1D cutoffs needed). Skipping Nelder-Mead.")
-            return {}
-
-        logger.info("Starting Nelder-Mead post-training calibration on validation set...")
-        self.model.eval()
-
-        s_v_list, s_a_list, g_list, y_list = [], [], [], []
-        with torch.no_grad():
-            for batch in self.val_loader:
-                video = batch['video_form'].to(self.device)
-                audio = batch['audio_form'].to(self.device)
-                targets = batch['target'].to(self.device)
-                outputs = self.model(video, audio)
-
-                s_v_list.append(outputs['score_v'].cpu().numpy())
-                s_a_list.append(outputs['score_a'].cpu().numpy())
-                g_list.append(outputs['gate'].squeeze(-1).cpu().numpy())
-                y_raw = targets.argmax(dim=-1) if targets.ndim > 1 else targets
-                y_list.append(y_raw.cpu().numpy())
-
-        s_v = np.concatenate(s_v_list)
-        s_a = np.concatenate(s_a_list)
-        g = np.concatenate(g_list)
-        y = np.concatenate(y_list)
-
-        raw_to_rank = np.array([0, 3, 2, 1])
-        y_rank = raw_to_rank[y]
-
-        b_v_init = [c.item() for c in self.model.fusion.head_v.get_cutoffs()]
-        b_a_init = [c.item() for c in self.model.fusion.head_a.get_cutoffs()]
-        x0 = np.array(b_v_init + b_a_init, dtype=float)
-
-        def objective(params):
-            bv = params[:3]
-            ba = params[3:]
-            if bv[1] <= bv[0] + 0.1 or bv[2] <= bv[1] + 0.1:
-                return 10.0
-            if ba[1] <= ba[0] + 0.1 or ba[2] <= ba[1] + 0.1:
-                return 10.0
-
-            s = g * s_v + (1.0 - g) * s_a
-            b1 = g * bv[0] + (1.0 - g) * ba[0]
-            b2 = g * bv[1] + (1.0 - g) * ba[1]
-            b3 = g * bv[2] + (1.0 - g) * ba[2]
-
-            pred_rank = np.zeros_like(s, dtype=int)
-            pred_rank[s >= b1] = 1
-            pred_rank[s >= b2] = 2
-            pred_rank[s >= b3] = 3
-
-            qwk = cohen_kappa_score(y_rank, pred_rank, weights='quadratic')
-            return -float(qwk)
-
-        init_qwk = -objective(x0)
-        res = minimize(objective, x0, method='Nelder-Mead', options={'maxiter': 500, 'xatol': 1e-3})
-        opt_qwk = -res.fun
-
-        logger.info(f"Nelder-Mead Calibration: Initial Val QWK = {init_qwk:.4f} -> Calibrated Val QWK = {opt_qwk:.4f} (+{opt_qwk - init_qwk:.4f})")
-
-        calibrated_cutoffs = {
-            "initial_cutoffs_v": b_v_init,
-            "initial_cutoffs_a": b_a_init,
-            "calibrated_cutoffs_v": [float(x) for x in res.x[:3]],
-            "calibrated_cutoffs_a": [float(x) for x in res.x[3:]],
-            "initial_qwk": float(init_qwk),
-            "calibrated_qwk": float(opt_qwk),
-        }
-
-        calibrated_path = os.path.join(self.run_dir, 'calibrated_cutoffs.json')
-        with open(calibrated_path, 'w', encoding='utf-8') as f:
-            json.dump(calibrated_cutoffs, f, indent=2)
-        logger.info(f"Saved calibrated cutoffs to: '{calibrated_path}'")
-
-        # Update model cutoffs with calibrated values
-        try:
-            self.model.fusion.head_v.set_cutoffs(tuple(res.x[:3]))
-            self.model.fusion.head_a.set_cutoffs(tuple(res.x[3:]))
-            logger.info("Updated model boundary heads with calibrated cutoffs.")
-        except Exception as exc:
-            logger.warning(f"Could not directly update head cutoffs: {exc}")
-
-        return calibrated_cutoffs
-
     def train(self) -> Dict[str, Any]:
         logger.info(f"Starting training pipeline (Monitor metric: {self.config.monitor})...")
         training_start_time = time.perf_counter()
@@ -458,12 +367,6 @@ class MultimodalTrainer:
             self.logger.plot_history()
         except Exception as exc:
             logger.warning(f"Failed to generate learning curves plot: {exc}")
-
-        # Post-training Nelder-Mead calibration
-        try:
-            self.nelder_mead_calibrate()
-        except Exception as exc:
-            logger.warning(f"Nelder-Mead calibration encountered an error: {exc}")
 
         # Final evaluation on Test split
         logger.info("==================================================")

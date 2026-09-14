@@ -22,7 +22,7 @@ class InferenceTimer:
     def measure_latency_per_sample(
         self,
         video_shape: Tuple[int, ...] = (1, 2, 3, 224, 224),
-        audio_shape: Tuple[int, ...] = (1, 1, 100, 128),
+        audio_shape: Tuple[int, ...] = (1, 512000),
         warm_up_steps: int = 10,
         num_steps: int = 50
     ) -> float:
