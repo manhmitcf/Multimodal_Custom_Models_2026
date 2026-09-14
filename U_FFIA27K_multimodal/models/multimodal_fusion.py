@@ -220,10 +220,3 @@ class MultimodalTournamentFusion(nn.Module):
         out["uncertainty"] = entropy / 1.386294
 
         return out
-
-
-
-# Backward compatibility aliases
-GatedBilateralBoundaryFusion = MultimodalTournamentFusion
-MultimodalBoundaryAwareFusion = MultimodalTournamentFusion
-SOTAMultimodalFusion = MultimodalTournamentFusion

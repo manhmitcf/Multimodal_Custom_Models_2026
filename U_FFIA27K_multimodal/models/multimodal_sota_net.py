@@ -3,11 +3,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Any, Optional
 
-from features.motion_kinematics import FishMotionKinematics7Ch, FishMotionKinematics10Ch
+from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
-from .video_backbone import ConvNeXtNanoVideoBackbone, MobileViTVideoBackbone
-from .audio_backbone import AudioMLPBackbone, AudioBackbone, PANNSCNN6AudioBackbone, EfficientATAudioBackbone
-from .multimodal_fusion import GatedBilateralBoundaryFusion, MultimodalBoundaryAwareFusion, SOTAMultimodalFusion
+from .video_backbone import ConvNeXtNanoVideoBackbone
+from .audio_backbone import AudioMLPBackbone
+from .multimodal_fusion import MultimodalTournamentFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
@@ -33,14 +33,12 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self,
         classes_num: int = 4,
         embed_dim: int = 224,
-        num_bottlenecks: int = 4,  # Kept for config compatibility
-        num_heads: int = 4,
-        pretrained_video: bool = False,
         audio_frontend: Optional[AudioFrontend] = None,
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
         use_frequency_attention: bool = False,
+        seed: Optional[int] = None,
         **kwargs
     ) -> None:
         super().__init__()
@@ -54,7 +52,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~4.46M)
+        # 2. Backbones (~4.09M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
@@ -66,8 +64,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Gated Bilateral Boundary Fusion (~0.14M)
-        self.fusion = GatedBilateralBoundaryFusion(
+        # 3. Multimodal Tournament Fusion (~0.10M)
+        self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1
         )
