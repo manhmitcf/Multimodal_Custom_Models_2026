@@ -12,22 +12,23 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Bilateral Boundary Network (BBN-4.5M) (~4.54M Total Parameters).
-    Specifically architected to resolve continuous temporal boundary transition ambiguity
-    between adjacent fish feeding intensity classes (Strong <-> Medium <-> Weak <-> None):
+    Multimodal Tournament Network (~4.04M Total Parameters).
+    Specifically architected to resolve fish feeding intensity assessment across 4 classes
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy and Borda voting:
 
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
-      2. Acoustic Time-Frequency Stream (~1.76M params):
-         TKEO Adaptive Pre-Emphasis + Learnable Frequency Attention + PANNS-CNN6-Pro 4-stage 5x5 Conv
-         with Dual Pooling (max+avg).
-      3. Gated Bilateral Boundary Fusion (~0.10M params):
-         - Dynamic Gated Fusion: g = sigma(W[f_V || f_A]).
-         - Bilateral Monotonic CORAL Decision Heads (s_V, b_V & s_A, b_A).
-         - Blended Decision: s_final = g*s_V + (1-g)*s_A with strictly monotonic cutoffs.
+      2. Acoustic Time-Frequency Stream (~1.17M params):
+         High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
+         + 2-layer MLP Projection (2049 -> 224).
+      3. Pairwise Tournament Fusion (~0.17M params):
+         - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
+         - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
+         - Level 2: 3 Specialized Pairwise Subspace Expert Heads (B12, B23 with Audio STFT Tie-Breaker, B13).
+         - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: ~4.54M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~4.04M (Strictly < 5.0M parameter constraint).
     """
     def __init__(
         self,

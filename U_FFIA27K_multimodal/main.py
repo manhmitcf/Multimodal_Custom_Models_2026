@@ -56,13 +56,15 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
 
+    in_chans = getattr(config, "in_chans", getattr(config.video_features, "num_channels", 7))
+
     return model_cls(
         classes_num=config.model.classes_num,
         embed_dim=config.model.embed_dim,
         audio_frontend=frontend,
         image_size=config.image_size,
         num_frames=config.num_frames,
-        in_chans=getattr(config, "in_chans", 7),
+        in_chans=in_chans,
         use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
         seed=active_seed,
     )
@@ -119,7 +121,7 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
         # 3. Test backward pass & gradient flow
         loss_type = getattr(config, "loss_type", "pairwise_tournament")
         from utils.losses import PairwiseTournamentLoss, ClipCELoss
-        if loss_type in ("pairwise_tournament", "bilateral_boundary", "ordinal_wasserstein"):
+        if loss_type == "pairwise_tournament":
             loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(config, "weight_act", 0.5),
                 weight_pairwise=getattr(config, "weight_pairwise", 0.5),

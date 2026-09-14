@@ -92,14 +92,9 @@ class MultimodalTrainer:
                 weight_act=getattr(self.config, "weight_act", 0.5),
                 weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
                 weight_ce=getattr(self.config, "weight_ce", 1.0),
+                aux_loss_weight=getattr(self.config, "aux_loss_weight", 0.3),
             ).to(self.device)
             logger.info("Configured PairwiseTournamentLoss (Activity Gate + 3 Pairwise Cross Boundaries B12, B23, B13).")
-        elif loss_type in ("bilateral_boundary", "ordinal_wasserstein"):
-            self.loss_fn = BilateralBoundaryLoss(
-                lambda_emd=getattr(self.config, "lambda_emd", 0.5),
-                lambda_align=getattr(self.config, "lambda_align", 0.2),
-            ).to(self.device)
-            logger.info("Configured BilateralBoundaryLoss (CORAL + EMD + Alignment).")
         else:
             self.loss_fn = ClipCELoss()
             logger.info("Configured standard ClipCELoss.")
