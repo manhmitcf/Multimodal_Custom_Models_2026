@@ -33,27 +33,30 @@ class VideoFeaturesConfig(BaseModel):
 
 class AudioFeaturesConfig(BaseModel):
     """
-    High-Resolution TKEO-STFT Audio Frontend parameters (256 kHz, 2049 linear bins).
+    High-Resolution TKEO-STFT + Linear Filterbank Audio Frontend parameters (256 kHz, 512 linear bins).
     """
     sample_rate: int = Field(default=256000, description="Audio sampling rate in Hz.")
     window_size: int = Field(default=4096, description="STFT window size in samples.")
     hop_size: int = Field(default=2048, description="STFT hop size in samples.")
-    mel_bins: int = Field(default=2049, description="Number of STFT linear frequency bins (window_size // 2 + 1).")
+    mel_bins: int = Field(default=512, description="Number of Linear Filterbank bins.")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
-    use_spectral_aug: bool = Field(default=False, description="Enable 1D Spectral Augmentation for MLP during training.")
-    cutout_width: int = Field(default=24, description="Width of 1D frequency cutout band in linear bins.")
-    cutout_prob: float = Field(default=0.5, ge=0.0, le=1.0, description="Probability of applying 1D frequency cutout.")
+    use_spectral_aug: bool = Field(default=True, description="Enable 2D Dual SpecAugment during training.")
+    freq_mask_max: int = Field(default=32, description="Max width of frequency masking band in linear bins.")
+    time_mask_max: int = Field(default=16, description="Max width of time masking band in frames.")
+    num_freq_masks: int = Field(default=2, description="Number of parallel frequency masking bands.")
+    num_time_masks: int = Field(default=2, description="Number of parallel time masking bands.")
+    freq_mask_prob: float = Field(default=0.5, ge=0.0, le=1.0, description="Probability of applying frequency masking.")
+    time_mask_prob: float = Field(default=0.5, ge=0.0, le=1.0, description="Probability of applying time masking.")
     noise_std: float = Field(default=0.02, ge=0.0, description="Standard deviation of additive Gaussian noise.")
-
-
+    dropout: float = Field(default=0.25, ge=0.0, le=0.9, description="Dropout rate for audio CNN and BiGRU stages.")
 
 
 class ModelConfig(BaseModel):
     """
     Configuration for SOTA Multimodal Model.
     Video: ConvNeXt-Nano (7-ch Kinematics)
-    Audio: TKEO-STFT-MLP (2049 linear bins, 256 kHz)
+    Audio: AudioFilterbankCRNN (512 linear filterbank bins -> 256 -> 112 -> BiGRU, 256 kHz)
     Fusion: Hierarchical Pairwise Cross-Boundary Tournament Engine
     """
     backbone: str = Field(

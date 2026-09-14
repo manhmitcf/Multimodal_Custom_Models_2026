@@ -43,10 +43,15 @@
     "sample_rate": 256000,
     "window_size": 4096,
     "hop_size": 2048,
-    "mel_bins": 2049,
+    "mel_bins": 512,
     "use_tkeo": true,
     "alpha_max": 0.99,
-    "use_spectral_aug": true
+    "use_spectral_aug": true,
+    "freq_mask_max": 32,
+    "time_mask_max": 16,
+    "num_freq_masks": 2,
+    "num_time_masks": 2,
+    "dropout": 0.25
   },
 
   "dataset_splitter": {

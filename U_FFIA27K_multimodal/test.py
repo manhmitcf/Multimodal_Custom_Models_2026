@@ -88,7 +88,7 @@ def test_parameter_budget(
 
     if verbose:
         print(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        print(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+        print(f"  - Audio Backbone (AudioFilterbankCRNN 256k) : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
         print(f"  - Tournament Cross-Modal Fusion             : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
         print(f"  * Total Trainable Parameters                : {total_params:,} ({stats['total_million']:.3f} M)")
         if flops > 0.0:
@@ -128,23 +128,24 @@ def test_kinematics_and_frontend(model: nn.Module, config: TrainConfig, device: 
         model.audio_frontend.train()
         stft_feat_train = model.audio_frontend(dummy_wave)
         expected_bins = config.audio_features.mel_bins
-        if stft_feat_train.shape[-1] != expected_bins:
-            raise ValueError(f"STFT frequency bins mismatch! Got {stft_feat_train.shape[-1]}, expected {expected_bins}")
+        if expected_bins not in stft_feat_train.shape:
+            raise ValueError(f"Filterbank frequency bins mismatch! Expected {expected_bins} in shape, got {stft_feat_train.shape}")
 
         # Test eval mode (SpecAugment bypassed)
         model.audio_frontend.eval()
         stft_feat_eval = model.audio_frontend(dummy_wave)
-        if stft_feat_eval.shape[-1] != expected_bins:
-            raise ValueError(f"STFT frequency bins mismatch in eval! Got {stft_feat_eval.shape[-1]}, expected {expected_bins}")
+        if expected_bins not in stft_feat_eval.shape:
+            raise ValueError(f"Filterbank frequency bins mismatch in eval! Expected {expected_bins} in shape, got {stft_feat_eval.shape}")
 
         if verbose:
             aug_str = (
-                f"1D Spectral Aug: Cutout={getattr(config.audio_features, 'cutout_width', 24)}bins, "
+                f"Dual SpecAugment: FreqMask={getattr(config.audio_features, 'freq_mask_max', 32)}bins, "
+                f"TimeMask={getattr(config.audio_features, 'time_mask_max', 16)}frames, "
                 f"Noise={getattr(config.audio_features, 'noise_std', 0.02)}"
                 if getattr(config.audio_features, 'use_spectral_aug', False)
-                else "Spectral Aug: Off"
+                else "SpecAugment: Off"
             )
-            print(f"  - Audio TKEO-STFT feature shape: {list(stft_feat_train.shape)} ({expected_bins} linear bins, {aug_str})")
+            print(f"  - Audio Filterbank feature shape: {list(stft_feat_train.shape)} ({expected_bins} linear bins, {aug_str})")
 
     if verbose:
         print("  >>> [PASS] Video kinematics and audio frontend pipelines 100% verified.")
