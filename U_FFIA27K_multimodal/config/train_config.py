@@ -41,9 +41,13 @@ class AudioFeaturesConfig(BaseModel):
     mel_bins: int = Field(default=2049, description="Number of STFT linear frequency bins (window_size // 2 + 1).")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
-    use_spectral_aug: bool = Field(default=False, description="Enable 1D Spectral Augmentation for MLP during training.")
-    cutout_width: int = Field(default=24, description="Width of 1D frequency cutout band in linear bins.")
-    cutout_prob: float = Field(default=0.5, ge=0.0, le=1.0, description="Probability of applying 1D frequency cutout.")
+    use_spectral_aug: bool = Field(default=True, description="Enable 2D SpecAugment for 1D-CRNN during training.")
+    freq_mask_max: int = Field(default=32, description="Max width of frequency masking band in linear bins.")
+    time_mask_max: int = Field(default=16, description="Max width of time masking band in frames.")
+    freq_mask_prob: float = Field(default=0.5, ge=0.0, le=1.0, description="Probability of applying frequency masking.")
+    time_mask_prob: float = Field(default=0.5, ge=0.0, le=1.0, description="Probability of applying time masking.")
+    cutout_width: int = Field(default=32, description="Fallback width of frequency cutout band.")
+    cutout_prob: float = Field(default=0.5, ge=0.0, le=1.0, description="Fallback probability of frequency cutout.")
     noise_std: float = Field(default=0.02, ge=0.0, description="Standard deviation of additive Gaussian noise.")
 
 
@@ -53,7 +57,7 @@ class ModelConfig(BaseModel):
     """
     Configuration for SOTA Multimodal Model.
     Video: ConvNeXt-Nano (7-ch Kinematics)
-    Audio: TKEO-STFT-MLP (2049 linear bins, 256 kHz)
+    Audio: AudioHarmonicCRNN (2049 linear bins -> 448 -> 224 -> BiGRU, 256 kHz)
     Fusion: Hierarchical Pairwise Cross-Boundary Tournament Engine
     """
     backbone: str = Field(

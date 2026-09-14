@@ -6,22 +6,22 @@ from typing import Dict, Any, Optional
 from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone
-from .audio_backbone import AudioMLPBackbone
+from .audio_backbone import AudioHarmonicCRNN
 from .multimodal_fusion import MultimodalTournamentFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Boundary-Aware Net (4.04M Total Parameters).
+    Multimodal Boundary-Aware Net (~4.33M Total Parameters).
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
-      2. Acoustic Time-Frequency Stream (~1.17M params):
-         High-Resolution TKEO-STFT-MLP (2049 linear bins @ 256 kHz).
-      3. Cross-Modal Tournament Fusion (~0.17M params):
+      2. Acoustic Time-Frequency Stream (~1.45M params):
+         Harmonic 1D-CRNN (2049 -> 448 -> 224 -> BiGRU(112) -> 224) with 2D SpecAugment.
+      3. Cross-Modal Tournament Fusion (~0.18M params):
          Hierarchical Pairwise Cross-Boundary Tournament Engine with Dual Aux Heads.
 
-    Total Parameters: ~4.04M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~4.33M (Strictly < 5.0M parameter constraint).
     """
     def __init__(
         self,
@@ -50,16 +50,18 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~3.87M)
+        # 2. Backbones (~4.15M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
             num_frames=num_frames
         )
-        self.audio_backbone = AudioMLPBackbone(
+        self.audio_backbone = AudioHarmonicCRNN(
             in_features=2049,
+            mid_dim=448,
             embed_dim=embed_dim,
-            num_tokens=num_frames
+            gru_hidden=112,
+            seed=seed
         )
 
         # 3. Tournament Cross-Modal Fusion (~0.17M)
