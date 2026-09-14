@@ -4,13 +4,13 @@
   "batch_size": 32,
 
   "learning_rate": 1e-3,
-  "min_lr": 1e-6,
   "weight_decay": 0.05,
   "max_norm": 5.0,
 
-  "lr_scheduler": "cosine",
-  "use_warmup": false,
-  "warmup_pct": 0.05,
+  "lr_scheduler": "onecycle",
+  "pct_start": 0.05,
+  "div_factor": 25.0,
+  "final_div_factor": 1000.0,
 
   "monitor": "qwk",
   "mode": "max",

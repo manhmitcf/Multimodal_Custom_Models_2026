@@ -174,8 +174,9 @@ class MultimodalTrainer:
         # Training Setup
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
         self.max_norm = float(getattr(self.config, "max_norm", 5.0))
-        self.warmup_pct = float(getattr(self.config, "warmup_pct", 0.05))
-        self.use_warmup = bool(getattr(self.config, "use_warmup", True)) and (self.warmup_pct > 0.0)
+        self.pct_start = float(getattr(self.config, "pct_start", 0.05))
+        self.div_factor = float(getattr(self.config, "div_factor", 25.0))
+        self.final_div_factor = float(getattr(self.config, "final_div_factor", 1000.0))
 
         # Single unified optimizer for all parameters (Backbones + Aux Heads + Multimodal Fusion)
         # SOTA Parameter Grouping: Conv2d/Linear weights get weight_decay, biases & LayerNorm get 0.0
@@ -193,46 +194,35 @@ class MultimodalTrainer:
                 lr=self.config.learning_rate
             )
 
-        min_lr = float(getattr(self.config, "min_lr", 1e-6))
+        # OneCycleLR Scheduler (Step-level granularity across all batches)
+        # Exactly mirrors the 97.14% champion policy:
+        # initial_lr = max_lr / div_factor = 4e-5, peaks at epoch 20 (5%), cools to 4e-8
+        self.steps_per_epoch = len(self.train_loader) if self.train_loader is not None and hasattr(self.train_loader, '__len__') else 1
         base_lr = float(self.config.learning_rate)
+        initial_lr = base_lr / self.div_factor
+        final_lr = initial_lr / self.final_div_factor
 
-        if self.use_warmup:
-            # Epoch-level SequentialLR: LinearLR Warmup followed by CosineAnnealingLR decay
-            warmup_epochs = max(1, int(self.config.epochs * self.warmup_pct))
-            cosine_epochs = max(1, self.config.epochs - warmup_epochs)
-
-            sched_warmup = optim.lr_scheduler.LinearLR(
-                self.optimizer,
-                start_factor=1e-3,
-                end_factor=1.0,
-                total_iters=warmup_epochs
-            )
-            sched_cosine = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=cosine_epochs,
-                eta_min=min_lr
-            )
-            self.scheduler = optim.lr_scheduler.SequentialLR(
-                self.optimizer,
-                schedulers=[sched_warmup, sched_cosine],
-                milestones=[warmup_epochs]
-            )
-            logger.info(
-                f"Configured SequentialLR (LinearLR Warmup + CosineAnnealingLR): "
-                f"warmup_epochs={warmup_epochs} ({self.warmup_pct*100:.1f}%), "
-                f"cosine_epochs={cosine_epochs}, base_lr={base_lr}, min_lr={min_lr} (step_mode='epoch')."
-            )
-        else:
-            # Direct Pure CosineAnnealingLR (No Warmup, starts directly at base_lr)
-            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=self.config.epochs,
-                eta_min=min_lr
-            )
-            logger.info(
-                f"Configured pure CosineAnnealingLR (NO WARMUP - starts directly at {base_lr}): "
-                f"T_max={self.config.epochs}, base_lr={base_lr}, min_lr={min_lr} (step_mode='epoch')."
-            )
+        self.scheduler = optim.lr_scheduler.OneCycleLR(
+            self.optimizer,
+            max_lr=base_lr,
+            epochs=self.config.epochs,
+            steps_per_epoch=self.steps_per_epoch,
+            pct_start=self.pct_start,
+            anneal_strategy='cos',
+            div_factor=self.div_factor,
+            final_div_factor=self.final_div_factor
+        )
+        total_steps = self.config.epochs * self.steps_per_epoch
+        warmup_steps = int(total_steps * self.pct_start)
+        logger.info(
+            f"Configured SOTA OneCycleLR (Step-level Granularity across all batches):\n"
+            f"  - Max LR (Peak at {self.pct_start*100:.1f}%):       {base_lr:.6e}\n"
+            f"  - Initial LR (div_factor={self.div_factor}):      {initial_lr:.6e}\n"
+            f"  - Final Min LR (final_div={self.final_div_factor}): {final_lr:.6e}\n"
+            f"  - Total Batches (Steps):       {total_steps:,} ({self.steps_per_epoch} steps/epoch x {self.config.epochs} epochs)\n"
+            f"  - Warmup Steps:                {warmup_steps:,} steps (~{int(self.config.epochs * self.pct_start)} epochs)\n"
+            f"  - Step Mode:                   batch-level (in _train_epoch)"
+        )
 
 
         # Evaluator and Timer
@@ -300,8 +290,9 @@ class MultimodalTrainer:
         logger.info(f"  - Device:                   {self.device}")
         logger.info(f"  - Max Epochs:               {self.config.epochs}")
         logger.info(f"  - Batch Size:               {self.config.batch_size}")
-        sched_name = "SequentialLR (LinearLR Warmup + CosineAnnealingLR)" if self.use_warmup else "Pure CosineAnnealingLR (No Warmup)"
-        logger.info(f"  - LR Scheduler:             {sched_name} (step_mode='epoch', min_lr={getattr(self.config, 'min_lr', 1e-6)})")
+        initial_lr = float(self.config.learning_rate) / self.div_factor
+        final_lr = initial_lr / self.final_div_factor
+        logger.info(f"  - LR Scheduler:             OneCycleLR (step_mode='batch', max_lr={float(self.config.learning_rate):.1e}, init_lr={initial_lr:.1e}, min_lr={final_lr:.1e})")
         if self.param_group_stats is not None:
             logger.info(f"  - Optimizer:                AdamW (Decay wd={self.weight_decay}: {self.param_group_stats['decay_params']:,} params, No-Decay wd=0.0: {self.param_group_stats['no_decay_params']:,} params)")
         else:
@@ -338,6 +329,8 @@ class MultimodalTrainer:
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
             torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=self.max_norm)
             self.optimizer.step()
+            if hasattr(self, "scheduler") and self.scheduler is not None:
+                self.scheduler.step()
 
             loss_val = loss.item()
             total_loss += loss_val
@@ -387,7 +380,6 @@ class MultimodalTrainer:
         for epoch in range(1, self.config.epochs + 1):
             epoch_start_time = time.perf_counter()
             train_loss, train_acc, train_mAP = self._train_epoch(epoch)
-            self.scheduler.step()
 
             # Evaluate on validation split
             self.model.eval()

@@ -254,15 +254,14 @@ def test_optimizer_and_scheduler(
     config: TrainConfig,
     verbose: bool = True
 ) -> bool:
-    min_lr = float(getattr(config, "min_lr", 1e-6))
     base_lr = float(config.learning_rate)
-    warmup_pct = float(getattr(config, "warmup_pct", 0.05))
-    use_warmup = bool(getattr(config, "use_warmup", True)) and (warmup_pct > 0.0)
+    pct_start = float(getattr(config, "pct_start", 0.05))
+    div_factor = float(getattr(config, "div_factor", 25.0))
+    final_div_factor = float(getattr(config, "final_div_factor", 1000.0))
 
     if verbose:
         print("\n" + "=" * 65)
-        sched_label = "SEQUENTIAL LR (WARMUP + COSINE)" if use_warmup else "PURE COSINE ANNEALING (NO WARMUP)"
-        print(f"  TEST 5: OPTIMIZER & {sched_label} STEP (EPOCH-LEVEL)")
+        print("  TEST 5: OPTIMIZER & ONECYCLE LR STEP (BATCH-LEVEL)")
         print("=" * 65)
 
     param_groups, stats = build_optimizer_param_groups(
@@ -290,40 +289,28 @@ def test_optimizer_and_scheduler(
         lr=base_lr
     )
 
-    if use_warmup:
-        warmup_epochs = max(1, int(config.epochs * warmup_pct))
-        cosine_epochs = max(1, config.epochs - warmup_epochs)
-
-        sched_warmup = torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=1e-3,
-            end_factor=1.0,
-            total_iters=warmup_epochs
-        )
-        sched_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=cosine_epochs,
-            eta_min=min_lr
-        )
-        scheduler = torch.optim.lr_scheduler.SequentialLR(
-            optimizer,
-            schedulers=[sched_warmup, sched_cosine],
-            milestones=[warmup_epochs]
-        )
-        sched_name = f"SequentialLR (LinearLR Warmup [{warmup_epochs} eps] + CosineAnnealingLR [{cosine_epochs} eps], min={min_lr})"
-    else:
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=config.epochs,
-            eta_min=min_lr
-        )
-        sched_name = f"Pure CosineAnnealingLR (No Warmup, T_max={config.epochs}, min={min_lr})"
+    # In test pre-flight, simulate OneCycleLR with dummy 10 steps per epoch
+    dummy_steps_per_epoch = 10
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=base_lr,
+        epochs=config.epochs,
+        steps_per_epoch=dummy_steps_per_epoch,
+        pct_start=pct_start,
+        anneal_strategy='cos',
+        div_factor=div_factor,
+        final_div_factor=final_div_factor
+    )
 
     max_norm = float(getattr(config, "max_norm", 5.0))
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=max_norm)
 
     init_lr = optimizer.param_groups[0]["lr"]
+    expected_init_lr = base_lr / div_factor
+    if abs(init_lr - expected_init_lr) > 1e-8:
+        raise ValueError(f"Expected initial LR = {expected_init_lr:.6e}, got {init_lr:.6e}")
+
     optimizer.step()
     scheduler.step()
     stepped_lr = optimizer.param_groups[0]["lr"]
@@ -333,23 +320,17 @@ def test_optimizer_and_scheduler(
         if abs(grp["lr"] - stepped_lr) > 1e-12:
             raise ValueError(f"Param group {i} LR out of sync: {grp['lr']:.6e} vs {stepped_lr:.6e}")
 
+    if stepped_lr <= init_lr:
+        raise ValueError(f"OneCycleLR warmup phase did not increase learning rate! init={init_lr:.6e}, stepped={stepped_lr:.6e}")
+
     if verbose:
         print(f"  - Optimizer:                     AdamW (Decay wd={config.weight_decay}: {stats['decay_params']:,} params, No-Decay wd=0.0: {stats['no_decay_params']:,} params)")
         print(f"  - Gradient Clipping:             max_norm = {max_norm}")
-        print(f"  - Scheduler:                     {sched_name} [EPOCH]")
+        print(f"  - Scheduler:                     OneCycleLR (div={div_factor}, final_div={final_div_factor}, pct_start={pct_start*100:.1f}%) [BATCH]")
         print(f"  - Initial LR (Step 0):           {init_lr:.6e}")
         print(f"  - Stepped LR (Step 1):           {stepped_lr:.6e}")
-
-    if use_warmup:
-        if stepped_lr <= init_lr:
-            raise ValueError(f"SequentialLR Warmup did not increase learning rate as expected! init={init_lr:.6e}, stepped={stepped_lr:.6e}")
-    else:
-        if stepped_lr >= init_lr:
-            raise ValueError(f"CosineAnnealingLR did not decay learning rate as expected! init={init_lr:.6e}, stepped={stepped_lr:.6e}")
-
-    if verbose:
-        pass_name = "SequentialLR (LinearLR Warmup + CosineAnnealingLR)" if use_warmup else "Pure CosineAnnealingLR (No Warmup)"
-        print(f"  >>> [PASS] Optimizer & {pass_name} verified smoothly.")
+        print(f"  - Target Max LR (Peak):          {base_lr:.6e}")
+        print(f"  >>> [PASS] Optimizer & OneCycleLR verified smoothly.")
     return True
 
 
