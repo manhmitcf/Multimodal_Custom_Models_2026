@@ -9,7 +9,7 @@
   "max_norm": 5.0,
 
   "lr_scheduler": "cosine",
-  "use_warmup": true,
+  "use_warmup": false,
   "warmup_pct": 0.05,
 
   "monitor": "qwk",
@@ -46,7 +46,7 @@
     "mel_bins": 2049,
     "use_tkeo": true,
     "alpha_max": 0.99,
-    "use_spectral_aug": false
+    "use_spectral_aug": true
   },
 
   "dataset_splitter": {
