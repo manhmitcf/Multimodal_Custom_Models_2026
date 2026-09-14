@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -167,35 +168,119 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         }
 
 
+class ChannelGatedBilinearFusion(nn.Module):
+    """
+    Channel-wise Gated Bilinear Cross-Modal Fusion (CGB-Fusion).
+    Combines:
+      1. 224-Dimensional Channel-wise Gated Blending:
+         g = sigmoid(W_g [f_V || f_A] + b_g) in (0, 1)^224 with b_g=0 -> g=0.5 at Step 0.
+         z_V = GELU(W_V f_V), z_A = GELU(W_A f_A)
+         f_gated = LayerNorm(g * z_V + (1 - g) * z_A)
+      2. Second-Order Bilinear Cross-Modal Interaction:
+         h_V = W_b1 f_V, h_A = W_b2 f_A
+         f_bilinear = LayerNorm(h_V * h_A) (Variance stabilized via LayerNorm)
+      3. Residual Joint Projection:
+         f_joint = LayerNorm(f_gated + Dropout(GELU(W_joint [f_gated || f_bilinear])))
+    """
+    def __init__(self, dim: int = 224, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.dim = dim
+
+        # 1. Channel-wise Gating (dim-dimensional independent channel gates)
+        self.gate_proj = nn.Linear(dim * 2, dim)
+        self.proj_v = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.GELU()
+        )
+        self.proj_a = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.GELU()
+        )
+        self.norm_gated = nn.LayerNorm(dim)
+
+        # 2. Second-Order Bilinear Interaction
+        self.bilinear_v = nn.Linear(dim, dim)
+        self.bilinear_a = nn.Linear(dim, dim)
+        self.norm_bilinear = nn.LayerNorm(dim)
+
+        # 3. Residual Joint Projection
+        self.joint_proj = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+        self.norm_joint = nn.LayerNorm(dim)
+
+        # Initialize weights with balanced step 0 gating
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        # Balanced 50/50 Channel Gate at Step 0: bias=0, Xavier uniform weights with scale
+        nn.init.xavier_uniform_(self.gate_proj.weight, gain=0.1)
+        nn.init.zeros_(self.gate_proj.bias)
+
+        # Bilinear projections
+        nn.init.xavier_uniform_(self.bilinear_v.weight)
+        nn.init.zeros_(self.bilinear_v.bias)
+        nn.init.xavier_uniform_(self.bilinear_a.weight)
+        nn.init.zeros_(self.bilinear_a.bias)
+
+        # Branch projections
+        for m in self.proj_v.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+        for m in self.proj_a.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+        # Joint projection
+        for m in self.joint_proj.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, f_video: torch.Tensor, f_audio: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Step 1: Channel-wise Gating
+        combined = torch.cat([f_video, f_audio], dim=-1)     # [B, dim * 2]
+        g = torch.sigmoid(self.gate_proj(combined))            # [B, dim] in (0, 1)
+        z_v = self.proj_v(f_video)                             # [B, dim]
+        z_a = self.proj_a(f_audio)                             # [B, dim]
+        f_gated = self.norm_gated(g * z_v + (1.0 - g) * z_a)  # [B, dim]
+
+        # Step 2: Second-Order Bilinear Cross-Modal Interaction
+        h_v = self.bilinear_v(f_video)                         # [B, dim]
+        h_a = self.bilinear_a(f_audio)                         # [B, dim]
+        f_bilinear = self.norm_bilinear(h_v * h_a)             # [B, dim]
+
+        # Step 3: Residual Joint Projection
+        f_cat = torch.cat([f_gated, f_bilinear], dim=-1)       # [B, dim * 2]
+        f_joint = self.norm_joint(f_gated + self.joint_proj(f_cat))  # [B, dim]
+
+        return f_joint, f_gated, g
+
+
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~105K params).
-    1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
-    2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
-       with Audio STFT Tie-Breaker on B23 (Medium vs Strong).
+    Channel-wise Gated Bilinear Multimodal Tournament Fusion Engine.
+    Combines:
+      1. CGB-Fusion (ChannelGatedBilinearFusion): 224D Channel-wise Gating + Second-Order Bilinear Interaction + Residual Joint Refinement.
+      2. Hierarchical Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
+         with Audio STFT Tie-Breaker on B23 (Medium vs Strong).
     """
     def __init__(self, dim: int = 224, dropout: float = 0.1, **kwargs) -> None:
         super().__init__()
         self.dim = dim
 
-        # 1. Gated Reliability Fusion
-        self.gate = nn.Sequential(
-            nn.Linear(dim * 2, 1),
-            nn.Sigmoid()
-        )
-        self.norm_fused = nn.LayerNorm(dim)
+        # 1. CGB-Fusion Core
+        self.cgb_fusion = ChannelGatedBilinearFusion(dim=dim, dropout=dropout)
 
-        # 2. Residual refinement
-        self.proj_joint = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.LayerNorm(dim)
-        )
-
-        # 3. Pairwise Boundary Tournament Decision Head
+        # 2. Pairwise Boundary Tournament Decision Head
         self.tournament_head = PairwiseBoundaryTournamentHead(dim=dim, temperature=2.0)
-
 
     def forward(
         self,
@@ -203,22 +288,26 @@ class MultimodalTournamentFusion(nn.Module):
         f_audio: torch.Tensor,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        # Step 1: Cross-modal adaptive reliability gating
-        combined = torch.cat([f_video, f_audio], dim=-1)  # [B, dim * 2]
-        g = self.gate(combined)                            # [B, 1]
-        f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)
-        f_joint = self.proj_joint(f_fused)
+        # Step 1: Channel-wise Gated Bilinear Fusion
+        f_joint, f_gated, g = self.cgb_fusion(f_video=f_video, f_audio=f_audio)
 
         # Step 2: Pairwise Boundary Tournament with Audio STFT Tie-Breaker on B23
         out = self.tournament_head(f_joint, f_audio=f_audio)
 
         # Step 3: Package metrics
-        out["f_fused"] = f_fused
+        out["f_fused"] = f_joint
+        out["f_gated"] = f_gated
         out["gate"] = g
-        out["modality_weights"] = torch.cat([g, 1.0 - g], dim=-1)
+        # Channel-mean modality weights for logging [B, 2]
+        g_mean = g.mean(dim=-1, keepdim=True)
+        out["modality_weights"] = torch.cat([g_mean, 1.0 - g_mean], dim=-1)
 
         # Shannon entropy uncertainty
         entropy = -torch.sum(out["probabilities"] * torch.log(torch.clamp(out["probabilities"], min=1e-7)), dim=-1, keepdim=True)
         out["uncertainty"] = entropy / 1.386294
 
         return out
+
+
+# Canonical alias reflecting exact algorithm in paper
+ChannelGatedBilinearTournamentFusion = MultimodalTournamentFusion

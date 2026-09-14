@@ -7,21 +7,22 @@ from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone
 from .audio_backbone import AudioMLPBackbone
-from .multimodal_fusion import MultimodalTournamentFusion
+from .multimodal_fusion import MultimodalTournamentFusion, ChannelGatedBilinearTournamentFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Boundary-Aware Net (4.04M Total Parameters).
+    Multimodal Boundary-Aware Net with Channel-wise Gated Bilinear Fusion (CGB-Fusion).
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
       2. Acoustic Time-Frequency Stream (~1.17M params):
          High-Resolution TKEO-STFT-MLP (2049 linear bins @ 256 kHz).
-      3. Cross-Modal Tournament Fusion (~0.17M params):
-         Hierarchical Pairwise Cross-Boundary Tournament Engine with Dual Aux Heads.
+      3. Channel-wise Gated Bilinear Tournament Fusion (~0.35M params):
+         CGB-Fusion Core (224D Channel-wise Gate + Second-Order Bilinear Interaction + Residual Joint Refinement)
+         coupled with Hierarchical Pairwise Cross-Boundary Tournament Engine and Dual Aux Heads.
 
-    Total Parameters: ~4.04M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~4.2M - 4.4M (Strictly < 5.0M parameter constraint).
     """
     def __init__(
         self,
