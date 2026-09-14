@@ -167,25 +167,59 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         }
 
 
-class MultimodalTournamentFusion(nn.Module):
+class TemporalCrossModalAttentionFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~105K params).
-    1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
-    2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
-       with Audio STFT Tie-Breaker on B23 (Medium vs Strong).
+    Temporal Cross-Modal Attention Fusion (TCA-Fusion) (~0.47M params).
+    1. Bidirectional Temporal Cross-Modal Attention:
+       - Video-to-Audio (V -> A): Query=tokens_video, Key/Value=tokens_audio
+       - Audio-to-Video (A -> V): Query=tokens_audio, Key/Value=tokens_video
+       - Multi-Head Attention (num_heads=4, dim=224, head_dim=56).
+    2. Temporal Mean Pooling: Collapses T=2 attended sequences to modality vectors.
+    3. Channel-wise Adaptive Gating: Independent 224-dim gate vector g in (0, 1)^224.
+    4. Hierarchical Pairwise Boundary Tournament Decision Engine.
     """
-    def __init__(self, dim: int = 224, dropout: float = 0.1, **kwargs) -> None:
+    def __init__(
+        self,
+        dim: int = 224,
+        num_heads: int = 4,
+        dropout: float = 0.1,
+        **kwargs
+    ) -> None:
         super().__init__()
         self.dim = dim
+        self.num_heads = num_heads
 
-        # 1. Gated Reliability Fusion
+        # 1. Bidirectional Multi-Head Cross-Attention (4 heads @ dim 224)
+        self.mha_v2a = nn.MultiheadAttention(
+            embed_dim=dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.norm_v = nn.LayerNorm(dim)
+        self.drop_v = nn.Dropout(dropout)
+
+        self.mha_a2v = nn.MultiheadAttention(
+            embed_dim=dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.norm_a = nn.LayerNorm(dim)
+        self.drop_a = nn.Dropout(dropout)
+
+        # Output normalizers for combined backbone + attended features
+        self.norm_v_out = nn.LayerNorm(dim)
+        self.norm_a_out = nn.LayerNorm(dim)
+
+        # 2. Channel-wise Adaptive Gating: g in (0, 1)^dim
         self.gate = nn.Sequential(
-            nn.Linear(dim * 2, 1),
+            nn.Linear(dim * 2, dim),
             nn.Sigmoid()
         )
         self.norm_fused = nn.LayerNorm(dim)
 
-        # 2. Residual refinement
+        # 3. Residual Joint Projection
         self.proj_joint = nn.Sequential(
             nn.Linear(dim, dim),
             nn.GELU(),
@@ -193,32 +227,120 @@ class MultimodalTournamentFusion(nn.Module):
             nn.LayerNorm(dim)
         )
 
-        # 3. Pairwise Boundary Tournament Decision Head
+        # 4. Pairwise Boundary Tournament Decision Head (Kept 100% intact)
         self.tournament_head = PairwiseBoundaryTournamentHead(dim=dim, temperature=2.0)
 
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        """
+        SOTA parameter initialization for newly introduced TCA components:
+        - Multi-Head Attention: Truncated Normal (std=0.02)
+        - Channel-wise Gate: Truncated Normal (std=0.02), bias=0 (50/50 starting balance)
+        - Joint Projection: Truncated Normal (std=0.02)
+        """
+        for mha in (self.mha_v2a, self.mha_a2v):
+            if hasattr(mha, "in_proj_weight") and mha.in_proj_weight is not None:
+                nn.init.trunc_normal_(mha.in_proj_weight, std=0.02)
+            if hasattr(mha, "in_proj_bias") and mha.in_proj_bias is not None:
+                nn.init.constant_(mha.in_proj_bias, 0.0)
+            if hasattr(mha, "out_proj") and hasattr(mha.out_proj, "weight"):
+                nn.init.trunc_normal_(mha.out_proj.weight, std=0.02)
+                if mha.out_proj.bias is not None:
+                    nn.init.constant_(mha.out_proj.bias, 0.0)
+
+        if hasattr(self.gate[0], "weight") and self.gate[0].weight is not None:
+            nn.init.trunc_normal_(self.gate[0].weight, std=0.02)
+        if hasattr(self.gate[0], "bias") and self.gate[0].bias is not None:
+            nn.init.constant_(self.gate[0].bias, 0.0)
+
+        for m in self.proj_joint:
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0)
 
     def forward(
         self,
         f_video: torch.Tensor,
         f_audio: torch.Tensor,
+        tokens_video: Optional[torch.Tensor] = None,
+        tokens_audio: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        # Step 1: Cross-modal adaptive reliability gating
-        combined = torch.cat([f_video, f_audio], dim=-1)  # [B, dim * 2]
-        g = self.gate(combined)                            # [B, 1]
-        f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)
-        f_joint = self.proj_joint(f_fused)
+        B = f_video.size(0)
 
-        # Step 2: Pairwise Boundary Tournament with Audio STFT Tie-Breaker on B23
+        # Ensure temporal tokens exist: [B, T=2, dim]
+        if tokens_video is None or tokens_video.ndim < 3:
+            tokens_video = f_video.unsqueeze(1).repeat(1, 2, 1)
+        if tokens_audio is None or tokens_audio.ndim < 3:
+            tokens_audio = f_audio.unsqueeze(1).repeat(1, 2, 1)
+
+        # Step 1: Bidirectional Temporal Cross-Modal Attention
+        # 1a. Video -> Audio: Visual frames query corresponding acoustic bursts
+        attn_v2a, weights_v2a = self.mha_v2a(
+            query=tokens_video,
+            key=tokens_audio,
+            value=tokens_audio
+        )
+        tokens_cross_v = self.norm_v(tokens_video + self.drop_v(attn_v2a))
+
+        # 1b. Audio -> Video: Acoustic cues query corresponding visual kinematic frames
+        attn_a2v, weights_a2v = self.mha_a2v(
+            query=tokens_audio,
+            key=tokens_video,
+            value=tokens_video
+        )
+        tokens_cross_a = self.norm_a(tokens_audio + self.drop_a(attn_a2v))
+
+        # Step 2: Temporal Pooling & Cross-Attended Motion Dynamics
+        # 2a. Inter-frame motion dynamics after cross-attention
+        if tokens_cross_v.size(1) >= 2:
+            f_motion_cross = torch.abs(tokens_cross_v[:, 1] - tokens_cross_v[:, 0])
+        else:
+            f_motion_cross = tokens_cross_v[:, 0]
+
+        # Combine backbone joint representation (spatial + motion + burst) with attended mean & motion
+        f_v_cross = self.norm_v_out(f_video + tokens_cross_v.mean(dim=1) + f_motion_cross)
+
+        # 2b. Acoustic rhythm dynamics after cross-attention
+        if tokens_cross_a.size(1) >= 2:
+            f_motion_a = torch.abs(tokens_cross_a[:, 1] - tokens_cross_a[:, 0])
+        else:
+            f_motion_a = tokens_cross_a[:, 0]
+
+        f_a_cross = self.norm_a_out(f_audio + tokens_cross_a.mean(dim=1) + f_motion_a)
+
+        # Step 3: Channel-wise Adaptive Reliability Gating
+        combined = torch.cat([f_v_cross, f_a_cross], dim=-1)  # [B, dim * 2]
+        g = self.gate(combined)                                # [B, dim]
+        f_fused = self.norm_fused(g * f_v_cross + (1.0 - g) * f_a_cross)
+        f_joint = self.proj_joint(f_fused)                     # [B, dim]
+
+        # Step 4: Pairwise Boundary Tournament with Audio STFT Tie-Breaker on B23
         out = self.tournament_head(f_joint, f_audio=f_audio)
 
-        # Step 3: Package metrics
+        # Step 5: Package metrics & attention representations
         out["f_fused"] = f_fused
+        out["f_joint"] = f_joint
         out["gate"] = g
-        out["modality_weights"] = torch.cat([g, 1.0 - g], dim=-1)
+        # Modality weight vector [B, 2] computed as mean channel reliability
+        g_mean = g.mean(dim=-1, keepdim=True)
+        out["modality_weights"] = torch.cat([g_mean, 1.0 - g_mean], dim=-1)
+        out["attn_weights_v2a"] = weights_v2a
+        out["attn_weights_a2v"] = weights_a2v
 
         # Shannon entropy uncertainty
-        entropy = -torch.sum(out["probabilities"] * torch.log(torch.clamp(out["probabilities"], min=1e-7)), dim=-1, keepdim=True)
+        entropy = -torch.sum(
+            out["probabilities"] * torch.log(torch.clamp(out["probabilities"], min=1e-7)),
+            dim=-1,
+            keepdim=True
+        )
         out["uncertainty"] = entropy / 1.386294
 
         return out
+
+
+# Canonical aliases
+MultimodalTournamentFusion = TemporalCrossModalAttentionFusion
+MultimodalFusion = TemporalCrossModalAttentionFusion

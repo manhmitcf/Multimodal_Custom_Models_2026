@@ -64,16 +64,27 @@ class AudioMLPBackbone(nn.Module):
             f_burst_a: Acoustic burst feature [B, embed_dim]
             tokens_audio: Sequence of audio tokens [B, num_tokens, embed_dim]
         """
-        if x.ndim > 2:
-            x = x.flatten(start_dim=1)
-            if x.size(-1) != self.in_features:
-                x = x[:, :self.in_features]
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
 
+        # If 2D [B, 2049], expand to [B, num_tokens, 2049]
+        if x.ndim == 2:
+            x = x.unsqueeze(1).repeat(1, self.num_tokens, 1)
+
+        # If > 3 dimensions, squeeze down to 3D
+        if x.ndim > 3:
+            x = x.squeeze()
+
+        # Ensure feature dimension matches in_features
+        if x.size(-1) != self.in_features:
+            x = x[..., :self.in_features]
+
+        # Pass through 2-layer MLP: [B, num_tokens, in_features] -> [B, num_tokens, embed_dim]
         h = self.dropout(self.act(self.ln1(self.fc1(x))))
-        f_audio = self.ln2(self.fc2(h))
+        tokens_audio = self.ln2(self.fc2(h))  # [B, num_tokens, embed_dim]
 
-        # Compatibility tokens sequence for multimodal fusion interface
-        tokens_audio = f_audio.unsqueeze(1).repeat(1, self.num_tokens, 1)
+        # Aggregate across time for joint representation (aux head & tie-breaker)
+        f_audio = tokens_audio.mean(dim=1)  # [B, embed_dim]
 
         f_frequency = f_audio
         f_rhythm = f_audio

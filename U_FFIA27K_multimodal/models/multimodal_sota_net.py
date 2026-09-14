@@ -7,21 +7,21 @@ from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone
 from .audio_backbone import AudioMLPBackbone
-from .multimodal_fusion import MultimodalTournamentFusion
+from .multimodal_fusion import TemporalCrossModalAttentionFusion, MultimodalTournamentFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Boundary-Aware Net (4.04M Total Parameters).
+    Multimodal Temporal Cross-Modal Attention Net (~4.44M Total Parameters).
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
       2. Acoustic Time-Frequency Stream (~1.17M params):
-         High-Resolution TKEO-STFT-MLP (2049 linear bins @ 256 kHz).
-      3. Cross-Modal Tournament Fusion (~0.17M params):
-         Hierarchical Pairwise Cross-Boundary Tournament Engine with Dual Aux Heads.
+         High-Resolution TKEO-STFT-MLP (2049 linear bins @ 256 kHz, T=2 temporal segments).
+      3. Temporal Cross-Modal Attention Tournament Fusion (~0.57M params):
+         Bidirectional Multi-Head Attention (V <-> A) with Channel-wise Gating & Pairwise Tournament Head.
 
-    Total Parameters: ~4.04M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~4.44M (Strictly < 5.0M parameter constraint).
     """
     def __init__(
         self,
@@ -62,9 +62,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Tournament Cross-Modal Fusion (~0.17M)
-        self.fusion = MultimodalTournamentFusion(
+        # 3. Temporal Cross-Modal Attention Tournament Fusion (~0.57M)
+        self.fusion = TemporalCrossModalAttentionFusion(
             dim=embed_dim,
+            num_heads=4,
             dropout=0.1
         )
 
@@ -143,13 +144,15 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "p_m_over_s": fusion_outputs.get("p_m_over_s"),
             "p_w_over_s": fusion_outputs.get("p_w_over_s"),
             "v_voting": fusion_outputs.get("v_voting"),
-            # Feature diagnostics
+            # Feature diagnostics & attention maps
             "f_spatial": f_spatial,
             "f_motion": f_motion,
             "f_burst_v": f_burst_v,
             "f_frequency": f_frequency,
             "f_rhythm": f_rhythm,
             "f_burst_a": f_burst_a,
+            "attn_weights_v2a": fusion_outputs.get("attn_weights_v2a"),
+            "attn_weights_a2v": fusion_outputs.get("attn_weights_a2v"),
         }
         return outputs
 

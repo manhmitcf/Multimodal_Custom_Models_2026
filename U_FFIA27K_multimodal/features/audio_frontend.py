@@ -47,9 +47,10 @@ class Spectral1DAugmentation(nn.Module):
         if not self.training:
             return spec_vector
 
-        is_1d = (spec_vector.ndim == 1)
-        out = spec_vector.unsqueeze(0).clone() if is_1d else spec_vector.clone()
-        B, F = out.shape
+        orig_shape = spec_vector.shape
+        F = orig_shape[-1]
+        out = spec_vector.view(-1, F).clone()
+        B = out.shape[0]
 
         # 1. 1D Frequency Cutout (Vectorized 2D mask on GPU, zero Python loop, zero device sync)
         if self.cutout_width > 0 and self.cutout_prob > 0.0 and F > self.cutout_width:
@@ -68,9 +69,7 @@ class Spectral1DAugmentation(nn.Module):
             noise = torch.randn_like(out) * self.noise_std
             out = out + noise
 
-        if is_1d:
-            out = out.squeeze(0)
-        return out
+        return out.view(orig_shape)
 
 
 class AudioFrontend(nn.Module):
@@ -176,15 +175,22 @@ class AudioFrontend(nn.Module):
         # 5. Log Magnitude: log(|X| + 1e-8)
         log_mag = torch.log(torch.abs(complex_spec) + 1e-8)
 
-        # 6. Mean over time axis -> [Batch, 2049]
-        spec_vector = log_mag.mean(dim=1)
+        # 6. Temporal segmentation into T=2 halves (t1: 0.0-1.0s, t2: 1.0-2.0s)
+        time_steps = log_mag.size(1)
+        if time_steps >= 2:
+            half_t = time_steps // 2
+            spec_t1 = log_mag[:, :half_t, :].mean(dim=1)
+            spec_t2 = log_mag[:, half_t:, :].mean(dim=1)
+            spec_temporal = torch.stack([spec_t1, spec_t2], dim=1)  # [Batch, 2, 2049]
+        else:
+            spec_temporal = log_mag.repeat(1, 2, 1)
 
         # 7. 1D Spectral Augmentation for MLP (Cutout & Jitter)
         if self.spectral_augmenter is not None:
-            spec_vector = self.spectral_augmenter(spec_vector)
+            spec_temporal = self.spectral_augmenter(spec_temporal)
 
         # 8. Layer Normalization
-        out = self.norm(spec_vector)
+        out = self.norm(spec_temporal)  # [Batch, 2, 2049]
 
         return out
 
