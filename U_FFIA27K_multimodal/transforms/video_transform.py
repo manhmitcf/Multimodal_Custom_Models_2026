@@ -1,6 +1,7 @@
+import random
+from typing import Union, List
 import numpy as np
 import torch
-import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
 
@@ -33,43 +34,91 @@ class ImageToPIL:
         return image
 
 
-class VideoTransform:
+class ConsistentVideoTransform:
     """
-    Video transform pipeline applied uniformly across video frames.
+    Temporally Consistent Video Transform Pipeline (Option 3: Synchronized Flip, No Rotation).
+    Guarantees physical kinematic temporal coherence across all T frames in a video clip:
+      - Random Horizontal Flip: Decided once per clip, applied identically to all T frames.
+      - Color Jitter (Brightness/Contrast): Factors sampled once per clip, applied identically to all T frames.
+      - Rotation: Removed to preserve flow vector field and avoid angular boundary artifacts.
+      - Bilinear Resize: Standardized HxW.
+      - ImageNet Normalization.
 
-    Input:  np.ndarray [H, W, C] or [C, H, W] uint8
-    Output: torch.Tensor [C, H, W] float32 normalized with ImageNet statistics.
+    Accepts:
+      - 4D np.ndarray [T, H, W, C] or [T, C, H, W]
+      - List/Tuple of 3D frames [frame_0, frame_1, ...]
+      - Single 3D frame [H, W, C] or [C, H, W]
+    Returns:
+      - torch.Tensor [T, C, H, W] or [C, H, W]
     """
-    def __init__(self, transform: transforms.Compose) -> None:
-        self.transform = transform
+    def __init__(
+        self,
+        image_size: int = 224,
+        is_train: bool = True,
+        mean: tuple = (0.485, 0.456, 0.406),
+        std: tuple = (0.229, 0.224, 0.225),
+    ) -> None:
+        self.image_size = int(image_size)
+        self.is_train = bool(is_train)
+        self.mean = mean
+        self.std = std
+        self._to_pil = ImageToPIL()
 
-    def __call__(self, image: np.ndarray) -> torch.Tensor:
-        return self.transform(image)
+    def __call__(
+        self,
+        frames: Union[np.ndarray, List[np.ndarray], torch.Tensor, List[torch.Tensor]]
+    ) -> torch.Tensor:
+        is_single_frame = False
+        if isinstance(frames, (list, tuple)):
+            frame_list = list(frames)
+        elif isinstance(frames, (np.ndarray, torch.Tensor)):
+            if frames.ndim == 3:
+                is_single_frame = True
+                frame_list = [frames]
+            elif frames.ndim == 4:
+                frame_list = [frames[i] for i in range(frames.shape[0])]
+            else:
+                raise ValueError(f"Expected 3D or 4D video tensor/array, got ndim={frames.ndim}")
+        else:
+            is_single_frame = True
+            frame_list = [frames]
 
-    @staticmethod
-    def get_transforms(image_size: int = 224):
-        mean = (0.485, 0.456, 0.406)
-        std = (0.229, 0.224, 0.225)
+        # Sample augmentation parameters ONCE per video clip for temporal coherence
+        if self.is_train:
+            do_flip = (random.random() < 0.5)
+            brightness_factor = random.uniform(0.85, 1.15)
+            contrast_factor = random.uniform(0.85, 1.15)
 
-        train_transform = [
-            ImageToPIL(),
-            transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
-            transforms.ColorJitter(brightness=0.15, contrast=0.15),
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(15),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ]
+        transformed_tensors = []
+        for frame in frame_list:
+            pil_img = self._to_pil(frame)
+            pil_img = TF.resize(
+                pil_img,
+                (self.image_size, self.image_size),
+                interpolation=InterpolationMode.BILINEAR
+            )
+            if self.is_train:
+                pil_img = TF.adjust_brightness(pil_img, brightness_factor)
+                pil_img = TF.adjust_contrast(pil_img, contrast_factor)
+                if do_flip:
+                    pil_img = TF.hflip(pil_img)
 
-        eval_transform = [
-            ImageToPIL(),
-            transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std),
-        ]
+            t_img = TF.to_tensor(pil_img)
+            t_img = TF.normalize(t_img, self.mean, self.std)
+            transformed_tensors.append(t_img)
 
+        if is_single_frame:
+            return transformed_tensors[0]
+        return torch.stack(transformed_tensors, dim=0)
+
+    @classmethod
+    def get_transforms(cls, image_size: int = 224):
         return {
-            "train": VideoTransform(transforms.Compose(train_transform)),
-            "val": VideoTransform(transforms.Compose(eval_transform)),
-            "test": VideoTransform(transforms.Compose(eval_transform)),
+            "train": cls(image_size=image_size, is_train=True),
+            "val": cls(image_size=image_size, is_train=False),
+            "test": cls(image_size=image_size, is_train=False),
         }
+
+
+# Canonical alias for 100% backward compatibility
+VideoTransform = ConsistentVideoTransform
