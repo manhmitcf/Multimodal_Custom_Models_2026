@@ -197,6 +197,23 @@ def discover_hf_token() -> Optional[str]:
     except Exception:
         pass
 
+    # Search for token in dedicated local token.txt files (gitignored)
+    direct_token_files = [
+        Path("token.txt"),
+        Path("../token.txt"),
+        Path("/marimo/token.txt"),
+        Path("/marimo/Capstone_2026_Fish_Feeding_Intensity/token.txt"),
+        Path(__file__).resolve().parent.parent / "token.txt",
+    ]
+    for dtf in direct_token_files:
+        if dtf.is_file():
+            try:
+                content = dtf.read_text(encoding="utf-8").strip()
+                if content.startswith("hf_"):
+                    return content
+            except Exception:
+                pass
+
     # Search for token strings in setup files
     token_files = [
         Path("cli.txt"),
