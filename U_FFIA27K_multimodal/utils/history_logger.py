@@ -333,7 +333,9 @@ class HistoryLogger:
     def save_detailed_evaluation_report(
         self,
         val_statistics: Dict[str, Any],
-        test_statistics: Dict[str, Any]
+        test_statistics: Dict[str, Any],
+        total_params_m: Optional[float] = None,
+        gflops: Optional[float] = None
     ) -> str:
         """
         Exports both SEPARATE standalone files for each branch (Fusion, Video, Audio)
@@ -440,7 +442,13 @@ class HistoryLogger:
             "          COMPREHENSIVE MULTIMODAL & DUAL BACKBONE EVALUATION REPORT",
             "=" * 80,
             f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"Directory:    {self.log_dir}\n",
+            f"Directory:    {self.log_dir}",
+        ]
+        if total_params_m is not None:
+            content.append(f"Model Parameters:      {total_params_m:.3f} M")
+        if gflops is not None:
+            content.append(f"Inference Complexity:  {gflops:.4f} GFLOPs")
+        content.extend([
             "-" * 80,
             "PART 1: VALIDATION SPLIT (AT BEST FUSION MODEL CHECKPOINT)",
             "-" * 80,
@@ -498,7 +506,7 @@ class HistoryLogger:
             "  Classification Report:",
             test_statistics.get('message_audio', '  N/A\n'),
             "=" * 80 + "\n"
-        ]
+        ])
 
         try:
             with open(report_txt_path, 'w', encoding='utf-8') as f:
@@ -523,6 +531,8 @@ class HistoryLogger:
 
         try:
             json_payload = {
+                "total_params_m": total_params_m,
+                "gflops": gflops,
                 "val_evaluation": sanitize_for_json(val_statistics),
                 "test_evaluation": sanitize_for_json(test_statistics)
             }

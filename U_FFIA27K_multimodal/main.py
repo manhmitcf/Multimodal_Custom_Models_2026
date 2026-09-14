@@ -21,7 +21,7 @@ from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
 from models import MultimodalBoundaryAwareNet, MultimodalSOTANet
 from tasks import MultimodalTrainer
-from utils import count_parameters, seed_everything
+from utils import count_parameters, measure_flops, seed_everything
 
 # Ensure stdout/stderr UTF-8 encoding on Windows terminal
 if hasattr(sys.stdout, 'reconfigure'):
@@ -98,6 +98,12 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
         logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
         logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
         logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+
+        try:
+            gflops = measure_flops(model, device=device.type, num_frames=getattr(config, "num_frames", 2))
+            logger.info(f"  * Inference Complexity (FLOPs):        {gflops:.4f} GFLOPs")
+        except Exception as flop_err:
+            logger.warning(f"  * FLOPs profiling skipped: {flop_err}")
 
         if stats['total'] >= 5_000_000:
             raise ValueError(f"Model parameters ({stats['total']:,}) exceed 5.0M budget!")

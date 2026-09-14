@@ -24,6 +24,8 @@ from utils import (
     InferenceTimer,
     ClipCELoss,
     PairwiseTournamentLoss,
+    count_parameters,
+    measure_flops,
 )
 
 # Logging configuration
@@ -394,8 +396,22 @@ class MultimodalTrainer:
         if 'confu_matrix' in final_test_stats:
             logger.info(f"Confusion Matrix:\n{final_test_stats['confu_matrix']}")
 
-        # Measure inference latency
-        logger.info("Measuring model Inference Latency on device...")
+        # Measure model complexity, FLOPs, and inference latency
+        logger.info("Profiling model Parameters, FLOPs, and Inference Latency...")
+        param_stats = count_parameters(self.model)
+        total_params_m = float(param_stats.get('total_million', 0.0))
+        try:
+            device_str = self.device.type
+            gflops = measure_flops(
+                self.model,
+                device=device_str,
+                num_frames=getattr(self.config, "num_frames", 2)
+            )
+            logger.info(f"Model Parameters: {total_params_m:.3f} M | Complexity: {gflops:.4f} GFLOPs")
+        except Exception as exc:
+            logger.warning(f"FLOPs measurement failed: {exc}. Defaulting to 0.0.")
+            gflops = 0.0
+
         try:
             inference_latency_ms = self.timer.measure_latency_per_sample(
                 video_shape=(1, getattr(self.config, "num_frames", 2), 3, getattr(self.config, "image_size", 224), getattr(self.config, "image_size", 224)),
@@ -410,14 +426,18 @@ class MultimodalTrainer:
             training_time=training_duration,
             inference_time_ms=inference_latency_ms,
             val_statistics=final_val_stats,
-            test_statistics=final_test_stats
+            test_statistics=final_test_stats,
+            total_params_m=total_params_m,
+            gflops=gflops
         )
 
         # Export consolidated detailed evaluation report (.txt and .json)
         try:
             self.logger.save_detailed_evaluation_report(
                 val_statistics=final_val_stats,
-                test_statistics=final_test_stats
+                test_statistics=final_test_stats,
+                total_params_m=total_params_m,
+                gflops=gflops
             )
         except Exception as exc:
             logger.warning(f"Could not export detailed evaluation report: {exc}")
