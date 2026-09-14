@@ -128,13 +128,8 @@ class TrainConfig(BaseModel):
     early_stopping: bool = Field(default=False, description="Enable early stopping mechanism.")
     patience: int = Field(default=100, ge=1, description="Early stopping patience in epochs.")
     min_delta: float = Field(default=0.0, ge=0.0, description="Minimum change threshold in monitored metric.")
-    lr_scheduler: str = Field(default="onecycle", description="Learning rate scheduler: 'onecycle', 'cosine' or 'plateau'.")
     use_onecycle: bool = Field(default=True, description="Enable OneCycleLR scheduler.")
-    warmup_epochs: int = Field(default=20, ge=0, description="Number of linear warmup epochs.")
     seed: int = Field(default=42, ge=0, description="Master random seed.")
-    num_frames: int = Field(default=2, ge=2, description="Number of frames per video input.")
-    image_size: int = Field(default=224, gt=0, description="Video image spatial resolution.")
-    sample_rate: int = Field(default=256000, gt=0, description="Audio sampling rate in Hz.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
     dataloader_workers: int = Field(default=-1, description="Number of worker processes for DataLoader (-1 = auto).")
     prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
@@ -148,6 +143,38 @@ class TrainConfig(BaseModel):
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
     video_features: VideoFeaturesConfig = Field(default_factory=VideoFeaturesConfig, description="Video preprocessing configuration.")
     audio_features: AudioFeaturesConfig = Field(default_factory=AudioFeaturesConfig, description="Audio preprocessing configuration.")
+
+    @property
+    def num_frames(self) -> int:
+        return self.video_features.num_frames
+
+    @num_frames.setter
+    def num_frames(self, val: int) -> None:
+        self.video_features.num_frames = val
+
+    @property
+    def image_size(self) -> int:
+        return self.video_features.image_size
+
+    @image_size.setter
+    def image_size(self, val: int) -> None:
+        self.video_features.image_size = val
+
+    @property
+    def sample_rate(self) -> int:
+        return self.audio_features.sample_rate
+
+    @sample_rate.setter
+    def sample_rate(self, val: int) -> None:
+        self.audio_features.sample_rate = val
+
+    @property
+    def in_chans(self) -> int:
+        return self.video_features.num_channels
+
+    @in_chans.setter
+    def in_chans(self, val: int) -> None:
+        self.video_features.num_channels = val
 
     @classmethod
     def from_json(cls, path: str = "config/train_config.json") -> "TrainConfig":
