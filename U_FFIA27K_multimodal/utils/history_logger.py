@@ -1,8 +1,11 @@
 import os
 import sys
 import csv
+import json
 import logging
 from pathlib import Path
+from typing import Optional, Dict, Any
+from datetime import datetime
 import numpy as np
 
 # Logging configuration
@@ -27,11 +30,16 @@ class HistoryLogger:
     def _history_headers(self) -> list:
         return [
             'epoch',
+            'lr',
+            'epoch_time_seconds',
             'train_loss',
             'train_accuracy',
             'train_mAP',
             'val_loss',
             'val_accuracy',
+            'val_qwk',
+            'val_acc_video',
+            'val_acc_audio',
             'val_mAP',
             'val_auc_class_none', 'val_auc_class_strong', 'val_auc_class_medium', 'val_auc_class_weak',
             'val_ap_class_none', 'val_ap_class_strong', 'val_ap_class_medium', 'val_ap_class_weak',
@@ -46,86 +54,167 @@ class HistoryLogger:
             writer = csv.writer(f)
             writer.writerow(self._history_headers())
 
-    def _save_confusion_matrix_csv(self, path: str, matrix: np.ndarray) -> None:
+    def _save_confusion_matrix_csv(self, path: str, matrix: Optional[np.ndarray]) -> None:
         labels = ['none', 'strong', 'medium', 'weak']
-        with open(path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['Actual\\Predicted'] + labels)
-            for idx, label in enumerate(labels):
-                writer.writerow([label] + list(matrix[idx]))
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([r'Actual\Predicted'] + labels)
+                if matrix is not None and isinstance(matrix, np.ndarray) and matrix.size > 0:
+                    for idx, label in enumerate(labels):
+                        row = list(matrix[idx]) if idx < len(matrix) else [0] * len(labels)
+                        writer.writerow([label] + row)
+                else:
+                    for label in labels:
+                        writer.writerow([label] + [0] * len(labels))
+        except Exception as exc:
+            logger.warning(f"Could not save confusion matrix CSV '{path}': {exc}")
 
-    def log_epoch(self, epoch: int, train_loss: float, train_acc: float, train_mAP: float, val_loss: float, val_statistics: dict, is_best: bool = False) -> None:
-        val_acc = np.mean(val_statistics['accuracy'])
-        val_mAP = np.mean(val_statistics['average_precision'])
-        val_auc = val_statistics['auc']
-        val_ap = val_statistics['average_precision']
-        cm = val_statistics['confu_matrix']
+    def log_epoch(
+        self,
+        epoch: int,
+        train_loss: float,
+        train_acc: float,
+        train_mAP: float,
+        val_loss: float,
+        val_statistics: dict,
+        lr: Optional[float] = None,
+        epoch_time_seconds: Optional[float] = None,
+        is_best: bool = False
+    ) -> None:
+        val_acc = float(np.mean(val_statistics.get('accuracy', 0.0)))
+        val_qwk = float(val_statistics.get('qwk', 0.0))
+        val_mAP = float(np.mean(val_statistics.get('average_precision', 0.0)))
+        val_acc_v = float(val_statistics.get('acc_video', 0.0))
+        val_acc_a = float(val_statistics.get('acc_audio', 0.0))
+        val_auc = val_statistics.get('auc', [0.0] * 4)
+        val_ap = val_statistics.get('average_precision', [0.0] * 4)
+        cm = val_statistics.get('confu_matrix', None)
 
-        cm_flat = list(cm.flatten())
+        def _safe_float(arr: Any, idx: int, default: float = 0.0) -> float:
+            try:
+                if arr is not None and idx < len(arr):
+                    v = float(arr[idx])
+                    return v if not np.isnan(v) else default
+            except Exception:
+                pass
+            return default
+
+        v_auc = [_safe_float(val_auc, i) for i in range(4)]
+        v_ap = [_safe_float(val_ap, i) for i in range(4)]
+
+        if cm is not None and isinstance(cm, np.ndarray) and cm.size == 16:
+            cm_flat = [int(val) for val in cm.flatten()]
+        else:
+            cm_flat = [0] * 16
+
+        lr_str = f"{lr:.8e}" if lr is not None else "N/A"
+        time_str = f"{epoch_time_seconds:.2f}" if epoch_time_seconds is not None else "N/A"
 
         row_data = [
             epoch,
+            lr_str,
+            time_str,
             f"{train_loss:.6f}",
             f"{train_acc:.6f}",
             f"{train_mAP:.6f}",
             f"{val_loss:.6f}",
             f"{val_acc:.6f}",
+            f"{val_qwk:.6f}",
+            f"{val_acc_v:.6f}",
+            f"{val_acc_a:.6f}",
             f"{val_mAP:.6f}",
-            f"{val_auc[0]:.6f}", f"{val_auc[1]:.6f}", f"{val_auc[2]:.6f}", f"{val_auc[3]:.6f}",
-            f"{val_ap[0]:.6f}", f"{val_ap[1]:.6f}", f"{val_ap[2]:.6f}", f"{val_ap[3]:.6f}"
-        ] + [int(val) for val in cm_flat]
+            f"{v_auc[0]:.6f}", f"{v_auc[1]:.6f}", f"{v_auc[2]:.6f}", f"{v_auc[3]:.6f}",
+            f"{v_ap[0]:.6f}", f"{v_ap[1]:.6f}", f"{v_ap[2]:.6f}", f"{v_ap[3]:.6f}"
+        ] + cm_flat
 
-        with open(self.history_csv_path, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(row_data)
+        try:
+            with open(self.history_csv_path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(row_data)
+        except Exception as exc:
+            logger.error(f"Failed to append to history CSV '{self.history_csv_path}': {exc}")
 
         if is_best:
-            best_cm_path = os.path.join(self.log_dir, 'confusion_matrix_best.csv')
-            self._save_confusion_matrix_csv(best_cm_path, cm)
+            try:
+                best_cm_path = os.path.join(self.log_dir, 'confusion_matrix_best.csv')
+                self._save_confusion_matrix_csv(best_cm_path, cm)
+            except Exception as exc:
+                logger.warning(f"Failed to save best confusion matrix CSV: {exc}")
 
-    def save_summary(self, training_time: float, inference_time_ms: float, val_statistics: dict, test_statistics: dict) -> None:
+    def save_summary(
+        self,
+        training_time: float,
+        inference_time_ms: float,
+        val_statistics: dict,
+        test_statistics: dict,
+        total_params_m: Optional[float] = None,
+        gflops: Optional[float] = None
+    ) -> None:
         summary_csv_path = os.path.join(self.log_dir, 'summary.csv')
         file_exists = os.path.exists(summary_csv_path)
 
-        val_mAP = np.mean(val_statistics['average_precision'])
-        test_mAP = np.mean(test_statistics['average_precision'])
+        def _safe_stat(stats: dict, key: str, default: float = 0.0) -> float:
+            try:
+                raw = stats.get(key, default)
+                val = float(np.mean(raw))
+                return val if not np.isnan(val) else default
+            except Exception:
+                return default
+
+        val_mAP = _safe_stat(val_statistics, 'average_precision')
+        test_mAP = _safe_stat(test_statistics, 'average_precision')
+        val_qwk = _safe_stat(val_statistics, 'qwk')
+        test_qwk = _safe_stat(test_statistics, 'qwk')
 
         headers = [
+            'Total Parameters (M)',
+            'Inference Complexity (GFLOPs)',
             'Training Time (s)',
             'Inference Time (ms/sample)',
-            'Precision Val (Weighted)', 'Recall Val (Weighted)', 'F1-score Val (Weighted)', 'Accuracy Val', 'mAP Val',
+            'Precision Val (Weighted)', 'Recall Val (Weighted)', 'F1-score Val (Weighted)', 'Accuracy Val', 'QWK Val', 'mAP Val',
             'Precision Val (Macro)', 'Recall Val (Macro)', 'F1-score Val (Macro)',
-            'Precision Test (Weighted)', 'Recall Test (Weighted)', 'F1-score Test (Weighted)', 'Accuracy Test', 'mAP Test',
+            'Precision Test (Weighted)', 'Recall Test (Weighted)', 'F1-score Test (Weighted)', 'Accuracy Test', 'QWK Test', 'mAP Test',
             'Precision Test (Macro)', 'Recall Test (Macro)', 'F1-score Test (Macro)'
         ]
 
+        params_str = f"{total_params_m:.3f}" if total_params_m is not None else "N/A"
+        gflops_str = f"{gflops:.3f}" if gflops is not None else "N/A"
+
         row_data = [
+            params_str,
+            gflops_str,
             f"{training_time:.2f}",
             f"{inference_time_ms:.3f}",
-            f"{val_statistics['prec_weighted']:.6f}",
-            f"{val_statistics['rec_weighted']:.6f}",
-            f"{val_statistics['f1_weighted']:.6f}",
-            f"{val_statistics['accuracy']:.6f}",
+            f"{_safe_stat(val_statistics, 'prec_weighted'):.6f}",
+            f"{_safe_stat(val_statistics, 'rec_weighted'):.6f}",
+            f"{_safe_stat(val_statistics, 'f1_weighted'):.6f}",
+            f"{_safe_stat(val_statistics, 'accuracy'):.6f}",
+            f"{val_qwk:.6f}",
             f"{val_mAP:.6f}",
-            f"{val_statistics['prec_macro']:.6f}",
-            f"{val_statistics['rec_macro']:.6f}",
-            f"{val_statistics['f1_macro']:.6f}",
-            f"{test_statistics['prec_weighted']:.6f}",
-            f"{test_statistics['rec_weighted']:.6f}",
-            f"{test_statistics['f1_weighted']:.6f}",
-            f"{test_statistics['accuracy']:.6f}",
+            f"{_safe_stat(val_statistics, 'prec_macro'):.6f}",
+            f"{_safe_stat(val_statistics, 'rec_macro'):.6f}",
+            f"{_safe_stat(val_statistics, 'f1_macro'):.6f}",
+            f"{_safe_stat(test_statistics, 'prec_weighted'):.6f}",
+            f"{_safe_stat(test_statistics, 'rec_weighted'):.6f}",
+            f"{_safe_stat(test_statistics, 'f1_weighted'):.6f}",
+            f"{_safe_stat(test_statistics, 'accuracy'):.6f}",
+            f"{test_qwk:.6f}",
             f"{test_mAP:.6f}",
-            f"{test_statistics['prec_macro']:.6f}",
-            f"{test_statistics['rec_macro']:.6f}",
-            f"{test_statistics['f1_macro']:.6f}"
+            f"{_safe_stat(test_statistics, 'prec_macro'):.6f}",
+            f"{_safe_stat(test_statistics, 'rec_macro'):.6f}",
+            f"{_safe_stat(test_statistics, 'f1_macro'):.6f}"
         ]
 
-        with open(summary_csv_path, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow(headers)
-            writer.writerow(row_data)
-        logger.info(f"Successfully exported Summary Report to: '{summary_csv_path}'")
+        try:
+            with open(summary_csv_path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(headers)
+                writer.writerow(row_data)
+            logger.info(f"Successfully exported Summary Report to: '{summary_csv_path}'")
+        except Exception as exc:
+            logger.error(f"Failed to export Summary Report to '{summary_csv_path}': {exc}")
 
     def plot_history(self) -> None:
         if not os.path.exists(self.history_csv_path):
@@ -191,3 +280,412 @@ class HistoryLogger:
         plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close(fig)
         logger.info(f"Successfully generated learning curves plot at: '{plot_path}'")
+
+    def _write_single_branch_report(
+        self,
+        output_txt_path: str,
+        output_csv_path: str,
+        branch_name: str,
+        split_name: str,
+        acc: float,
+        mAP: Optional[float],
+        f1_macro: float,
+        f1_weighted: float,
+        cm: Optional[np.ndarray],
+        report_str: str
+    ) -> None:
+        """Helper to write standalone single-branch report TXT and confusion matrix CSV."""
+        def format_cm(mat: Optional[np.ndarray]) -> str:
+            if mat is None:
+                return "  [No confusion matrix available]\n"
+            labels = ['None', 'Strong', 'Medium', 'Weak']
+            header = f"  {'Actual\\Pred':<14}" + "".join(f"{lbl:>10}" for lbl in labels) + "\n"
+            lines = [header]
+            for idx, lbl in enumerate(labels):
+                row = mat[idx] if idx < len(mat) else [0] * len(labels)
+                row_str = f"  {lbl:<14}" + "".join(f"{int(val):>10d}" for val in row) + "\n"
+                lines.append(row_str)
+            return "".join(lines)
+
+        lines = [
+            "=" * 70,
+            f"  {branch_name.upper()} EVALUATION REPORT ({split_name.upper()} SPLIT)",
+            "=" * 70,
+            f"Generated:     {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Accuracy:      {acc:.4f}",
+        ]
+        if mAP is not None:
+            lines.append(f"mAP:           {mAP:.4f}")
+        lines.extend([
+            f"Macro F1:      {f1_macro:.4f}",
+            f"Weighted F1:   {f1_weighted:.4f}",
+            "-" * 70,
+            "Confusion Matrix (Actual \\ Predicted):",
+            format_cm(cm),
+            "-" * 70,
+            "Classification Report (Precision, Recall, F1, Support):",
+            report_str if report_str else "  N/A\n",
+            "=" * 70 + "\n"
+        ])
+
+        with open(output_txt_path, 'w', encoding='utf-8') as f:
+            f.write("\n".join(lines))
+        self._save_confusion_matrix_csv(output_csv_path, cm)
+
+    def save_detailed_evaluation_report(
+        self,
+        val_statistics: Dict[str, Any],
+        test_statistics: Dict[str, Any]
+    ) -> str:
+        """
+        Exports both SEPARATE standalone files for each branch (Fusion, Video, Audio)
+        and a consolidated evaluation report file (.txt and .json).
+        """
+        # 1. Separate standalone files for Validation split
+        self._write_single_branch_report(
+            output_txt_path=os.path.join(self.log_dir, 'report_val_fusion.txt'),
+            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_val_fusion.csv'),
+            branch_name="Multimodal Tournament Fusion",
+            split_name="Validation",
+            acc=float(np.mean(val_statistics.get('accuracy', 0.0))),
+            mAP=float(np.mean(val_statistics.get('average_precision', 0.0))),
+            f1_macro=float(val_statistics.get('f1_macro', 0.0)),
+            f1_weighted=float(val_statistics.get('f1_weighted', 0.0)),
+            cm=val_statistics.get('confu_matrix'),
+            report_str=val_statistics.get('message', '')
+        )
+
+        self._write_single_branch_report(
+            output_txt_path=os.path.join(self.log_dir, 'report_val_video.txt'),
+            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_val_video.csv'),
+            branch_name="Video Auxiliary Head (ConvNeXt-Nano 7-ch)",
+            split_name="Validation",
+            acc=float(val_statistics.get('acc_video', 0.0)),
+            mAP=None,
+            f1_macro=float(val_statistics.get('f1_macro_video', 0.0)),
+            f1_weighted=float(val_statistics.get('f1_weighted_video', 0.0)),
+            cm=val_statistics.get('confu_matrix_video'),
+            report_str=val_statistics.get('message_video', '')
+        )
+
+        self._write_single_branch_report(
+            output_txt_path=os.path.join(self.log_dir, 'report_val_audio.txt'),
+            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_val_audio.csv'),
+            branch_name="Audio Auxiliary Head (TKEO-STFT-MLP 256k)",
+            split_name="Validation",
+            acc=float(val_statistics.get('acc_audio', 0.0)),
+            mAP=None,
+            f1_macro=float(val_statistics.get('f1_macro_audio', 0.0)),
+            f1_weighted=float(val_statistics.get('f1_weighted_audio', 0.0)),
+            cm=val_statistics.get('confu_matrix_audio'),
+            report_str=val_statistics.get('message_audio', '')
+        )
+
+        # 2. Separate standalone files for Test split
+        self._write_single_branch_report(
+            output_txt_path=os.path.join(self.log_dir, 'report_test_fusion.txt'),
+            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_test_fusion.csv'),
+            branch_name="Multimodal Tournament Fusion",
+            split_name="Test",
+            acc=float(np.mean(test_statistics.get('accuracy', 0.0))),
+            mAP=float(np.mean(test_statistics.get('average_precision', 0.0))),
+            f1_macro=float(test_statistics.get('f1_macro', 0.0)),
+            f1_weighted=float(test_statistics.get('f1_weighted', 0.0)),
+            cm=test_statistics.get('confu_matrix'),
+            report_str=test_statistics.get('message', '')
+        )
+
+        self._write_single_branch_report(
+            output_txt_path=os.path.join(self.log_dir, 'report_test_video.txt'),
+            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_test_video.csv'),
+            branch_name="Video Auxiliary Head (ConvNeXt-Nano 7-ch)",
+            split_name="Test",
+            acc=float(test_statistics.get('acc_video', 0.0)),
+            mAP=None,
+            f1_macro=float(test_statistics.get('f1_macro_video', 0.0)),
+            f1_weighted=float(test_statistics.get('f1_weighted_video', 0.0)),
+            cm=test_statistics.get('confu_matrix_video'),
+            report_str=test_statistics.get('message_video', '')
+        )
+
+        self._write_single_branch_report(
+            output_txt_path=os.path.join(self.log_dir, 'report_test_audio.txt'),
+            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_test_audio.csv'),
+            branch_name="Audio Auxiliary Head (TKEO-STFT-MLP 256k)",
+            split_name="Test",
+            acc=float(test_statistics.get('acc_audio', 0.0)),
+            mAP=None,
+            f1_macro=float(test_statistics.get('f1_macro_audio', 0.0)),
+            f1_weighted=float(test_statistics.get('f1_weighted_audio', 0.0)),
+            cm=test_statistics.get('confu_matrix_audio'),
+            report_str=test_statistics.get('message_audio', '')
+        )
+
+        # 3. Consolidated report file
+        report_txt_path = os.path.join(self.log_dir, 'evaluation_detailed_report.txt')
+        report_json_path = os.path.join(self.log_dir, 'evaluation_detailed_report.json')
+
+        def format_cm(cm: Optional[np.ndarray]) -> str:
+            if cm is None:
+                return "  [No confusion matrix available]\n"
+            labels = ['None', 'Strong', 'Medium', 'Weak']
+            header = f"  {'Actual\\Pred':<14}" + "".join(f"{lbl:>10}" for lbl in labels) + "\n"
+            lines = [header]
+            for idx, lbl in enumerate(labels):
+                row = cm[idx] if idx < len(cm) else [0] * len(labels)
+                row_str = f"  {lbl:<14}" + "".join(f"{int(val):>10d}" for val in row) + "\n"
+                lines.append(row_str)
+            return "".join(lines)
+
+        content = [
+            "=" * 80,
+            "          COMPREHENSIVE MULTIMODAL & DUAL BACKBONE EVALUATION REPORT",
+            "=" * 80,
+            f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Directory:    {self.log_dir}\n",
+            "-" * 80,
+            "PART 1: VALIDATION SPLIT (AT BEST FUSION MODEL CHECKPOINT)",
+            "-" * 80,
+            "\n[1.1] MULTIMODAL TOURNAMENT FUSION (OVERALL MODEL)",
+            f"  - Accuracy:       {float(np.mean(val_statistics.get('accuracy', 0.0))):.4f}",
+            f"  - mAP:            {float(np.mean(val_statistics.get('average_precision', 0.0))):.4f}",
+            f"  - Macro F1:       {float(val_statistics.get('f1_macro', 0.0)):.4f}",
+            f"  - Weighted F1:    {float(val_statistics.get('f1_weighted', 0.0)):.4f}",
+            "\n  Confusion Matrix (Actual \\ Predicted):",
+            format_cm(val_statistics.get('confu_matrix')),
+            "  Classification Report:",
+            val_statistics.get('message', '  N/A\n'),
+            "\n[1.2] VIDEO AUXILIARY HEAD (ConvNeXt-Nano 7-Channel Kinematics)",
+            f"  - Accuracy:       {float(val_statistics.get('acc_video', 0.0)):.4f}",
+            f"  - Macro F1:       {float(val_statistics.get('f1_macro_video', 0.0)):.4f}",
+            f"  - Weighted F1:    {float(val_statistics.get('f1_weighted_video', 0.0)):.4f}",
+            "\n  Confusion Matrix (Actual \\ Predicted):",
+            format_cm(val_statistics.get('confu_matrix_video')),
+            "  Classification Report:",
+            val_statistics.get('message_video', '  N/A\n'),
+            "\n[1.3] AUDIO AUXILIARY HEAD (TKEO-STFT-MLP 256 kHz)",
+            f"  - Accuracy:       {float(val_statistics.get('acc_audio', 0.0)):.4f}",
+            f"  - Macro F1:       {float(val_statistics.get('f1_macro_audio', 0.0)):.4f}",
+            f"  - Weighted F1:    {float(val_statistics.get('f1_weighted_audio', 0.0)):.4f}",
+            "\n  Confusion Matrix (Actual \\ Predicted):",
+            format_cm(val_statistics.get('confu_matrix_audio')),
+            "  Classification Report:",
+            val_statistics.get('message_audio', '  N/A\n'),
+            "\n" + "-" * 80,
+            "PART 2: TEST SPLIT (FINAL INDEPENDENT EVALUATION)",
+            "-" * 80,
+            "\n[2.1] MULTIMODAL TOURNAMENT FUSION (OVERALL MODEL)",
+            f"  - Accuracy:       {float(np.mean(test_statistics.get('accuracy', 0.0))):.4f}",
+            f"  - mAP:            {float(np.mean(test_statistics.get('average_precision', 0.0))):.4f}",
+            f"  - Macro F1:       {float(test_statistics.get('f1_macro', 0.0)):.4f}",
+            f"  - Weighted F1:    {float(test_statistics.get('f1_weighted', 0.0)):.4f}",
+            "\n  Confusion Matrix (Actual \\ Predicted):",
+            format_cm(test_statistics.get('confu_matrix')),
+            "  Classification Report:",
+            test_statistics.get('message', '  N/A\n'),
+            "\n[2.2] VIDEO AUXILIARY HEAD (ConvNeXt-Nano 7-Channel Kinematics)",
+            f"  - Accuracy:       {float(test_statistics.get('acc_video', 0.0)):.4f}",
+            f"  - Macro F1:       {float(test_statistics.get('f1_macro_video', 0.0)):.4f}",
+            f"  - Weighted F1:    {float(test_statistics.get('f1_weighted_video', 0.0)):.4f}",
+            "\n  Confusion Matrix (Actual \\ Predicted):",
+            format_cm(test_statistics.get('confu_matrix_video')),
+            "  Classification Report:",
+            test_statistics.get('message_video', '  N/A\n'),
+            "\n[2.3] AUDIO AUXILIARY HEAD (TKEO-STFT-MLP 256 kHz)",
+            f"  - Accuracy:       {float(test_statistics.get('acc_audio', 0.0)):.4f}",
+            f"  - Macro F1:       {float(test_statistics.get('f1_macro_audio', 0.0)):.4f}",
+            f"  - Weighted F1:    {float(test_statistics.get('f1_weighted_audio', 0.0)):.4f}",
+            "\n  Confusion Matrix (Actual \\ Predicted):",
+            format_cm(test_statistics.get('confu_matrix_audio')),
+            "  Classification Report:",
+            test_statistics.get('message_audio', '  N/A\n'),
+            "=" * 80 + "\n"
+        ]
+
+        try:
+            with open(report_txt_path, 'w', encoding='utf-8') as f:
+                f.write("\n".join(content))
+            logger.info(f"Saved separate branch reports and consolidated report to: '{self.log_dir}'")
+        except Exception as exc:
+            logger.error(f"Failed to write consolidated evaluation report: {exc}")
+
+        # Also serialize to structured JSON
+        def sanitize_for_json(d: Any) -> Any:
+            if isinstance(d, dict):
+                return {str(k): sanitize_for_json(v) for k, v in d.items()}
+            elif isinstance(d, (list, tuple)):
+                return [sanitize_for_json(v) for v in d]
+            elif isinstance(d, np.ndarray):
+                return d.tolist()
+            elif isinstance(d, (np.floating, np.integer)):
+                return d.item()
+            elif isinstance(d, (int, float, str, bool)) or d is None:
+                return d
+            return str(d)
+
+        try:
+            json_payload = {
+                "val_evaluation": sanitize_for_json(val_statistics),
+                "test_evaluation": sanitize_for_json(test_statistics)
+            }
+            with open(report_json_path, 'w', encoding='utf-8') as f:
+                json.dump(json_payload, f, indent=2)
+        except Exception as exc:
+            logger.warning(f"Could not serialize evaluation to JSON: {exc}")
+
+        return report_txt_path
+
+    def _plot_single_cm(self, cm: Optional[np.ndarray], title: str, output_path: str) -> None:
+        """Plot and save a standalone, publication-quality Confusion Matrix Heatmap PNG."""
+        if cm is None or not isinstance(cm, np.ndarray) or cm.size == 0:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            logging.getLogger('matplotlib').setLevel(logging.WARNING)
+            import matplotlib.pyplot as plt
+
+            class_names = ['None', 'Strong', 'Medium', 'Weak']
+            fig, ax = plt.subplots(figsize=(7, 6))
+            im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+            ax.set_title(title, fontsize=13, fontweight='bold', pad=12)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+            tick_marks = np.arange(len(class_names))
+            ax.set_xticks(tick_marks)
+            ax.set_yticks(tick_marks)
+            ax.set_xticklabels(class_names, fontsize=11)
+            ax.set_yticklabels(class_names, fontsize=11)
+            ax.set_ylabel('Actual Label', fontweight='bold', fontsize=12)
+            ax.set_xlabel('Predicted Label', fontweight='bold', fontsize=12)
+
+            thresh = cm.max() / 2.0 if cm.max() > 0 else 1.0
+            n_r = min(cm.shape[0], len(class_names))
+            n_c = min(cm.shape[1], len(class_names))
+            for i in range(n_r):
+                row_total = np.sum(cm[i, :])
+                for j in range(n_c):
+                    count = int(cm[i, j])
+                    pct = (count / row_total * 100.0) if row_total > 0 else 0.0
+                    color = "white" if count > thresh else "black"
+                    ax.text(j, i, f"{count}\n({pct:.1f}%)",
+                            horizontalalignment="center",
+                            verticalalignment="center",
+                            color=color, fontsize=11, fontweight='bold')
+
+            plt.tight_layout()
+            plt.savefig(output_path, dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            logger.info(f"Saved individual confusion matrix plot to: '{output_path}'")
+        except Exception as exc:
+            logger.warning(f"Could not plot individual confusion matrix '{output_path}': {exc}")
+
+    def plot_test_confusion_matrices(
+        self,
+        test_statistics: Dict[str, Any],
+        val_statistics: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Plots both INDIVIDUAL standalone Confusion Matrix Heatmaps for each branch
+        and a 1x3 comparison figure.
+        """
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            logging.getLogger('matplotlib').setLevel(logging.WARNING)
+            import matplotlib.pyplot as plt
+
+            acc_v_test = float(test_statistics.get('acc_video', 0.0))
+            acc_a_test = float(test_statistics.get('acc_audio', 0.0))
+            acc_f_test = float(np.mean(test_statistics.get('accuracy', 0.0)))
+
+            # 1. Plot individual Test heatmaps
+            self._plot_single_cm(
+                cm=test_statistics.get('confu_matrix'),
+                title=f"Multimodal Fusion - Test (Acc: {acc_f_test:.4f})",
+                output_path=os.path.join(self.log_dir, 'confusion_matrix_test_fusion.png')
+            )
+            self._plot_single_cm(
+                cm=test_statistics.get('confu_matrix_video'),
+                title=f"Video Aux Head - Test (Acc: {acc_v_test:.4f})",
+                output_path=os.path.join(self.log_dir, 'confusion_matrix_test_video.png')
+            )
+            self._plot_single_cm(
+                cm=test_statistics.get('confu_matrix_audio'),
+                title=f"Audio Aux Head - Test (Acc: {acc_a_test:.4f})",
+                output_path=os.path.join(self.log_dir, 'confusion_matrix_test_audio.png')
+            )
+
+            # 2. Plot individual Validation heatmaps if available
+            if val_statistics is not None:
+                acc_v_val = float(val_statistics.get('acc_video', 0.0))
+                acc_a_val = float(val_statistics.get('acc_audio', 0.0))
+                acc_f_val = float(np.mean(val_statistics.get('accuracy', 0.0)))
+
+                self._plot_single_cm(
+                    cm=val_statistics.get('confu_matrix'),
+                    title=f"Multimodal Fusion - Val (Acc: {acc_f_val:.4f})",
+                    output_path=os.path.join(self.log_dir, 'confusion_matrix_val_fusion.png')
+                )
+                self._plot_single_cm(
+                    cm=val_statistics.get('confu_matrix_video'),
+                    title=f"Video Aux Head - Val (Acc: {acc_v_val:.4f})",
+                    output_path=os.path.join(self.log_dir, 'confusion_matrix_val_video.png')
+                )
+                self._plot_single_cm(
+                    cm=val_statistics.get('confu_matrix_audio'),
+                    title=f"Audio Aux Head - Val (Acc: {acc_a_val:.4f})",
+                    output_path=os.path.join(self.log_dir, 'confusion_matrix_val_audio.png')
+                )
+
+            # 3. Plot 1x3 comparison figure on Test
+            cms = [
+                (test_statistics.get('confu_matrix_video'), f"Video Aux Head (Acc: {acc_v_test:.4f})"),
+                (test_statistics.get('confu_matrix_audio'), f"Audio Aux Head (Acc: {acc_a_test:.4f})"),
+                (test_statistics.get('confu_matrix'), f"Multimodal Fusion (Acc: {acc_f_test:.4f})"),
+            ]
+
+            class_names = ['None', 'Strong', 'Medium', 'Weak']
+            fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
+            fig.suptitle('Test Set Confusion Matrices Comparison: Video Aux vs Audio Aux vs Multimodal Fusion', fontsize=15, fontweight='bold')
+
+            for idx, (cm, title) in enumerate(cms):
+                ax = axes[idx]
+                if cm is not None and isinstance(cm, np.ndarray) and cm.size > 0:
+                    im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+                    ax.set_title(title, fontsize=12, fontweight='bold')
+                    tick_marks = np.arange(len(class_names))
+                    ax.set_xticks(tick_marks)
+                    ax.set_yticks(tick_marks)
+                    ax.set_xticklabels(class_names, rotation=30)
+                    ax.set_yticklabels(class_names)
+                    ax.set_ylabel('Actual Label', fontweight='bold')
+                    ax.set_xlabel('Predicted Label', fontweight='bold')
+
+                    thresh = cm.max() / 2.0 if cm.max() > 0 else 1.0
+                    n_r = min(cm.shape[0], len(class_names))
+                    n_c = min(cm.shape[1], len(class_names))
+                    for i in range(n_r):
+                        row_total = np.sum(cm[i, :])
+                        for j in range(n_c):
+                            count = int(cm[i, j])
+                            pct = (count / row_total * 100.0) if row_total > 0 else 0.0
+                            color = "white" if count > thresh else "black"
+                            ax.text(j, i, f"{count}\n({pct:.1f}%)",
+                                    horizontalalignment="center",
+                                    verticalalignment="center",
+                                    color=color, fontsize=10, fontweight='bold')
+                else:
+                    ax.text(0.5, 0.5, "Data Not Available", horizontalalignment='center', verticalalignment='center')
+                    ax.set_title(title, fontsize=12)
+
+            plt.tight_layout()
+            comparison_plot_path = os.path.join(self.log_dir, 'confusion_matrices_test_comparison.png')
+            plt.savefig(comparison_plot_path, dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            logger.info(f"Successfully exported Comparison Heatmaps to: '{comparison_plot_path}'")
+            return comparison_plot_path
+        except Exception as exc:
+            logger.warning(f"Could not export test confusion matrices: {exc}")
+            return ""

@@ -513,6 +513,24 @@ class MultimodalTrainer:
             test_statistics=final_test_stats
         )
 
+        # Export consolidated detailed evaluation report (.txt and .json)
+        try:
+            self.logger.save_detailed_evaluation_report(
+                val_statistics=final_val_stats,
+                test_statistics=final_test_stats
+            )
+        except Exception as exc:
+            logger.warning(f"Could not export detailed evaluation report: {exc}")
+
+        # Plot test confusion matrices comparison heatmap (.png)
+        try:
+            self.logger.plot_test_confusion_matrices(
+                test_statistics=final_test_stats,
+                val_statistics=final_val_stats
+            )
+        except Exception as exc:
+            logger.warning(f"Could not plot test confusion matrices: {exc}")
+
         return {
             'training_time': training_duration,
             'inference_time_ms': inference_latency_ms,
