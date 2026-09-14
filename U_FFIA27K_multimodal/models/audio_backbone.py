@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Tuple
 import logging
 
@@ -17,11 +16,11 @@ def init_layer(layer: nn.Module) -> None:
 
 class AudioMLPBackbone(nn.Module):
     """
-    High-Resolution STFT Audio MLP Backbone (~1.39M params).
+    High-Resolution STFT Audio MLP Backbone (~1.17M params).
     Processes 2049-dimensional TKEO-STFT spectral vectors [B, 2049]:
       - Layer 1: Linear(2049 -> 512) + LayerNorm(512) + GELU + Dropout(0.1)
       - Layer 2: Linear(512 -> 224) + LayerNorm(224) -> f_audio [B, 224]
-      - Token Projection: Linear(512 -> 2 * 224) -> tokens_audio [B, 2, 224]
+      - Token Projection: tokens_audio [B, num_tokens, 224] via temporal sequence repeat
     """
     def __init__(
         self,

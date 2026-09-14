@@ -42,7 +42,7 @@ class FishMotionKinematics7Ch(nn.Module):
         self.register_buffer("center_field", center_field)
 
     def forward(self, frames_rgb: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        B, T, C, H, W = frames_rgb.shape
+        B, T, _, H, W = frames_rgb.shape
         device = frames_rgb.device
         dtype = frames_rgb.dtype
 

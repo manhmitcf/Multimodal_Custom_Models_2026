@@ -1,9 +1,7 @@
 import os
 import sys
 import time
-import json
 import logging
-import shutil
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 
@@ -15,7 +13,6 @@ if project_root not in sys.path:
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
 
@@ -321,7 +318,7 @@ class MultimodalTrainer:
                 logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path}'")
 
             logger.info(
-                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f}"
+                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f} | mAP: {best_mAP:.4f}"
             )
 
             # 4. Always save last checkpoint with full resumption state

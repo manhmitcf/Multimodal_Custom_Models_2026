@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 
@@ -8,8 +7,6 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import torch
-import torch.nn as nn
-import numpy as np
 from models.multimodal_sota_net import MultimodalBoundaryAwareNet
 from utils.losses import PairwiseTournamentLoss
 

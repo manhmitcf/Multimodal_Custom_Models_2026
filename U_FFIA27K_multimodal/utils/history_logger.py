@@ -1,9 +1,7 @@
 import os
-import sys
 import csv
 import json
 import logging
-from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
 import numpy as np
@@ -653,7 +651,7 @@ class HistoryLogger:
             for idx, (cm, title) in enumerate(cms):
                 ax = axes[idx]
                 if cm is not None and isinstance(cm, np.ndarray) and cm.size > 0:
-                    im = ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+                    ax.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
                     ax.set_title(title, fontsize=12, fontweight='bold')
                     tick_marks = np.arange(len(class_names))
                     ax.set_xticks(tick_marks)

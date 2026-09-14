@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Dict, Any, Optional
+from typing import Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -73,8 +73,6 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         )
 
     def forward(self, f: torch.Tensor, f_audio: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
-        B = f.size(0)
-
         # 1. Level 1: Feeding Activity Gate
         logit_act = self.activity_head(f).squeeze(-1)       # [B]
         p_feeding = torch.sigmoid(logit_act)                # [B] in (0, 1)
@@ -168,7 +166,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~105K params).
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~168K params).
     1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
     2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
        with Audio STFT Tie-Breaker on B23 (Medium vs Strong).

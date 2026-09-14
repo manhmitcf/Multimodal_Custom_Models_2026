@@ -1,9 +1,8 @@
-import os
 import sys
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Literal
+from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 # Ensure project root is in sys.path
@@ -18,8 +17,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DEFAULT_IMAGE_CACHE_ROOT = "/marimo/video_cache"
-DEFAULT_AUDIO_CACHE_ROOT = "/marimo/audio_cache"
 VALID_CACHE_MODES = ("disk", "ram", "none")
 
 
