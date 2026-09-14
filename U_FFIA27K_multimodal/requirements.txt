@@ -1,7 +1,6 @@
 torch
 torchvision
 torchaudio
-torchlibrosa
 opencv-python
 numpy
 pillow
@@ -12,5 +11,4 @@ tqdm
 matplotlib
 decord
 huggingface_hub
-timm
 soundfile

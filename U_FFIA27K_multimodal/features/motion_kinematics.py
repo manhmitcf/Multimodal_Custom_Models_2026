@@ -118,6 +118,5 @@ class FishMotionKinematics7Ch(nn.Module):
         return frames_7ch, kinematics_summary
 
 
-# Backward compatibility aliases
-FishMotionKinematics10Ch = FishMotionKinematics7Ch
+# Backward compatibility alias
 FishMotionKinematics = FishMotionKinematics7Ch
