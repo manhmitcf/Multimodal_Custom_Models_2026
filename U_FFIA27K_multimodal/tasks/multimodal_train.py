@@ -143,7 +143,7 @@ class MultimodalTrainer:
         self._init_logging_and_checkpoints()
 
     def _init_logging_and_checkpoints(self) -> None:
-        model_name = getattr(self.model, "model_name", self.model.__class__.__name__.lower())
+        model_name = getattr(self.config.model, "backbone", getattr(self.model, "model_name", self.model.__class__.__name__))
         self.run_dir = os.path.join(self.config.ckpt_dir, model_name)
 
         if self.config.dataset_splitter.evaluation_mode == "cross_validation" and self.config.dataset_splitter.fold_index is not None:
@@ -248,6 +248,7 @@ class MultimodalTrainer:
             best_val_metric = float('inf')
 
         for epoch in range(1, self.config.epochs + 1):
+            epoch_start_time = time.perf_counter()
             train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
             if not self.use_onecycle:
                 self.scheduler.step()
@@ -335,6 +336,8 @@ class MultimodalTrainer:
             }
             _safe_torch_save(resumption_checkpoint, self.last_checkpoint_path)
 
+            epoch_time_seconds = time.perf_counter() - epoch_start_time
+
             # Log to history CSV
             self.logger.log_epoch(
                 epoch=epoch,
@@ -343,6 +346,8 @@ class MultimodalTrainer:
                 train_mAP=train_mAP,
                 val_loss=val_loss,
                 val_statistics=val_stats,
+                lr=lr_current,
+                epoch_time_seconds=epoch_time_seconds,
                 is_best=is_best
             )
 

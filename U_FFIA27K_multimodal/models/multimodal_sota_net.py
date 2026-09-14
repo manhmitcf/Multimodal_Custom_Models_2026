@@ -30,6 +30,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
 
     Total Parameters: ~4.04M (Strictly < 5.0M parameter constraint).
     """
+    model_name: str = "MultimodalSOTANet"
+
     def __init__(
         self,
         classes_num: int = 4,
