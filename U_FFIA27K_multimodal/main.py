@@ -21,7 +21,7 @@ from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
 from models import MultimodalBoundaryAwareNet, MultimodalSOTANet
 from tasks import MultimodalTrainer
-from utils.profile_model import count_parameters
+from utils import count_parameters, seed_everything
 
 # Ensure stdout/stderr UTF-8 encoding on Windows terminal
 if hasattr(sys.stdout, 'reconfigure'):
@@ -48,22 +48,23 @@ def validate_model_config(config: TrainConfig) -> None:
         raise ValueError(f"Unknown multimodal model '{backbone_name}'. Available: {available}.")
 
 
-def build_model(config: TrainConfig) -> torch.nn.Module:
+def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Module:
     validate_model_config(config)
     model_cls = MODEL_REGISTRY[config.model.backbone]
     from features.audio_frontend import AudioFrontend
     frontend = AudioFrontend(config.audio_features)
 
+    active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
+
     return model_cls(
         classes_num=config.model.classes_num,
         embed_dim=config.model.embed_dim,
-        num_heads=config.model.num_heads,
-        pretrained_video=config.model.pretrained_video,
         audio_frontend=frontend,
         image_size=config.image_size,
         num_frames=config.num_frames,
-        in_chans=getattr(config.video_features, "num_channels", 7),
+        in_chans=getattr(config, "in_chans", 7),
         use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
+        seed=active_seed,
     )
 
 
@@ -352,8 +353,7 @@ def run_training_session(
     artifact_upload_config_path: Optional[str] = None,
     dry_run: bool = False,
     device_str: Optional[str] = None,
-    enable_two_phase_warmup: Optional[bool] = None,
-    phase1_warmup_epochs: Optional[int] = None,
+    seed: Optional[int] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -362,10 +362,13 @@ def run_training_session(
         artifact_upload_config_path = str(pkg_dir / "config" / "artifact_upload_config.json")
 
     config = TrainConfig.from_json(train_config_path)
-    if enable_two_phase_warmup is not None:
-        config.enable_two_phase_warmup = enable_two_phase_warmup
-    if phase1_warmup_epochs is not None:
-        config.phase1_warmup_epochs = phase1_warmup_epochs
+    if seed is not None:
+        config.seed = seed
+        config.dataset_splitter.seed = seed
+
+    # Lock deterministic master seed across PyTorch, CUDA, NumPy, Random
+    active_seed = int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
+    seed_everything(active_seed)
 
     if device_str is not None:
         device = torch.device(device_str)
@@ -379,7 +382,7 @@ def run_training_session(
     # =========================================================================
     # FAST PRE-FLIGHT DRY-RUN (Verify full network before preloading RAM)
     # =========================================================================
-    preflight_model = build_model(config).to(device)
+    preflight_model = build_model(config, seed=active_seed).to(device)
     verify_model_dry_run(preflight_model, config, device)
 
     if dry_run:
@@ -411,7 +414,9 @@ def run_training_session(
                 splitter_config=fold_config.dataset_splitter,
             )
 
-            model = build_model(fold_config).to(device)
+            fold_seed = active_seed + fold_idx
+            seed_everything(fold_seed)
+            model = build_model(fold_config, seed=fold_seed).to(device)
             stats = count_parameters(model)
             logger.info(f"Fold {fold_idx} Model Parameters: {stats['total']:,} ({stats['total_million']:.3f} M)")
 
@@ -465,19 +470,15 @@ def main() -> None:
     parser.add_argument("--upload-config", type=str, default=None, help="Path to artifact_upload_config.json")
     parser.add_argument("--device", type=str, default=None, help="Target compute device (cuda or cpu)")
     parser.add_argument("--dry-run", action="store_true", help="Run pre-flight check only without training")
-    parser.add_argument("--no-two-phase", action="store_true", help="Disable two-phase warmup and train end-to-end directly")
-    parser.add_argument("--phase1-epochs", type=int, default=None, help="Number of epochs for Phase 1 backbone warmup")
+    parser.add_argument("--seed", type=int, default=None, help="Master random seed for reproducibility (default: 42 from config)")
     args = parser.parse_args()
-
-    enable_two_phase = False if args.no_two_phase else None
 
     run_training_session(
         train_config_path=args.config,
         artifact_upload_config_path=args.upload_config,
         dry_run=args.dry_run,
         device_str=args.device,
-        enable_two_phase_warmup=enable_two_phase,
-        phase1_warmup_epochs=args.phase1_epochs,
+        seed=args.seed,
     )
 
 
