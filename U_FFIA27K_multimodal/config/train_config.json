@@ -1,7 +1,8 @@
 {
+  "seed": 42,
   "epochs": 400,
   "batch_size": 32,
-  "learning_rate": 1e-3,
+  "learning_rate": 0.001,
   "weight_decay": 0.05,
   "monitor": "qwk",
   "mode": "max",
@@ -11,7 +12,7 @@
   "lr_scheduler": "onecycle",
   "use_onecycle": true,
   "warmup_epochs": 20,
-  "min_lr": 1e-6,
+  "min_lr": 1e-06,
   "num_frames": 2,
   "image_size": 224,
   "sample_rate": 256000,
@@ -24,17 +25,11 @@
   "weight_act": 0.5,
   "weight_pairwise": 0.5,
   "weight_ce": 1.0,
-  "enable_two_phase_warmup": false,
-  "phase1_warmup_epochs": 0,
-  "phase2_backbone_mode": "freeze_all",
   "aux_loss_weight": 0.3,
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
-    "embed_dim": 224,
-    "num_bottlenecks": 4,
-    "num_heads": 4,
-    "pretrained_video": false
+    "embed_dim": 224
   },
   "audio_features": {
     "sample_rate": 256000,
