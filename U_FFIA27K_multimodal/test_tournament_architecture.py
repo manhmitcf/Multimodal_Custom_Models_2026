@@ -149,11 +149,51 @@ def test_end_to_end_from_scratch():
     print(f"[PASSED] End-to-End Single Phase: All {len(list(model.parameters()))} param tensors updated simultaneously!")
 
 
+def test_consistent_video_transform():
+    print("\n" + "=" * 65)
+    print("TEST 5: CLIP-SYNCHRONIZED VIDEO TRANSFORM & RANDOM ERASING")
+    print("=" * 65)
+
+    import numpy as np
+    from transforms.video_transform import ConsistentVideoTransform
+    from features.motion_kinematics import FishMotionKinematics7Ch
+
+    # Train mode with 100% erasing probability
+    tf_train = ConsistentVideoTransform(image_size=224, is_train=True, erase_prob=1.0)
+    dummy_clip = [np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8) for _ in range(2)]
+    tensor_train = tf_train(dummy_clip)
+    assert tensor_train.shape == (2, 3, 224, 224), f"Wrong shape: {tensor_train.shape}"
+
+    # Check temporal synchronization: erased region must match exactly across all frames
+    mask0 = (tensor_train[0] == 0.0)
+    mask1 = (tensor_train[1] == 0.0)
+    assert torch.equal(mask0, mask1), "Random Erasing is NOT clip-synchronized across frames!"
+    erased_pixels = mask0.sum().item()
+    assert erased_pixels > 0, "No pixels were erased in train mode with erase_prob=1.0!"
+    print(f"Clip-synchronized erased pixels per channel: {erased_pixels // 3}")
+
+    # Check optical flow in erased region is strictly 0.0
+    mk = FishMotionKinematics7Ch()
+    kinematics, _ = mk(tensor_train.unsqueeze(0))
+    flow = kinematics[0, :, 3:5]
+    flow_in_erased = flow[:, :, mask0[0]]
+    assert torch.all(flow_in_erased == 0.0), f"Flow in erased region is not zero: max abs {flow_in_erased.abs().max()}"
+    print("[PASSED] Optical flow in erased region is strictly 0.0 (no kinematic artifacts)!")
+
+    # Val mode must NOT apply erasing
+    tf_val = ConsistentVideoTransform(image_size=224, is_train=False)
+    tensor_val = tf_val(dummy_clip)
+    assert tensor_val.shape == (2, 3, 224, 224)
+    assert not torch.equal(tensor_val[0] == 0.0, torch.ones_like(tensor_val[0], dtype=torch.bool)), "Unexpected zeros in val"
+    print("[PASSED] Val mode preserves clean full frames without erasing!")
+
+
 if __name__ == "__main__":
     test_parameter_budget()
     test_tournament_forward_and_pairwise()
     test_gradient_flow_tournament_loss()
     test_end_to_end_from_scratch()
+    test_consistent_video_transform()
     print("\n" + "=" * 65)
     print("ALL TOURNAMENT STFT-MLP TESTS PASSED SUCCESSFULLY! (100% READY)")
     print("=" * 65 + "\n")

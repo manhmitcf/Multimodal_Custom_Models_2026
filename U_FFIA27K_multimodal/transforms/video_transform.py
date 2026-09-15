@@ -1,3 +1,4 @@
+import math
 import random
 from typing import Union, List
 import numpy as np
@@ -41,6 +42,7 @@ class ConsistentVideoTransform:
       - Random Horizontal Flip: Decided once per clip, applied identically to all T frames.
       - Random Rotation: Angle sampled once per clip [-15.0, 15.0], applied identically to all T frames.
       - Color Jitter (Brightness/Contrast): Factors sampled once per clip [0.85, 1.15], applied identically to all T frames.
+      - Random Erasing / Cutout: Rectangular region sampled once per clip, applied identically to all T frames.
       - Bilinear Resize: Standardized HxW.
       - ImageNet Normalization.
 
@@ -57,11 +59,19 @@ class ConsistentVideoTransform:
         is_train: bool = True,
         mean: tuple = (0.485, 0.456, 0.406),
         std: tuple = (0.229, 0.224, 0.225),
+        erase_prob: float = 0.3,
+        erase_scale: tuple = (0.05, 0.15),
+        erase_ratio: tuple = (0.5, 2.0),
+        erase_value: float = 0.0,
     ) -> None:
         self.image_size = int(image_size)
         self.is_train = bool(is_train)
         self.mean = mean
         self.std = std
+        self.erase_prob = float(erase_prob)
+        self.erase_scale = erase_scale
+        self.erase_ratio = erase_ratio
+        self.erase_value = float(erase_value)
         self._to_pil = ImageToPIL()
 
     def __call__(
@@ -84,11 +94,27 @@ class ConsistentVideoTransform:
             frame_list = [frames]
 
         # Sample augmentation parameters ONCE per video clip (temporal synchronization)
+        erase_box = None
         if self.is_train:
             do_flip = (random.random() < 0.5)
             rot_angle = random.uniform(-15.0, 15.0)
             brightness_factor = random.uniform(0.85, 1.15)
             contrast_factor = random.uniform(0.85, 1.15)
+
+            # Sample Random Erasing bounding box ONCE per clip
+            if random.random() < self.erase_prob:
+                img_h, img_w = self.image_size, self.image_size
+                area = img_h * img_w
+                for _ in range(10):
+                    target_area = random.uniform(self.erase_scale[0], self.erase_scale[1]) * area
+                    aspect_ratio = math.exp(random.uniform(math.log(self.erase_ratio[0]), math.log(self.erase_ratio[1])))
+                    h = int(round(math.sqrt(target_area * aspect_ratio)))
+                    w = int(round(math.sqrt(target_area / aspect_ratio)))
+                    if h < img_h and w < img_w:
+                        top = random.randint(0, img_h - h)
+                        left = random.randint(0, img_w - w)
+                        erase_box = (top, left, h, w)
+                        break
 
         transformed_tensors = []
         for frame in frame_list:
@@ -111,6 +137,12 @@ class ConsistentVideoTransform:
 
             t_img = TF.to_tensor(pil_img)
             t_img = TF.normalize(t_img, self.mean, self.std)
+
+            # Apply clip-synchronized Random Erasing to the normalized tensor
+            if self.is_train and erase_box is not None:
+                top, left, h, w = erase_box
+                t_img = TF.erase(t_img, top, left, h, w, v=self.erase_value)
+
             transformed_tensors.append(t_img)
 
         if is_single_frame:
@@ -118,9 +150,23 @@ class ConsistentVideoTransform:
         return torch.stack(transformed_tensors, dim=0)
 
     @classmethod
-    def get_transforms(cls, image_size: int = 224):
+    def get_transforms(
+        cls,
+        image_size: int = 224,
+        erase_prob: float = 0.3,
+        erase_scale: tuple = (0.05, 0.15),
+        erase_ratio: tuple = (0.5, 2.0),
+        erase_value: float = 0.0,
+    ):
         return {
-            "train": cls(image_size=image_size, is_train=True),
+            "train": cls(
+                image_size=image_size,
+                is_train=True,
+                erase_prob=erase_prob,
+                erase_scale=erase_scale,
+                erase_ratio=erase_ratio,
+                erase_value=erase_value,
+            ),
             "val": cls(image_size=image_size, is_train=False),
             "test": cls(image_size=image_size, is_train=False),
         }

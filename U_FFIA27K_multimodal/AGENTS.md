@@ -1,4 +1,4 @@
-﻿# AGENTS.md — Master Architecture Specification & Operational Guidelines
+# AGENTS.md — Master Architecture Specification & Operational Guidelines
 # Branch: main_architecture/main_01 | Multimodal SOTA Tournament Network (~4.04M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
@@ -72,6 +72,7 @@ This document defines the invariant architectural constraints, operational guide
   - Random Horizontal Flip: Decided once per clip (p=0.5), applied identically to all frames.
   - Random Rotation: Angle sampled once per clip (theta in [-15 deg, +15 deg]), applied identically to all frames.
   - Color Jitter: Brightness and contrast factors sampled once per clip ([0.85, 1.15]), applied identically to all frames.
+  - Random Erasing / Cutout: Rectangular region sampled once per clip (scale [0.05, 0.15], ratio [0.5, 2.0], p=0.3), applied identically to all frames in training mode (producing zero temporal optical flow difference).
   - Bilinear Resize (224x224) and ImageNet normalization.
 
 ### 2.2 Audio Pipeline
