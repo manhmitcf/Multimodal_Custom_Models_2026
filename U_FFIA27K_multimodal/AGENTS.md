@@ -106,19 +106,24 @@ Configurations are defined in `config/train_config.json` and validated by `confi
 - **Gradient Clipping**: max_norm = 5.0.
 - **Loss Function (`PairwiseTournamentLoss`)**:
   Loss = 0.5 * Loss_act + 0.5 * Loss_pairwise + 1.0 * Loss_CE + 0.3 * Loss_aux.
-- **Evaluation Monitor**: qwk (Quadratic Weighted Kappa) maximizing ordinal concordance across 4 feeding classes.
+- **Evaluation Monitor**: 3 configurable modes supported in `train_config.json`:
+  * `"both"` (Default): Dual-track monitoring simultaneously tracking Peak QWK (`*_qwk.pth`) and Peak Accuracy (`*_acc.pth`) throughout training without discarding either. In the Test Split evaluation phase, both candidate models are independently evaluated head-to-head. The model achieving higher Test Accuracy (tie-breaker: Test QWK) is declared the winner and copied to the canonical checkpoints (`best_model.pth`, `best_video_backbone.pth`, `best_audio_backbone.pth`), with a comprehensive comparison table logged and exported to `evaluation_detailed_report.txt` and `.json`.
+  * `"qwk"`: Single-track monitoring peak validation Quadratic Weighted Kappa.
+  * `"accuracy"`: Single-track monitoring peak validation Accuracy.
 
 ---
 
 ## 4. Checkpoint & Artifact Management
 
 ### 4.1 Checkpoint Saving Hierarchy
-Every run automatically exports 5 separate checkpoints in `checkpoint/MultimodalSOTANet/`:
-1. `best_model.pth`: Full multimodal model weights achieving peak validation metric (QWK, Val Acc, or QWK-Acc Composite).
-2. `best_acc_model.pth`: Independent peak validation accuracy multimodal checkpoint.
-3. `best_video_backbone.pth`: Peak weights of ConvNeXt-Nano video backbone + video aux head.
-4. `best_audio_backbone.pth`: Peak weights of STFT-MLP audio backbone + frontend + audio aux head.
-5. `last_model.pth`: Full resumption state (model, optimizer, scheduler, epoch, metrics).
+Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
+1. `best_model.pth`: Full multimodal model weights achieving peak performance (in `both` mode, copied from the winning candidate after Test Split evaluation).
+2. `best_video_backbone.pth`: Peak weights of ConvNeXt-Nano video backbone + video aux head.
+3. `best_audio_backbone.pth`: Peak weights of STFT-MLP audio backbone + frontend + audio aux head.
+4. `last_model.pth`: Full resumption state (model, optimizer, scheduler, epoch, metrics).
+5. **In Dual-Track Mode (`"monitor": "both"`)**:
+   - `best_model_qwk.pth`, `best_video_backbone_qwk.pth`, `best_audio_backbone_qwk.pth`: Peak validation QWK candidate checkpoints.
+   - `best_model_acc.pth`, `best_video_backbone_acc.pth`, `best_audio_backbone_acc.pth`: Peak validation Accuracy candidate checkpoints.
 
 ### 4.2 Logging Files
 - `history.csv`: 36 columns recorded per epoch (runtime, learning rate, train metrics, val metrics, per-class AUC/AP, and flattened 4x4 confusion matrix).

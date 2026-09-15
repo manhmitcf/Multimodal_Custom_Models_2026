@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import shutil
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
@@ -154,10 +155,18 @@ class MultimodalTrainer:
         os.makedirs(self.run_dir, exist_ok=True)
         self.logger = HistoryLogger(log_dir=self.run_dir)
         self.best_checkpoint_path = os.path.join(self.run_dir, 'best_model.pth')
-        self.best_acc_checkpoint_path = os.path.join(self.run_dir, 'best_acc_model.pth')
         self.best_video_path = os.path.join(self.run_dir, 'best_video_backbone.pth')
         self.best_audio_path = os.path.join(self.run_dir, 'best_audio_backbone.pth')
         self.last_checkpoint_path = os.path.join(self.run_dir, 'last_model.pth')
+
+        # Dual-track checkpoint paths (both candidates tracked and preserved)
+        self.best_checkpoint_path_qwk = os.path.join(self.run_dir, 'best_model_qwk.pth')
+        self.best_video_path_qwk = os.path.join(self.run_dir, 'best_video_backbone_qwk.pth')
+        self.best_audio_path_qwk = os.path.join(self.run_dir, 'best_audio_backbone_qwk.pth')
+
+        self.best_checkpoint_path_acc = os.path.join(self.run_dir, 'best_model_acc.pth')
+        self.best_video_path_acc = os.path.join(self.run_dir, 'best_video_backbone_acc.pth')
+        self.best_audio_path_acc = os.path.join(self.run_dir, 'best_audio_backbone_acc.pth')
 
         logger.info("==================================================")
         logger.info("INITIALIZED MULTIMODAL TRAINING EXPERIMENT:")
@@ -235,7 +244,9 @@ class MultimodalTrainer:
         return epoch_loss, train_acc, train_mAP, train_mae
 
     def train(self) -> Dict[str, Any]:
-        logger.info(f"Starting training pipeline (Monitor metric: {self.config.monitor})...")
+        monitor_mode = str(getattr(self.config, "monitor", "both")).strip().lower()
+        is_dual = monitor_mode in ("both", "dual")
+        logger.info(f"Starting training pipeline (Monitor mode: '{monitor_mode}', Dual-track: {is_dual})...")
         training_start_time = time.perf_counter()
 
         best_acc = 0.0
@@ -244,10 +255,20 @@ class MultimodalTrainer:
         best_loss = float('inf')
         best_epoch = 1
         best_val_statistics = None
-        best_acc_so_far = -1.0
-        best_acc_epoch = 1
+        # Dual-track record holders
+        best_val_qwk = -1.0
+        best_epoch_qwk = 1
+        best_val_stats_qwk = None
 
-        if self.config.monitor in ('accuracy', 'qwk', 'qwk_acc', 'composite'):
+        best_val_acc = -1.0
+        best_epoch_acc = 1
+        best_val_stats_acc = None
+
+        if monitor_mode in ('accuracy', 'acc'):
+            best_val_metric = -1.0
+        elif monitor_mode == 'qwk':
+            best_val_metric = -1.0
+        elif is_dual:
             best_val_metric = -1.0
         else:
             best_val_metric = float('inf')
@@ -277,16 +298,58 @@ class MultimodalTrainer:
                 f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
             )
 
-            # Independent Tracking & Saving for Peak Val Accuracy (best_acc_model.pth)
-            if val_acc > best_acc_so_far:
-                best_acc_so_far = val_acc
-                best_acc_epoch = epoch
-                _safe_torch_save(self.model.state_dict(), self.best_acc_checkpoint_path)
-                logger.info(f"[*] New PEAK Val Accuracy achieved: {val_acc:.4f} at Epoch {epoch:03d}! Saved to '{self.best_acc_checkpoint_path}'")
-
             # Determine if this is the best checkpoint for primary monitor
             is_best = False
-            if self.config.monitor == 'qwk':
+            is_best_qwk = False
+            is_best_acc = False
+
+            if is_dual:
+                current_state_dict = self.model.state_dict()
+                v_dict = {k: v for k, v in current_state_dict.items() if k.startswith('video_backbone.') or k.startswith('aux_head_video.')}
+                a_dict = {k: v for k, v in current_state_dict.items() if k.startswith('audio_backbone.') or k.startswith('audio_frontend.') or k.startswith('aux_head_audio.')}
+
+                if val_qwk > best_val_qwk:
+                    best_val_qwk = val_qwk
+                    best_epoch_qwk = epoch
+                    best_val_stats_qwk = val_stats
+                    is_best_qwk = True
+                    is_best = True
+
+                    _safe_torch_save(current_state_dict, self.best_checkpoint_path_qwk)
+                    if v_dict:
+                        _safe_torch_save(v_dict, self.best_video_path_qwk)
+                    if a_dict:
+                        _safe_torch_save(a_dict, self.best_audio_path_qwk)
+
+                    logger.info(f"[*] [DUAL-TRACK: QWK] New peak QWK performance! Saved checkpoints:")
+                    logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path_qwk}' (Val QWK = {val_qwk:.4f}, Val Acc = {val_acc:.4f})")
+                    logger.info(f"    - Peak Video Backbone:     '{self.best_video_path_qwk}'")
+                    logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path_qwk}'")
+
+                if val_acc > best_val_acc:
+                    best_val_acc = val_acc
+                    best_epoch_acc = epoch
+                    best_val_stats_acc = val_stats
+                    is_best_acc = True
+                    is_best = True
+
+                    _safe_torch_save(current_state_dict, self.best_checkpoint_path_acc)
+                    if v_dict:
+                        _safe_torch_save(v_dict, self.best_video_path_acc)
+                    if a_dict:
+                        _safe_torch_save(a_dict, self.best_audio_path_acc)
+
+                    logger.info(f"[*] [DUAL-TRACK: ACC] New peak Accuracy performance! Saved checkpoints:")
+                    logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path_acc}' (Val Acc = {val_acc:.4f}, Val QWK = {val_qwk:.4f})")
+                    logger.info(f"    - Peak Video Backbone:     '{self.best_video_path_acc}'")
+                    logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path_acc}'")
+
+                best_acc = max(best_acc, val_acc)
+                best_qwk = max(best_qwk, val_qwk)
+                best_mAP = max(best_mAP, val_mAP)
+                best_loss = min(best_loss, val_loss)
+                score = val_acc
+            elif monitor_mode == 'qwk':
                 score = val_qwk
                 if val_qwk > best_val_metric + 1e-4:
                     best_val_metric = val_qwk
@@ -295,7 +358,7 @@ class MultimodalTrainer:
                     # Tie-breaker: prefer higher Val Accuracy
                     best_val_metric = val_qwk
                     is_best = True
-            elif self.config.monitor == 'accuracy':
+            elif monitor_mode in ('accuracy', 'acc'):
                 score = val_acc
                 if val_acc > best_val_metric + 1e-4:
                     best_val_metric = val_acc
@@ -316,7 +379,7 @@ class MultimodalTrainer:
                     best_val_metric = val_loss
                     is_best = True
 
-            if is_best:
+            if not is_dual and is_best:
                 best_epoch = epoch
                 best_acc = val_acc
                 best_qwk = val_qwk
@@ -344,9 +407,15 @@ class MultimodalTrainer:
                 logger.info(f"    - Peak Video Backbone:     '{self.best_video_path}'")
                 logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path}'")
 
-            logger.info(
-                f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f} | mAP: {best_mAP:.4f}"
-            )
+            if is_dual:
+                logger.info(
+                    f"Current best [DUAL]: Peak QWK = {best_val_qwk:.4f} (Ep {best_epoch_qwk:03d}) | "
+                    f"Peak Acc = {best_val_acc:.4f} (Ep {best_epoch_acc:03d})"
+                )
+            else:
+                logger.info(
+                    f"Current best: Epoch {best_epoch:03d} | Loss: {best_loss:.5f} | Accuracy: {best_acc:.4f} | QWK: {best_qwk:.4f} | mAP: {best_mAP:.4f}"
+                )
 
             # 4. Always save last checkpoint with full resumption state
             resumption_checkpoint = {
@@ -354,8 +423,12 @@ class MultimodalTrainer:
                 'model_state_dict': self.model.state_dict(),
                 'optimizer_state_dict': self.optimizer.state_dict(),
                 'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler is not None else None,
-                'best_epoch': best_epoch,
-                'best_val_metric': best_val_metric,
+                'best_epoch': best_epoch if not is_dual else best_epoch_acc,
+                'best_epoch_qwk': best_epoch_qwk if is_dual else None,
+                'best_epoch_acc': best_epoch_acc if is_dual else None,
+                'best_val_metric': best_val_metric if not is_dual else best_val_acc,
+                'best_val_qwk': best_val_qwk if is_dual else best_qwk,
+                'best_val_acc': best_val_acc if is_dual else best_acc,
                 'best_acc': best_acc,
                 'best_qwk': best_qwk,
                 'val_statistics': val_stats
@@ -394,23 +467,160 @@ class MultimodalTrainer:
         # Final evaluation on Test split
         logger.info("==================================================")
         logger.info("Training complete. Starting evaluation on Test split...")
-        if os.path.exists(self.best_checkpoint_path):
-            try:
-                state_dict = torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=True)
-                self.model.load_state_dict(state_dict)
-                logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
-            except Exception as exc:
-                logger.warning(f"Failed to load checkpoint with weights_only=True ({exc}), attempting with weights_only=False...")
+
+        dual_comparison_info = None
+
+        if is_dual:
+            logger.info("Running Dual-Track Tournament Test Split Evaluation...")
+            logger.info("Evaluating both QWK candidate and Accuracy candidate head-to-head...")
+
+            def _load_model_weights(path: str) -> bool:
+                if not os.path.exists(path):
+                    return False
                 try:
-                    state_dict = torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=False)
+                    sd = torch.load(path, map_location=self.device, weights_only=True)
+                    self.model.load_state_dict(sd)
+                    return True
+                except Exception:
+                    try:
+                        sd = torch.load(path, map_location=self.device, weights_only=False)
+                        self.model.load_state_dict(sd)
+                        return True
+                    except Exception as exc_load:
+                        logger.error(f"Failed to load weights from '{path}': {exc_load}")
+                        return False
+
+            # 1. Evaluate QWK candidate
+            stats_qwk = None
+            if _load_model_weights(self.best_checkpoint_path_qwk):
+                self.model.eval()
+                stats_qwk = self.evaluator.evaluate(self.test_loader)
+                logger.info(
+                    f"[Candidate: QWK] Test Acc = {float(np.mean(stats_qwk['accuracy'])):.4f} | "
+                    f"Test QWK = {float(stats_qwk.get('qwk', 0.0)):.4f} | "
+                    f"Test mAP = {float(np.mean(stats_qwk['average_precision'])):.4f}"
+                )
+
+            # 2. Evaluate Accuracy candidate
+            stats_acc = None
+            if _load_model_weights(self.best_checkpoint_path_acc):
+                self.model.eval()
+                stats_acc = self.evaluator.evaluate(self.test_loader)
+                logger.info(
+                    f"[Candidate: ACC] Test Acc = {float(np.mean(stats_acc['accuracy'])):.4f} | "
+                    f"Test QWK = {float(stats_acc.get('qwk', 0.0)):.4f} | "
+                    f"Test mAP = {float(np.mean(stats_acc['average_precision'])):.4f}"
+                )
+
+            # 3. Head-to-head decision
+            if stats_qwk is not None and stats_acc is not None:
+                t_acc_q = float(np.mean(stats_qwk['accuracy']))
+                t_qwk_q = float(stats_qwk.get('qwk', 0.0))
+                t_map_q = float(np.mean(stats_qwk['average_precision']))
+
+                t_acc_a = float(np.mean(stats_acc['accuracy']))
+                t_qwk_a = float(stats_acc.get('qwk', 0.0))
+                t_map_a = float(np.mean(stats_acc['average_precision']))
+
+                # Priority: Test Accuracy, then tie-breaker: Test QWK
+                if t_acc_a > t_acc_q:
+                    winner = 'accuracy'
+                elif t_acc_a < t_acc_q:
+                    winner = 'qwk'
+                else:
+                    winner = 'qwk' if t_qwk_q >= t_qwk_a else 'accuracy'
+
+                winning_epoch = best_epoch_acc if winner == 'accuracy' else best_epoch_qwk
+                final_test_stats = stats_acc if winner == 'accuracy' else stats_qwk
+                final_val_stats = best_val_stats_acc if winner == 'accuracy' else best_val_stats_qwk
+                if final_val_stats is None:
+                    final_val_stats = self.evaluator.evaluate(self.val_loader)
+
+                # Deploy winning checkpoints to canonical filenames (retaining candidate files intact!)
+                src_model = self.best_checkpoint_path_acc if winner == 'accuracy' else self.best_checkpoint_path_qwk
+                src_v = self.best_video_path_acc if winner == 'accuracy' else self.best_video_path_qwk
+                src_a = self.best_audio_path_acc if winner == 'accuracy' else self.best_audio_path_qwk
+
+                if os.path.exists(src_model):
+                    shutil.copy2(src_model, self.best_checkpoint_path)
+                if os.path.exists(src_v):
+                    shutil.copy2(src_v, self.best_video_path)
+                if os.path.exists(src_a):
+                    shutil.copy2(src_a, self.best_audio_path)
+
+                # Ensure self.model has winning weights loaded for downstream profiling
+                _load_model_weights(self.best_checkpoint_path)
+                self.model.eval()
+
+                logger.info("=" * 88)
+                logger.info("DUAL-TRACK TOURNAMENT HEAD-TO-HEAD TEST EVALUATION REPORT:")
+                logger.info("=" * 88)
+                logger.info(f"{'Candidate Checkpoint':<24} | {'Val Criterion':<16} | {'Val Peak':<10} | {'Test Acc':<10} | {'Test QWK':<10} | {'Test mAP':<10} | {'Decision'}")
+                logger.info("-" * 88)
+                logger.info(f"{'best_model_qwk.pth':<24} | {f'QWK (Ep {best_epoch_qwk:03d})':<16} | {best_val_qwk:<10.4f} | {t_acc_q*100:<9.2f}% | {t_qwk_q:<10.4f} | {t_map_q*100:<9.2f}% | {'<-- WINNER' if winner == 'qwk' else ''}")
+                logger.info(f"{'best_model_acc.pth':<24} | {f'ACC (Ep {best_epoch_acc:03d})':<16} | {best_val_acc*100:<9.2f}% | {t_acc_a*100:<9.2f}% | {t_qwk_a:<10.4f} | {t_map_a*100:<9.2f}% | {'<-- WINNER' if winner == 'accuracy' else ''}")
+                logger.info("=" * 88)
+                logger.info(f"[*] WINNER SELECTED: Candidate '{winner}' (Epoch {winning_epoch:03d}) won the tournament on Test Split!")
+                logger.info(f"    Canonical checkpoints deployed to:")
+                logger.info(f"      - Full Model:     '{self.best_checkpoint_path}' <== '{src_model}'")
+                logger.info(f"      - Video Backbone: '{self.best_video_path}' <== '{src_v}'")
+                logger.info(f"      - Audio Backbone: '{self.best_audio_path}' <== '{src_a}'")
+                logger.info("=" * 88)
+
+                dual_comparison_info = {
+                    'winner': winner,
+                    'winning_epoch': winning_epoch,
+                    'qwk_candidate': {
+                        'checkpoint': os.path.basename(self.best_checkpoint_path_qwk),
+                        'val_epoch': best_epoch_qwk,
+                        'val_qwk': best_val_qwk,
+                        'test_accuracy': t_acc_q,
+                        'test_qwk': t_qwk_q,
+                        'test_mAP': t_map_q,
+                        'is_winner': (winner == 'qwk')
+                    },
+                    'acc_candidate': {
+                        'checkpoint': os.path.basename(self.best_checkpoint_path_acc),
+                        'val_epoch': best_epoch_acc,
+                        'val_accuracy': best_val_acc,
+                        'test_accuracy': t_acc_a,
+                        'test_qwk': t_qwk_a,
+                        'test_mAP': t_map_a,
+                        'is_winner': (winner == 'accuracy')
+                    }
+                }
+            elif stats_qwk is not None:
+                final_test_stats = stats_qwk
+                final_val_stats = best_val_stats_qwk if best_val_stats_qwk is not None else self.evaluator.evaluate(self.val_loader)
+                if os.path.exists(self.best_checkpoint_path_qwk):
+                    shutil.copy2(self.best_checkpoint_path_qwk, self.best_checkpoint_path)
+            elif stats_acc is not None:
+                final_test_stats = stats_acc
+                final_val_stats = best_val_stats_acc if best_val_stats_acc is not None else self.evaluator.evaluate(self.val_loader)
+                if os.path.exists(self.best_checkpoint_path_acc):
+                    shutil.copy2(self.best_checkpoint_path_acc, self.best_checkpoint_path)
+            else:
+                final_test_stats = self.evaluator.evaluate(self.test_loader)
+                final_val_stats = self.evaluator.evaluate(self.val_loader)
+        else:
+            # Single monitor mode: reload canonical best_model.pth
+            if os.path.exists(self.best_checkpoint_path):
+                try:
+                    state_dict = torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=True)
                     self.model.load_state_dict(state_dict)
                     logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
-                except Exception as exc2:
-                    logger.error(f"Could not reload best checkpoint: {exc2}. Proceeding with current in-memory model weights.")
+                except Exception as exc:
+                    logger.warning(f"Failed to load checkpoint with weights_only=True ({exc}), attempting with weights_only=False...")
+                    try:
+                        state_dict = torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=False)
+                        self.model.load_state_dict(state_dict)
+                        logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
+                    except Exception as exc2:
+                        logger.error(f"Could not reload best checkpoint: {exc2}. Proceeding with current in-memory model weights.")
 
-        self.model.eval()
-        final_val_stats = best_val_statistics if best_val_statistics is not None else self.evaluator.evaluate(self.val_loader)
-        final_test_stats = self.evaluator.evaluate(self.test_loader)
+            self.model.eval()
+            final_val_stats = best_val_statistics if best_val_statistics is not None else self.evaluator.evaluate(self.val_loader)
+            final_test_stats = self.evaluator.evaluate(self.test_loader)
 
         test_acc = float(np.mean(final_test_stats['accuracy']))
         test_qwk = float(final_test_stats.get('qwk', 0.0))
@@ -461,7 +671,8 @@ class MultimodalTrainer:
                 val_statistics=final_val_stats,
                 test_statistics=final_test_stats,
                 total_params_m=total_params_m,
-                gflops=gflops
+                gflops=gflops,
+                dual_comparison_info=dual_comparison_info
             )
         except Exception as exc:
             logger.warning(f"Could not export detailed evaluation report: {exc}")
@@ -479,5 +690,6 @@ class MultimodalTrainer:
             'training_time': training_duration,
             'inference_time_ms': inference_latency_ms,
             'val_statistics': final_val_stats,
-            'test_statistics': final_test_stats
+            'test_statistics': final_test_stats,
+            'dual_comparison_info': dual_comparison_info
         }

@@ -335,7 +335,8 @@ class HistoryLogger:
         val_statistics: Dict[str, Any],
         test_statistics: Dict[str, Any],
         total_params_m: Optional[float] = None,
-        gflops: Optional[float] = None
+        gflops: Optional[float] = None,
+        dual_comparison_info: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         Exports both SEPARATE standalone files for each branch (Fusion, Video, Audio)
@@ -448,6 +449,47 @@ class HistoryLogger:
             content.append(f"Model Parameters:      {total_params_m:.3f} M")
         if gflops is not None:
             content.append(f"Inference Complexity:  {gflops:.4f} GFLOPs")
+
+        if dual_comparison_info is not None:
+            q_info = dual_comparison_info.get('qwk_candidate', {})
+            a_info = dual_comparison_info.get('acc_candidate', {})
+            winner = dual_comparison_info.get('winner', 'unknown')
+            win_ep = dual_comparison_info.get('winning_epoch', 0)
+
+            q_ckpt = q_info.get('checkpoint', 'best_model_qwk.pth')
+            q_ep = q_info.get('val_epoch', 0)
+            q_crit = f"QWK (Ep {q_ep:03d})"
+            q_val = float(q_info.get('val_qwk', 0.0))
+            q_t_acc = float(q_info.get('test_accuracy', 0.0)) * 100.0
+            q_t_qwk = float(q_info.get('test_qwk', 0.0))
+            q_t_map = float(q_info.get('test_mAP', 0.0)) * 100.0
+            q_win = "<-- WINNER" if winner == 'qwk' else ""
+
+            a_ckpt = a_info.get('checkpoint', 'best_model_acc.pth')
+            a_ep = a_info.get('val_epoch', 0)
+            a_crit = f"ACC (Ep {a_ep:03d})"
+            a_val = float(a_info.get('val_accuracy', 0.0)) * 100.0
+            a_t_acc = float(a_info.get('test_accuracy', 0.0)) * 100.0
+            a_t_qwk = float(a_info.get('test_qwk', 0.0))
+            a_t_map = float(a_info.get('test_mAP', 0.0)) * 100.0
+            a_win = "<-- WINNER" if winner == 'accuracy' else ""
+
+            winner_suffix = 'acc' if winner == 'accuracy' else 'qwk'
+
+            content.extend([
+                "-" * 80,
+                "PART 0: DUAL-TRACK TOURNAMENT SELECTION (QWK vs ACCURACY CANDIDATES)",
+                "-" * 80,
+                f"{'Candidate Checkpoint':<24} | {'Val Criterion':<16} | {'Val Peak':<10} | {'Test Acc':<10} | {'Test QWK':<10} | {'Test mAP':<10} | {'Selected'}",
+                "-" * 80,
+                f"{q_ckpt:<24} | {q_crit:<16} | {q_val:<10.4f} | {q_t_acc:<9.2f}% | {q_t_qwk:<10.4f} | {q_t_map:<9.2f}% | {q_win}",
+                f"{a_ckpt:<24} | {a_crit:<16} | {a_val:<9.2f}% | {a_t_acc:<9.2f}% | {a_t_qwk:<10.4f} | {a_t_map:<9.2f}% | {a_win}",
+                "-" * 80,
+                f"Tournament Winner: Candidate '{winner}' (Epoch {win_ep:03d}) achieved superior Test Split performance.",
+                f"Canonical checkpoints (best_model.pth, best_video_backbone.pth, best_audio_backbone.pth)",
+                f"were deployed from winning candidate: best_model_{winner_suffix}.pth\n",
+            ])
+
         content.extend([
             "-" * 80,
             "PART 1: VALIDATION SPLIT (AT BEST FUSION MODEL CHECKPOINT)",
@@ -533,6 +575,7 @@ class HistoryLogger:
             json_payload = {
                 "total_params_m": total_params_m,
                 "gflops": gflops,
+                "dual_comparison_info": sanitize_for_json(dual_comparison_info),
                 "val_evaluation": sanitize_for_json(val_statistics),
                 "test_evaluation": sanitize_for_json(test_statistics)
             }
