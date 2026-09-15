@@ -113,11 +113,12 @@ Configurations are defined in `config/train_config.json` and validated by `confi
 ## 4. Checkpoint & Artifact Management
 
 ### 4.1 Checkpoint Saving Hierarchy
-Every run automatically exports 4 separate checkpoints in `checkpoint/MultimodalSOTANet/`:
-1. `best_model.pth`: Full multimodal model weights achieving peak validation metric.
-2. `best_video_backbone.pth`: Peak weights of ConvNeXt-Nano video backbone + video aux head.
-3. `best_audio_backbone.pth`: Peak weights of STFT-MLP audio backbone + frontend + audio aux head.
-4. `last_model.pth`: Full resumption state (model, optimizer, scheduler, epoch, metrics).
+Every run automatically exports 5 separate checkpoints in `checkpoint/MultimodalSOTANet/`:
+1. `best_model.pth`: Full multimodal model weights achieving peak validation metric (QWK, Val Acc, or QWK-Acc Composite).
+2. `best_acc_model.pth`: Independent peak validation accuracy multimodal checkpoint.
+3. `best_video_backbone.pth`: Peak weights of ConvNeXt-Nano video backbone + video aux head.
+4. `best_audio_backbone.pth`: Peak weights of STFT-MLP audio backbone + frontend + audio aux head.
+5. `last_model.pth`: Full resumption state (model, optimizer, scheduler, epoch, metrics).
 
 ### 4.2 Logging Files
 - `history.csv`: 36 columns recorded per epoch (runtime, learning rate, train metrics, val metrics, per-class AUC/AP, and flattened 4x4 confusion matrix).

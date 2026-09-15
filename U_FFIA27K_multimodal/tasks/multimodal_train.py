@@ -154,6 +154,7 @@ class MultimodalTrainer:
         os.makedirs(self.run_dir, exist_ok=True)
         self.logger = HistoryLogger(log_dir=self.run_dir)
         self.best_checkpoint_path = os.path.join(self.run_dir, 'best_model.pth')
+        self.best_acc_checkpoint_path = os.path.join(self.run_dir, 'best_acc_model.pth')
         self.best_video_path = os.path.join(self.run_dir, 'best_video_backbone.pth')
         self.best_audio_path = os.path.join(self.run_dir, 'best_audio_backbone.pth')
         self.last_checkpoint_path = os.path.join(self.run_dir, 'last_model.pth')
@@ -243,8 +244,10 @@ class MultimodalTrainer:
         best_loss = float('inf')
         best_epoch = 1
         best_val_statistics = None
+        best_acc_so_far = -1.0
+        best_acc_epoch = 1
 
-        if self.config.monitor in ('accuracy', 'qwk'):
+        if self.config.monitor in ('accuracy', 'qwk', 'qwk_acc', 'composite'):
             best_val_metric = -1.0
         else:
             best_val_metric = float('inf')
@@ -274,17 +277,38 @@ class MultimodalTrainer:
                 f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
             )
 
-            # Determine if this is the best checkpoint
+            # Independent Tracking & Saving for Peak Val Accuracy (best_acc_model.pth)
+            if val_acc > best_acc_so_far:
+                best_acc_so_far = val_acc
+                best_acc_epoch = epoch
+                _safe_torch_save(self.model.state_dict(), self.best_acc_checkpoint_path)
+                logger.info(f"[*] New PEAK Val Accuracy achieved: {val_acc:.4f} at Epoch {epoch:03d}! Saved to '{self.best_acc_checkpoint_path}'")
+
+            # Determine if this is the best checkpoint for primary monitor
             is_best = False
             if self.config.monitor == 'qwk':
                 score = val_qwk
-                if val_qwk > best_val_metric:
+                if val_qwk > best_val_metric + 1e-4:
+                    best_val_metric = val_qwk
+                    is_best = True
+                elif abs(val_qwk - best_val_metric) <= 1e-4 and val_acc > best_acc:
+                    # Tie-breaker: prefer higher Val Accuracy
                     best_val_metric = val_qwk
                     is_best = True
             elif self.config.monitor == 'accuracy':
                 score = val_acc
-                if val_acc > best_val_metric:
+                if val_acc > best_val_metric + 1e-4:
                     best_val_metric = val_acc
+                    is_best = True
+                elif abs(val_acc - best_val_metric) <= 1e-4 and val_qwk > best_qwk:
+                    # Tie-breaker: prefer higher QWK
+                    best_val_metric = val_acc
+                    is_best = True
+            elif self.config.monitor in ('qwk_acc', 'composite'):
+                # Balanced Harmonic Score: 0.5 * QWK + 0.5 * Val_Acc
+                score = 0.5 * val_qwk + 0.5 * val_acc
+                if score > best_val_metric:
+                    best_val_metric = score
                     is_best = True
             else:
                 score = -val_loss
