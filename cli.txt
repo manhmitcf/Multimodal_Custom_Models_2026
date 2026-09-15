@@ -1,15 +1,15 @@
 # ==============================================================================
 # 1. CẤU HÌNH TOKEN VÀ TẢI DATASET TRÊN MÁY CHỦ (MARIMO / GPU SERVER)
 # ==============================================================================
-# Đọc token từ file token.txt (local/server) hoặc dùng biến môi trường HF_TOKEN
+# Đọc token từ file token.txt (tự động loại bỏ BOM, khoảng trắng thừa)
 if [ -f "token.txt" ]; then
-    export HF_TOKEN=$(cat token.txt | tr -d '\r\n')
+    export HF_TOKEN=$(grep -o 'hf_[a-zA-Z0-9_]\+' token.txt | head -n 1)
 elif [ -f "../token.txt" ]; then
-    export HF_TOKEN=$(cat ../token.txt | tr -d '\r\n')
+    export HF_TOKEN=$(grep -o 'hf_[a-zA-Z0-9_]\+' ../token.txt | head -n 1)
 elif [ -f "/marimo/token.txt" ]; then
-    export HF_TOKEN=$(cat /marimo/token.txt | tr -d '\r\n')
+    export HF_TOKEN=$(grep -o 'hf_[a-zA-Z0-9_]\+' /marimo/token.txt | head -n 1)
 elif [ -f "/marimo/Capstone_2026_Fish_Feeding_Intensity/token.txt" ]; then
-    export HF_TOKEN=$(cat /marimo/Capstone_2026_Fish_Feeding_Intensity/token.txt | tr -d '\r\n')
+    export HF_TOKEN=$(grep -o 'hf_[a-zA-Z0-9_]\+' /marimo/Capstone_2026_Fish_Feeding_Intensity/token.txt | head -n 1)
 fi
 
 if [ -z "$HF_TOKEN" ]; then
@@ -17,7 +17,9 @@ if [ -z "$HF_TOKEN" ]; then
 fi
 
 git config --global credential.helper store
-huggingface-cli login --token "$HF_TOKEN" || hf auth login --token "$HF_TOKEN" || true
+if [ -n "$HF_TOKEN" ]; then
+    hf auth login --token "$HF_TOKEN" --add-to-git-credential || huggingface-cli login --token "$HF_TOKEN" || true
+fi
 sudo apt update && sudo apt install git-lfs -y
 git lfs install
 git config --global lfs.concurrenttransfers 64

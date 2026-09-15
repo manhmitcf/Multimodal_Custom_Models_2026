@@ -270,13 +270,33 @@ def discover_hf_token() -> Optional[str]:
     """Find Hugging Face token across environment variables and setup scripts."""
     token = os.environ.get("HF_TOKEN")
     if token:
-        return token.strip()
+        token = token.strip().lstrip('\ufeff')
+        if token:
+            return token
+
+    # Search for token in dedicated local token.txt files (gitignored)
+    direct_token_files = [
+        Path("token.txt"),
+        Path("../token.txt"),
+        Path("/marimo/token.txt"),
+        Path("/marimo/Capstone_2026_Fish_Feeding_Intensity/token.txt"),
+        Path(__file__).resolve().parent.parent / "token.txt",
+    ]
+    for dtf in direct_token_files:
+        if dtf.is_file():
+            try:
+                content = dtf.read_text(encoding="utf-8-sig").strip().lstrip('\ufeff')
+                match = re.search(r'(hf_[A-Za-z0-9_]+)', content)
+                if match:
+                    return match.group(1).strip()
+            except Exception:
+                pass
 
     try:
         from huggingface_hub import get_token
         hub_token = get_token()
         if hub_token:
-            return hub_token.strip()
+            return hub_token.strip().lstrip('\ufeff')
     except Exception:
         pass
 
@@ -292,8 +312,8 @@ def discover_hf_token() -> Optional[str]:
     for tf in token_files:
         if tf.is_file():
             try:
-                content = tf.read_text(encoding="utf-8")
-                match = re.search(r'HF_TOKEN\s*=\s*["\'](hf_[A-Za-z0-9]+)["\']', content)
+                content = tf.read_text(encoding="utf-8-sig")
+                match = re.search(r'HF_TOKEN\s*=\s*["\'](hf_[A-Za-z0-9_]+)["\']', content)
                 if match:
                     return match.group(1).strip()
             except Exception:
