@@ -36,11 +36,11 @@ class ImageToPIL:
 
 class ConsistentVideoTransform:
     """
-    Temporally Consistent Video Transform Pipeline (Option 3: Synchronized Flip, No Rotation).
+    Temporally Consistent Video Transform Pipeline (Clip-Level Synchronized Augmentation).
     Guarantees physical kinematic temporal coherence across all T frames in a video clip:
       - Random Horizontal Flip: Decided once per clip, applied identically to all T frames.
-      - Color Jitter (Brightness/Contrast): Factors sampled once per clip, applied identically to all T frames.
-      - Rotation: Removed to preserve flow vector field and avoid angular boundary artifacts.
+      - Random Rotation: Angle sampled once per clip [-15.0, 15.0], applied identically to all T frames.
+      - Color Jitter (Brightness/Contrast): Factors sampled once per clip [0.85, 1.15], applied identically to all T frames.
       - Bilinear Resize: Standardized HxW.
       - ImageNet Normalization.
 
@@ -83,9 +83,10 @@ class ConsistentVideoTransform:
             is_single_frame = True
             frame_list = [frames]
 
-        # Sample augmentation parameters ONCE per video clip for temporal coherence
+        # Sample augmentation parameters ONCE per video clip (temporal synchronization)
         if self.is_train:
             do_flip = (random.random() < 0.5)
+            rot_angle = random.uniform(-15.0, 15.0)
             brightness_factor = random.uniform(0.85, 1.15)
             contrast_factor = random.uniform(0.85, 1.15)
 
@@ -102,6 +103,11 @@ class ConsistentVideoTransform:
                 pil_img = TF.adjust_contrast(pil_img, contrast_factor)
                 if do_flip:
                     pil_img = TF.hflip(pil_img)
+                pil_img = TF.rotate(
+                    pil_img,
+                    rot_angle,
+                    interpolation=InterpolationMode.BILINEAR
+                )
 
             t_img = TF.to_tensor(pil_img)
             t_img = TF.normalize(t_img, self.mean, self.std)
