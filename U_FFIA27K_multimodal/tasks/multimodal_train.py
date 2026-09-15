@@ -244,7 +244,7 @@ class MultimodalTrainer:
         return epoch_loss, train_acc, train_mAP, train_mae
 
     def train(self) -> Dict[str, Any]:
-        monitor_mode = str(getattr(self.config, "monitor", "both")).strip().lower()
+        monitor_mode = str(getattr(self.config, "monitor", "val_acc")).strip().lower()
         is_dual = monitor_mode in ("both", "dual")
         logger.info(f"Starting training pipeline (Monitor mode: '{monitor_mode}', Dual-track: {is_dual})...")
         training_start_time = time.perf_counter()
@@ -264,7 +264,7 @@ class MultimodalTrainer:
         best_epoch_acc = 1
         best_val_stats_acc = None
 
-        if monitor_mode in ('accuracy', 'acc'):
+        if monitor_mode in ('accuracy', 'acc', 'val_acc', 'val_accuracy'):
             best_val_metric = -1.0
         elif monitor_mode == 'qwk':
             best_val_metric = -1.0
@@ -358,7 +358,7 @@ class MultimodalTrainer:
                     # Tie-breaker: prefer higher Val Accuracy
                     best_val_metric = val_qwk
                     is_best = True
-            elif monitor_mode in ('accuracy', 'acc'):
+            elif monitor_mode in ('accuracy', 'acc', 'val_acc', 'val_accuracy'):
                 score = val_acc
                 if val_acc > best_val_metric + 1e-4:
                     best_val_metric = val_acc
