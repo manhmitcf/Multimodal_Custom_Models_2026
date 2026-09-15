@@ -1,0 +1,6 @@
+﻿# ==============================================================================
+# HUGGING FACE AUTHENTICATION TOKEN TEMPLATE
+# ==============================================================================
+# Copy this file to 'token.txt' and paste your Hugging Face write token below:
+# Example:
+# hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
