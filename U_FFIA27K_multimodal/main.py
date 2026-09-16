@@ -69,7 +69,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         enable_b13 = True
 
     logger.info(
-        f"Audio STFT Tie-Breakers configuration: B12 (Weak vs Med)={enable_b12}, "
+        f"Video Kinematics Tie-Breakers configuration: B12 (Weak vs Med)={enable_b12}, "
         f"B23 (Med vs Strong)={enable_b23}, B13 (Weak vs Strong)={enable_b13}"
     )
 

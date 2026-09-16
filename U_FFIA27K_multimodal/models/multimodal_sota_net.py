@@ -14,7 +14,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
     """
     Multimodal Tournament Network (~4.09M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Audio Tie-Breakers:
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Video Tie-Breakers:
 
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
@@ -25,10 +25,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
       3. Pairwise Tournament Fusion (~0.22M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
-         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with 3 Configurable Audio STFT Tie-Breakers:
-             * B12: Weak vs Medium (with Audio STFT Tie-Breaker)
-             * B23: Medium vs Strong (with Audio STFT Tie-Breaker)
-             * B13: Weak vs Strong (with Audio STFT Tie-Breaker)
+         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with 3 Configurable Video Kinematics Tie-Breakers:
+             * B12: Weak vs Medium (with Video Kinematics Tie-Breaker)
+             * B23: Medium vs Strong (with Video Kinematics Tie-Breaker)
+             * B13: Weak vs Strong (with Video Kinematics Tie-Breaker)
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
     Total Parameters: ~4.09M (Strictly < 5.0M parameter constraint).
@@ -164,16 +164,19 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "p_feeding": fusion_outputs.get("p_feeding"),
             "logit_12": fusion_outputs.get("logit_12"),
             "logit_12_base": fusion_outputs.get("logit_12_base"),
+            "logit_12_v": fusion_outputs.get("logit_12_v"),
             "logit_12_a": fusion_outputs.get("logit_12_a"),
             "u_tie_12": fusion_outputs.get("u_tie_12"),
             "gamma_12": fusion_outputs.get("gamma_12"),
             "logit_23": fusion_outputs.get("logit_23"),
             "logit_23_base": fusion_outputs.get("logit_23_base"),
+            "logit_23_v": fusion_outputs.get("logit_23_v"),
             "logit_23_a": fusion_outputs.get("logit_23_a"),
             "u_tie_23": fusion_outputs.get("u_tie_23"),
             "gamma_23": fusion_outputs.get("gamma_23"),
             "logit_13": fusion_outputs.get("logit_13"),
             "logit_13_base": fusion_outputs.get("logit_13_base"),
+            "logit_13_v": fusion_outputs.get("logit_13_v"),
             "logit_13_a": fusion_outputs.get("logit_13_a"),
             "u_tie_13": fusion_outputs.get("u_tie_13"),
             "gamma_13": fusion_outputs.get("gamma_13"),
