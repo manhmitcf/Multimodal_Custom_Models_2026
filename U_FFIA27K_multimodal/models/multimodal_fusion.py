@@ -203,19 +203,16 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             "logit_12": logit_12,
             "logit_12_base": logit_12_base,
             "logit_12_v": logit_12_v,
-            "logit_12_a": logit_12_v,  # alias for backward compatibility
             "u_tie_12": u_tie_12,
             "gamma_12": self.gamma_12,
             "logit_23": logit_23,
             "logit_23_base": logit_23_base,
             "logit_23_v": logit_23_v,
-            "logit_23_a": logit_23_v,  # alias for backward compatibility
             "u_tie_23": u_tie_23,
             "gamma_23": self.gamma_23,
             "logit_13": logit_13,
             "logit_13_base": logit_13_base,
             "logit_13_v": logit_13_v,
-            "logit_13_a": logit_13_v,  # alias for backward compatibility
             "u_tie_13": u_tie_13,
             "gamma_13": self.gamma_13,
             # Legacy aliases for backward compatibility
