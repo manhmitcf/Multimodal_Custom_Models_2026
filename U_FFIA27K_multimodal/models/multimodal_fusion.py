@@ -215,9 +215,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             "logit_13_v": logit_13_v,
             "u_tie_13": u_tie_13,
             "gamma_13": self.gamma_13,
-            # Legacy aliases for backward compatibility
-            "u_tie": u_tie_23,
-            "gamma": self.gamma_23,
+            # Pairwise matchup winning probabilities & Borda voting scores
             "p_w_over_m": p_w_over_m,
             "p_m_over_s": p_m_over_s,
             "p_w_over_s": p_w_over_s,
