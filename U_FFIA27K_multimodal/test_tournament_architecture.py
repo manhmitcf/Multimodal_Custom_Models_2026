@@ -75,6 +75,7 @@ def test_tournament_forward_and_pairwise():
     assert (u_tie_12 > 0.0).all() and (u_tie_12 <= 1.0).all()
     assert (u_tie_23 > 0.0).all() and (u_tie_23 <= 1.0).all()
     assert (u_tie_13 > 0.0).all() and (u_tie_13 <= 1.0).all()
+    assert "logit_12_a" in out and "logit_23_a" in out and "logit_13_a" in out
 
     # 3. Check Tournament Voting scores
     v_voting = out["v_voting"]

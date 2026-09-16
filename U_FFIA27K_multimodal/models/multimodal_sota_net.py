@@ -134,14 +134,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
         prob_video = F.softmax(logits_video, dim=-1)
         prob_audio = F.softmax(logits_audio, dim=-1)
 
-        # Step 3: Gated Bilateral Boundary Fusion
+        # Step 3: Gated Multimodal Tournament Fusion
         fusion_outputs = self.fusion(
             f_video=f_video,
-            f_audio=f_audio,
-            tokens_video=tokens_video,
-            tokens_audio=tokens_audio,
-            f_burst_v=f_burst_v,
-            f_burst_a=f_burst_a
+            f_audio=f_audio
         )
 
         # Step 4: Assemble Comprehensive Output
@@ -177,9 +173,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "logit_13_a": fusion_outputs.get("logit_13_a"),
             "u_tie_13": fusion_outputs.get("u_tie_13"),
             "gamma_13": fusion_outputs.get("gamma_13"),
-            # Legacy aliases
-            "u_tie": fusion_outputs.get("u_tie"),
-            "gamma": fusion_outputs.get("gamma"),
+            # Tournament pairwise winning probabilities & Borda voting scores
             "p_w_over_m": fusion_outputs.get("p_w_over_m"),
             "p_m_over_s": fusion_outputs.get("p_m_over_s"),
             "p_w_over_s": fusion_outputs.get("p_w_over_s"),
