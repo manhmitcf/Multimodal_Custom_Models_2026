@@ -23,7 +23,12 @@
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
-    "embed_dim": 224
+    "embed_dim": 224,
+    "tie_breakers": {
+      "enable_b12": true,
+      "enable_b23": true,
+      "enable_b13": true
+    }
   },
   "video_features": {
     "image_size": 224,

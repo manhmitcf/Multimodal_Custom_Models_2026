@@ -53,18 +53,28 @@ def test_tournament_forward_and_pairwise():
     print(f"Level 1 Feeding Activity Probabilities: {p_feeding.tolist()}")
     assert (p_feeding >= 0.0).all() and (p_feeding <= 1.0).all(), "p_feeding out of [0, 1] range"
 
-    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13
+    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13 and Audio Tie-Breakers
     p_w_over_m = out["p_w_over_m"]
     p_m_over_s = out["p_m_over_s"]
     p_w_over_s = out["p_w_over_s"]
 
+    u_tie_12 = out["u_tie_12"]
+    u_tie_23 = out["u_tie_23"]
+    u_tie_13 = out["u_tie_13"]
+
     print(f"Pairwise B12 P(Weak > Medium):          {p_w_over_m.tolist()}")
     print(f"Pairwise B23 P(Medium > Strong):        {p_m_over_s.tolist()}")
     print(f"Pairwise B13 P(Weak > Strong) [Cross]:  {p_w_over_s.tolist()}")
+    print(f"Audio Tie-Breaker u_tie_12 (Indecision):{u_tie_12.tolist()}")
+    print(f"Audio Tie-Breaker u_tie_23 (Indecision):{u_tie_23.tolist()}")
+    print(f"Audio Tie-Breaker u_tie_13 (Indecision):{u_tie_13.tolist()}")
 
     assert (p_w_over_m >= 0.0).all() and (p_w_over_m <= 1.0).all()
     assert (p_m_over_s >= 0.0).all() and (p_m_over_s <= 1.0).all()
     assert (p_w_over_s >= 0.0).all() and (p_w_over_s <= 1.0).all()
+    assert (u_tie_12 > 0.0).all() and (u_tie_12 <= 1.0).all()
+    assert (u_tie_23 > 0.0).all() and (u_tie_23 <= 1.0).all()
+    assert (u_tie_13 > 0.0).all() and (u_tie_13 <= 1.0).all()
 
     # 3. Check Tournament Voting scores
     v_voting = out["v_voting"]
@@ -78,7 +88,7 @@ def test_tournament_forward_and_pairwise():
     prob_sums = probs.sum(dim=-1)
     assert torch.allclose(prob_sums, torch.ones_like(prob_sums), atol=1e-5), f"Probabilities do not sum to 1: {prob_sums}"
 
-    print("[PASSED] 2-level tournament hierarchy, pairwise cross boundaries, and Borda voting verified!")
+    print("[PASSED] 2-level tournament hierarchy with 3 Audio STFT Tie-Breakers verified!")
 
 
 def test_gradient_flow_tournament_loss():
@@ -149,9 +159,51 @@ def test_end_to_end_from_scratch():
     print(f"[PASSED] End-to-End Single Phase: All {len(list(model.parameters()))} param tensors updated simultaneously!")
 
 
+def test_tie_breakers_toggle_config():
+    print("\n" + "=" * 65)
+    print("TEST 5: CONFIGURABLE TIE-BREAKER TOGGLE (ABLATION VERIFICATION)")
+    print("=" * 65)
+
+    B = 2
+    v_input = torch.randn(B, 2, 3, 224, 224)
+    a_input = torch.randn(B, 512000)
+
+    # Case A: Only B23 enabled (legacy main_01 equivalence)
+    model_b23 = MultimodalBoundaryAwareNet(enable_b12=False, enable_b23=True, enable_b13=False)
+    assert model_b23.fusion.tournament_head.head_b12_a is None
+    assert model_b23.fusion.tournament_head.head_b23_a is not None
+    assert model_b23.fusion.tournament_head.head_b13_a is None
+    out_b23 = model_b23(v_input, a_input)
+    assert out_b23["probabilities"].shape == (B, 4)
+    p_params_b23 = sum(p.numel() for p in model_b23.parameters())
+    print(f"  Case A (Only B23 enabled): {p_params_b23:,} params - verified clean!")
+
+    # Case B: All tie-breakers disabled (pure joint tournament ablation)
+    model_none = MultimodalBoundaryAwareNet(enable_b12=False, enable_b23=False, enable_b13=False)
+    assert model_none.fusion.tournament_head.head_b12_a is None
+    assert model_none.fusion.tournament_head.head_b23_a is None
+    assert model_none.fusion.tournament_head.head_b13_a is None
+    out_none = model_none(v_input, a_input)
+    assert out_none["probabilities"].shape == (B, 4)
+    p_params_none = sum(p.numel() for p in model_none.parameters())
+    print(f"  Case B (All tie-breakers disabled): {p_params_none:,} params - verified clean!")
+
+    # Case C: All 3 tie-breakers enabled (default)
+    model_all = MultimodalBoundaryAwareNet(enable_b12=True, enable_b23=True, enable_b13=True)
+    assert model_all.fusion.tournament_head.head_b12_a is not None
+    assert model_all.fusion.tournament_head.head_b23_a is not None
+    assert model_all.fusion.tournament_head.head_b13_a is not None
+    out_all = model_all(v_input, a_input)
+    assert out_all["probabilities"].shape == (B, 4)
+    p_params_all = sum(p.numel() for p in model_all.parameters())
+    print(f"  Case C (All 3 tie-breakers enabled): {p_params_all:,} params - verified clean!")
+
+    print("[PASSED] Configurable tie-breaker toggle verified across all ablation states!")
+
+
 def test_consistent_video_transform():
     print("\n" + "=" * 65)
-    print("TEST 5: CLIP-SYNCHRONIZED VIDEO TRANSFORM & RANDOM ERASING")
+    print("TEST 6: CLIP-SYNCHRONIZED VIDEO TRANSFORM & RANDOM ERASING")
     print("=" * 65)
 
     import numpy as np
@@ -193,6 +245,7 @@ if __name__ == "__main__":
     test_tournament_forward_and_pairwise()
     test_gradient_flow_tournament_loss()
     test_end_to_end_from_scratch()
+    test_tie_breakers_toggle_config()
     test_consistent_video_transform()
     print("\n" + "=" * 65)
     print("ALL TOURNAMENT STFT-MLP TESTS PASSED SUCCESSFULLY! (100% READY)")

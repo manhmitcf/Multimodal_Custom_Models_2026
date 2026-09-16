@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/main_01 | Multimodal SOTA Tournament Network (~4.04M Params)
+# Branch: main_architecture/triple_audio_tie_breakers | Multimodal SOTA Tournament Network (~4.09M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-                     MULTIMODAL SOTA TOURNAMENT NETWORK (~4.04M PARAMS)
+             MULTIMODAL SOTA TOURNAMENT NETWORK (~4.09M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -25,9 +25,9 @@ This document defines the invariant architectural constraints, operational guide
              │                                         Shape: (B, 2049)
              ▼                                                    │
    [ConvNeXt-Nano Video Backbone]                                 ▼
-   - 7-Channel Stem: Conv2d(7->40, k=4, s=4)           [Audio MLP Backbone]
-   - 4 ConvNeXt Stages (Channels: 40, 80, 160, 320)    - FC1: Linear(2049 -> 224) + GELU + LN
-   - Temporal Attention Pooling (T=2 -> 1)             - FC2: Linear(224 -> 224) + GELU + LN
+   - 7-Channel Stem: Conv2d(7->48, k=4, s=4)           [Audio MLP Backbone]
+   - 4 ConvNeXt Stages: [48, 96, 192, 384]             - FC1: Linear(2049 -> 512) + GELU + LN + Drop
+   - Temporal Dynamics (Spatial + Motion + Burst)      - FC2: Linear(512 -> 224) + LN
    Shape: f_video (B, 224) [~2.701M params]            Shape: f_audio (B, 224) [~1.166M params]
              │                                                    │
              └─────────────────────────┬──────────────────────────┘
@@ -36,12 +36,13 @@ This document defines the invariant architectural constraints, operational guide
                      - Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A])
                      - Fused Representation: f_fused = g * f_V + (1-g) * f_A (dim=224)
                      - Level 1: Feeding Activity Gate Head (None vs Active Feeding)
-                     - Level 2: 3 Specialized Pairwise Subspace Expert Heads:
-                         * B12: Weak vs Medium
-                         * B23: Medium vs Strong (with Audio STFT Tie-Breaker)
-                         * B13: Weak vs Strong (Cross Boundary)
+                     - Level 2: 3 Specialized Pairwise Subspace Expert Heads
+                       with 3 Configurable Audio STFT Tie-Breakers:
+                         * B12: Weak vs Medium (+ Audio STFT Tie-Breaker)
+                         * B23: Medium vs Strong (+ Audio STFT Tie-Breaker)
+                         * B13: Weak vs Strong (+ Audio STFT Tie-Breaker)
                      - Tournament Borda Voting -> Final Calibrated Probabilities
-                     [~0.168M params | FLOPs: 1.7084 GFLOPs]
+                     [~0.219M params | FLOPs: 1.7085 GFLOPs]
                                        │
                                        ▼
                      [4 Feeding Intensity Predictions]
@@ -51,11 +52,11 @@ This document defines the invariant architectural constraints, operational guide
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
-- **Tournament Decision Head (Pairwise + Borda)**: `168,359` (~`0.168M`)
+- **Tournament Decision Head (Pairwise 3 Tie-Breakers + Borda)**: `219,435` (~`0.219M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800`
-- **Total Trainable Parameters**: `4,041,553` (~`4.042M`)
-- **Remaining Headroom**: `958,447` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `1.7084 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+- **Total Trainable Parameters**: `4,092,629` (~`4.093M`)
+- **Remaining Headroom**: `907,371` parameters below the 5.0M budget limit.
+- **Inference Complexity**: `1.7085 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
 
@@ -132,7 +133,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_main_architecture_main_01`.
+- Remote dataset repository: `manhmitcf/Results_main_architecture_triple_audio_tie_breakers`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
@@ -142,7 +143,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 
 ## 5. Mandatory Verification Checklist
 
-Before proposing or committing any code changes on branch `main_architecture/main_01`, agents **MUST** execute and pass:
+Before proposing or committing any code changes on branch `main_architecture/triple_audio_tie_breakers`, agents **MUST** execute and pass:
 
 ```bash
 cd U_FFIA27K_multimodal
@@ -150,8 +151,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000.
-- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs.
-- [x] **Gradient Propagation**: 100% of trainable parameters (123/123 tensors) receive active gradients.
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,092,629).
+- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7085 GFLOPs).
+- [x] **Gradient Propagation**: 100% of trainable parameters (137/137 tensors) receive active gradients.
+- [x] **Configurable Tie-Breakers**: Full support for toggling B12, B23, B13 Audio Tie-Breakers via `train_config.json`.
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
 - [x] **Clean Exit**: Dry-run completes with exit code 0 on both CPU and CUDA.

@@ -49,12 +49,21 @@ class AudioFeaturesConfig(BaseModel):
     noise_std: float = Field(default=0.02, description="Standard deviation of Gaussian spectral jitter noise.")
 
 
+class TieBreakersConfig(BaseModel):
+    """
+    Configuration for Audio STFT Tie-Breaker heads on Level 2 pairwise matchups.
+    """
+    enable_b12: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Weak vs Medium (B12).")
+    enable_b23: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Medium vs Strong (B23).")
+    enable_b13: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Weak vs Strong (B13).")
+
+
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model (~4.04M parameters).
+    Configuration for Multimodal Tournament Model (~4.09M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Pairwise Boundary Tournament Decision Head ~0.17M
+    Fusion: Pairwise Boundary Tournament Decision Head with 3 Audio Tie-Breakers ~0.22M
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
@@ -62,6 +71,10 @@ class ModelConfig(BaseModel):
     )
     embed_dim: int = Field(default=224, description="Common multimodal embedding dimension.")
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
+    tie_breakers: TieBreakersConfig = Field(
+        default_factory=TieBreakersConfig,
+        description="Pairwise Audio STFT Tie-Breaker configurations."
+    )
 
 
 class SplitterConfig(BaseModel):

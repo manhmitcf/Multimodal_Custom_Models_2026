@@ -58,6 +58,21 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     in_chans = getattr(config, "in_chans", getattr(config.video_features, "num_channels", 7))
 
+    tb_cfg = getattr(config.model, "tie_breakers", None)
+    if tb_cfg is not None:
+        enable_b12 = getattr(tb_cfg, "enable_b12", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b12", True)
+        enable_b23 = getattr(tb_cfg, "enable_b23", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b23", True)
+        enable_b13 = getattr(tb_cfg, "enable_b13", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b13", True)
+    else:
+        enable_b12 = True
+        enable_b23 = True
+        enable_b13 = True
+
+    logger.info(
+        f"Audio STFT Tie-Breakers configuration: B12 (Weak vs Med)={enable_b12}, "
+        f"B23 (Med vs Strong)={enable_b23}, B13 (Weak vs Strong)={enable_b13}"
+    )
+
     return model_cls(
         classes_num=config.model.classes_num,
         embed_dim=config.model.embed_dim,
@@ -67,6 +82,9 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         in_chans=in_chans,
         use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
         seed=active_seed,
+        enable_b12=enable_b12,
+        enable_b23=enable_b23,
+        enable_b13=enable_b13,
     )
 
 
