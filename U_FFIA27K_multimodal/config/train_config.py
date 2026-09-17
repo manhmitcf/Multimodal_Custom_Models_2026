@@ -31,7 +31,7 @@ class VideoFeaturesConfig(BaseModel):
 
 class AudioFeaturesConfig(BaseModel):
     """
-    Audio Log-Mel Spectrogram extraction parameters (EfficientAT compatible).
+    High-Resolution TKEO-STFT Audio Frontend parameters (256 kHz, 2049 linear bins).
     """
     sample_rate: int = Field(default=256000, description="Audio sampling rate in Hz.")
     window_size: int = Field(default=4096, description="STFT window size in samples.")
@@ -40,7 +40,6 @@ class AudioFeaturesConfig(BaseModel):
     fmin: int = Field(default=0, description="Minimum frequency for STFT in Hz.")
     fmax: int = Field(default=128000, description="Maximum frequency for STFT in Hz.")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
-    use_frequency_attention: bool = Field(default=False, description="Enable Learnable Frequency Attention across Mel-bins.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
     beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
     use_spectral_aug: bool = Field(default=True, description="Enable 1D Spectral Augmentation (Cutout & Jitter) for STFT.")
@@ -51,19 +50,34 @@ class AudioFeaturesConfig(BaseModel):
 
 class TieBreakersConfig(BaseModel):
     """
-    Configuration for Video Kinematics Tie-Breaker heads on Level 2 pairwise matchups.
+    Configuration for Audio STFT Tie-Breaker heads on 6 pairwise matchups.
     """
-    enable_b12: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for Weak vs Medium (B12).")
-    enable_b23: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for Medium vs Strong (B23).")
-    enable_b13: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for Weak vs Strong (B13).")
+    enable_b01: bool = Field(default=False, description="Enable Audio Tie-Breaker for None vs Strong (B01).")
+    enable_b02: bool = Field(default=False, description="Enable Audio Tie-Breaker for None vs Medium (B02).")
+    enable_b03: bool = Field(default=True, description="Enable Audio Tie-Breaker for None vs Weak (B03).")
+    enable_b12: bool = Field(default=True, description="Enable Audio Tie-Breaker for Strong vs Medium (B12).")
+    enable_b23: bool = Field(default=True, description="Enable Audio Tie-Breaker for Medium vs Weak (B23).")
+    enable_b13: bool = Field(default=True, description="Enable Audio Tie-Breaker for Strong vs Weak (B13).")
+
+
+class PairwiseWeightsConfig(BaseModel):
+    """
+    Boundary-weighted loss coefficients for 6 pairwise matchups (Sum = 1.0).
+    """
+    w_03: float = Field(default=0.25, ge=0.0, description="Weight for None vs Weak boundary.")
+    w_23: float = Field(default=0.25, ge=0.0, description="Weight for Medium vs Weak boundary.")
+    w_12: float = Field(default=0.25, ge=0.0, description="Weight for Strong vs Medium boundary.")
+    w_02: float = Field(default=0.10, ge=0.0, description="Weight for None vs Medium 2-step jump.")
+    w_13: float = Field(default=0.10, ge=0.0, description="Weight for Strong vs Weak 2-step jump.")
+    w_01: float = Field(default=0.05, ge=0.0, description="Weight for None vs Strong 3-step jump.")
 
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model (~4.09M parameters).
+    Configuration for Multimodal Tournament Model (~4.18M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Pairwise Boundary Tournament Decision Head with 3 Video Kinematics Tie-Breakers ~0.22M
+    Fusion: Flat 4-Class Round-Robin Tournament Decision Head with 6 Audio STFT Tie-Breakers ~0.31M
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
@@ -73,7 +87,7 @@ class ModelConfig(BaseModel):
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
     tie_breakers: TieBreakersConfig = Field(
         default_factory=TieBreakersConfig,
-        description="Pairwise Video Kinematics Tie-Breaker configurations."
+        description="Pairwise Audio STFT Tie-Breaker configurations."
     )
 
 
@@ -149,10 +163,10 @@ class TrainConfig(BaseModel):
     prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
     save_best_only: bool = Field(default=True, description="Save only the best checkpoint.")
     loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament' or 'clip_ce'.")
-    weight_act: float = Field(default=0.5, ge=0.0, description="Weight for Level-1 Activity Gate BCE loss.")
-    weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
+    weight_pairwise: float = Field(default=1.0, ge=0.0, description="Weight for Flat 4-Class Pairwise Tournament loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
+    pairwise_weights: PairwiseWeightsConfig = Field(default_factory=PairwiseWeightsConfig, description="Boundary weights across 6 matchups.")
     model: ModelConfig = Field(default_factory=ModelConfig, description="Model architecture parameters.")
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
     video_features: VideoFeaturesConfig = Field(default_factory=VideoFeaturesConfig, description="Video preprocessing configuration.")

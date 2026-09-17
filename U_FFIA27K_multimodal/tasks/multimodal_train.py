@@ -88,13 +88,15 @@ class MultimodalTrainer:
         # Setup Loss
         loss_type = getattr(self.config, "loss_type", "pairwise_tournament")
         if loss_type == "pairwise_tournament":
+            pw_weights = getattr(self.config, "pairwise_weights", {})
+            pw_dict = pw_weights.model_dump() if hasattr(pw_weights, "model_dump") else (pw_weights.dict() if hasattr(pw_weights, "dict") else (pw_weights if isinstance(pw_weights, dict) else {}))
             self.loss_fn = PairwiseTournamentLoss(
-                weight_act=getattr(self.config, "weight_act", 0.5),
-                weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
+                weight_pairwise=getattr(self.config, "weight_pairwise", 1.0),
                 weight_ce=getattr(self.config, "weight_ce", 1.0),
                 aux_loss_weight=getattr(self.config, "aux_loss_weight", 0.3),
+                **pw_dict
             ).to(self.device)
-            logger.info("Configured PairwiseTournamentLoss (Activity Gate + 3 Pairwise Cross Boundaries B12, B23, B13).")
+            logger.info("Configured Flat 4-Class PairwiseTournamentLoss (6 Boundary Expert Matchups).")
         else:
             self.loss_fn = ClipCELoss()
             logger.info("Configured standard ClipCELoss.")

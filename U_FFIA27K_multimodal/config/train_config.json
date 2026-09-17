@@ -16,8 +16,7 @@
   "ckpt_dir": "checkpoint",
   "save_best_only": true,
   "loss_type": "pairwise_tournament",
-  "weight_act": 0.5,
-  "weight_pairwise": 0.5,
+  "weight_pairwise": 1.0,
   "weight_ce": 1.0,
   "aux_loss_weight": 0.3,
   "model": {
@@ -25,6 +24,9 @@
     "classes_num": 4,
     "embed_dim": 224,
     "tie_breakers": {
+      "enable_b01": false,
+      "enable_b02": false,
+      "enable_b03": true,
       "enable_b12": true,
       "enable_b23": true,
       "enable_b13": true
@@ -58,5 +60,13 @@
     "num_folds": 5,
     "fold_index": null,
     "cv_val_ratio": 0.2
+  },
+  "pairwise_weights": {
+    "w_03": 0.25,
+    "w_23": 0.25,
+    "w_12": 0.25,
+    "w_02": 0.1,
+    "w_13": 0.1,
+    "w_01": 0.05
   }
 }

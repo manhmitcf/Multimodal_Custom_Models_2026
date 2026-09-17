@@ -22,16 +22,13 @@ class MultimodalBoundaryAwareNet(nn.Module):
       2. Acoustic Time-Frequency Stream (~1.17M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion (~0.22M params):
+      3. Pairwise Round-Robin Tournament Fusion (~0.31M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
-         - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
-         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with 3 Configurable Video Kinematics Tie-Breakers:
-             * B12: Weak vs Medium (with Video Kinematics Tie-Breaker)
-             * B23: Medium vs Strong (with Video Kinematics Tie-Breaker)
-             * B13: Weak vs Strong (with Video Kinematics Tie-Breaker)
+         - 6 Pairwise Subspace Expert Heads (B01, B02, B03, B12, B23, B13)
+         - 6 Configurable Audio STFT Tie-Breakers.
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: ~4.09M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~4.18M (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -43,8 +40,9 @@ class MultimodalBoundaryAwareNet(nn.Module):
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
-        use_frequency_attention: bool = False,
-        seed: Optional[int] = None,
+        enable_b01: bool = False,
+        enable_b02: bool = False,
+        enable_b03: bool = True,
         enable_b12: bool = True,
         enable_b23: bool = True,
         enable_b13: bool = True,
@@ -60,10 +58,16 @@ class MultimodalBoundaryAwareNet(nn.Module):
 
         # Extract tie_breaker flags from tie_breakers dict or explicit args
         if tie_breakers is not None:
+            self.enable_b01 = bool(tie_breakers.get("enable_b01", enable_b01))
+            self.enable_b02 = bool(tie_breakers.get("enable_b02", enable_b02))
+            self.enable_b03 = bool(tie_breakers.get("enable_b03", enable_b03))
             self.enable_b12 = bool(tie_breakers.get("enable_b12", enable_b12))
             self.enable_b23 = bool(tie_breakers.get("enable_b23", enable_b23))
             self.enable_b13 = bool(tie_breakers.get("enable_b13", enable_b13))
         else:
+            self.enable_b01 = bool(enable_b01)
+            self.enable_b02 = bool(enable_b02)
+            self.enable_b03 = bool(enable_b03)
             self.enable_b12 = bool(enable_b12)
             self.enable_b23 = bool(enable_b23)
             self.enable_b13 = bool(enable_b13)
@@ -88,6 +92,9 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,
+            enable_b01=self.enable_b01,
+            enable_b02=self.enable_b02,
+            enable_b03=self.enable_b03,
             enable_b12=self.enable_b12,
             enable_b23=self.enable_b23,
             enable_b13=self.enable_b13,
@@ -155,29 +162,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "expected_intensity": fusion_outputs.get("expected_intensity"),
             "gate": fusion_outputs.get("gate"),
             "f_fused": fusion_outputs.get("f_fused"),
-            # Tournament outputs
-            "logit_act": fusion_outputs.get("logit_act"),
-            "p_feeding": fusion_outputs.get("p_feeding"),
-            "logit_12": fusion_outputs.get("logit_12"),
-            "logit_12_base": fusion_outputs.get("logit_12_base"),
-            "logit_12_v": fusion_outputs.get("logit_12_v"),
-            "u_tie_12": fusion_outputs.get("u_tie_12"),
-            "gamma_12": fusion_outputs.get("gamma_12"),
-            "logit_23": fusion_outputs.get("logit_23"),
-            "logit_23_base": fusion_outputs.get("logit_23_base"),
-            "logit_23_v": fusion_outputs.get("logit_23_v"),
-            "u_tie_23": fusion_outputs.get("u_tie_23"),
-            "gamma_23": fusion_outputs.get("gamma_23"),
-            "logit_13": fusion_outputs.get("logit_13"),
-            "logit_13_base": fusion_outputs.get("logit_13_base"),
-            "logit_13_v": fusion_outputs.get("logit_13_v"),
-            "u_tie_13": fusion_outputs.get("u_tie_13"),
-            "gamma_13": fusion_outputs.get("gamma_13"),
-            # Tournament pairwise winning probabilities & Borda voting scores
-            "p_w_over_m": fusion_outputs.get("p_w_over_m"),
-            "p_m_over_s": fusion_outputs.get("p_m_over_s"),
-            "p_w_over_s": fusion_outputs.get("p_w_over_s"),
-            "v_voting": fusion_outputs.get("v_voting"),
             # Feature diagnostics
             "kinematics_summary": kinematics_summary,
             "f_spatial": f_spatial,
@@ -187,6 +171,11 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "f_rhythm": f_rhythm,
             "f_burst_a": f_burst_a,
         }
+        # Forward all 6-pair tournament outputs cleanly
+        for k, v in fusion_outputs.items():
+            if k not in outputs:
+                outputs[k] = v
+
         return outputs
 
 

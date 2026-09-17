@@ -54,23 +54,46 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
     from features.audio_frontend import AudioFrontend
     frontend = AudioFrontend(config.audio_features)
 
-    active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
-
     in_chans = getattr(config, "in_chans", getattr(config.video_features, "num_channels", 7))
 
     tb_cfg = getattr(config.model, "tie_breakers", None)
     if tb_cfg is not None:
-        enable_b12 = getattr(tb_cfg, "enable_b12", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b12", True)
-        enable_b23 = getattr(tb_cfg, "enable_b23", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b23", True)
-        enable_b13 = getattr(tb_cfg, "enable_b13", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b13", True)
+        if isinstance(tb_cfg, dict):
+            tb_dict = {
+                "enable_b01": bool(tb_cfg.get("enable_b01", False)),
+                "enable_b02": bool(tb_cfg.get("enable_b02", False)),
+                "enable_b03": bool(tb_cfg.get("enable_b03", True)),
+                "enable_b12": bool(tb_cfg.get("enable_b12", True)),
+                "enable_b23": bool(tb_cfg.get("enable_b23", True)),
+                "enable_b13": bool(tb_cfg.get("enable_b13", True)),
+            }
+        else:
+            tb_dict = {
+                "enable_b01": bool(getattr(tb_cfg, "enable_b01", False)),
+                "enable_b02": bool(getattr(tb_cfg, "enable_b02", False)),
+                "enable_b03": bool(getattr(tb_cfg, "enable_b03", True)),
+                "enable_b12": bool(getattr(tb_cfg, "enable_b12", True)),
+                "enable_b23": bool(getattr(tb_cfg, "enable_b23", True)),
+                "enable_b13": bool(getattr(tb_cfg, "enable_b13", True)),
+            }
     else:
-        enable_b12 = True
-        enable_b23 = True
-        enable_b13 = True
+        tb_dict = {
+            "enable_b01": False,
+            "enable_b02": False,
+            "enable_b03": True,
+            "enable_b12": True,
+            "enable_b23": True,
+            "enable_b13": True,
+        }
 
     logger.info(
-        f"Video Kinematics Tie-Breakers configuration: B12 (Weak vs Med)={enable_b12}, "
-        f"B23 (Med vs Strong)={enable_b23}, B13 (Weak vs Strong)={enable_b13}"
+        f"Audio STFT Tie-Breakers configuration: "
+        f"B01(None vs Strong)={tb_dict['enable_b01']}, "
+        f"B02(None vs Med)={tb_dict['enable_b02']}, "
+        f"B03(None vs Weak)={tb_dict['enable_b03']}, "
+        f"B12(Strong vs Med)={tb_dict['enable_b12']}, "
+        f"B23(Med vs Weak)={tb_dict['enable_b23']}, "
+        f"B13(Strong vs Weak)={tb_dict['enable_b13']}"
     )
 
     return model_cls(
@@ -80,11 +103,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=in_chans,
-        use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
-        seed=active_seed,
-        enable_b12=enable_b12,
-        enable_b23=enable_b23,
-        enable_b13=enable_b13,
+        tie_breakers=tb_dict,
     )
 
 
@@ -146,11 +165,13 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
         loss_type = getattr(config, "loss_type", "pairwise_tournament")
         from utils.losses import PairwiseTournamentLoss, ClipCELoss
         if loss_type == "pairwise_tournament":
+            pw_weights = getattr(config, "pairwise_weights", {})
+            pw_dict = pw_weights.model_dump() if hasattr(pw_weights, "model_dump") else (pw_weights.dict() if hasattr(pw_weights, "dict") else (pw_weights if isinstance(pw_weights, dict) else {}))
             loss_fn = PairwiseTournamentLoss(
-                weight_act=getattr(config, "weight_act", 0.5),
-                weight_pairwise=getattr(config, "weight_pairwise", 0.5),
+                weight_pairwise=getattr(config, "weight_pairwise", 1.0),
                 weight_ce=getattr(config, "weight_ce", 1.0),
-                aux_loss_weight=getattr(config, "aux_loss_weight", 0.3)
+                aux_loss_weight=getattr(config, "aux_loss_weight", 0.3),
+                **pw_dict
             ).to(device)
             loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
         else:
