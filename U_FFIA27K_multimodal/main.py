@@ -65,8 +65,6 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=in_chans,
-        use_frequency_attention=getattr(config.audio_features, "use_frequency_attention", False),
-        seed=active_seed,
     )
 
 
