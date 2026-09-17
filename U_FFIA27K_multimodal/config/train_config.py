@@ -31,7 +31,7 @@ class VideoFeaturesConfig(BaseModel):
 
 class AudioFeaturesConfig(BaseModel):
     """
-    Audio Log-Mel Spectrogram extraction parameters (EfficientAT compatible).
+    High-Resolution TKEO-STFT Audio Frontend parameters (256 kHz, 2049 linear bins).
     """
     sample_rate: int = Field(default=256000, description="Audio sampling rate in Hz.")
     window_size: int = Field(default=4096, description="STFT window size in samples.")
@@ -40,7 +40,6 @@ class AudioFeaturesConfig(BaseModel):
     fmin: int = Field(default=0, description="Minimum frequency for STFT in Hz.")
     fmax: int = Field(default=128000, description="Maximum frequency for STFT in Hz.")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
-    use_frequency_attention: bool = Field(default=False, description="Enable Learnable Frequency Attention across Mel-bins.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
     beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
     use_spectral_aug: bool = Field(default=True, description="Enable 1D Spectral Augmentation (Cutout & Jitter) for STFT.")

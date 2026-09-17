@@ -43,8 +43,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
-        use_frequency_attention: bool = False,
-        seed: Optional[int] = None,
         enable_b12: bool = True,
         enable_b23: bool = True,
         enable_b13: bool = True,
@@ -106,7 +104,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         """
         Args:
             video_input: Raw RGB frames [B, T, 3, H, W] or precomputed 7-ch tensor [B, T, 7, H, W]
-            audio_input: Raw audio waveforms [B, num_samples] or precomputed Log-Mel Spectrogram [B, 1, Ta, 128]
+            audio_input: Raw audio waveforms [B, num_samples] or precomputed STFT spectral vector [B, 2049]
 
         Returns:
             Dictionary containing clipwise_output (logits), probabilities, uncertainties,
