@@ -26,10 +26,10 @@
     "tie_breakers": {
       "enable_b01": false,
       "enable_b02": false,
-      "enable_b03": true,
-      "enable_b12": true,
-      "enable_b23": true,
-      "enable_b13": true
+      "enable_b03": false,
+      "enable_b12": false,
+      "enable_b23": false,
+      "enable_b13": false
     }
   },
   "video_features": {

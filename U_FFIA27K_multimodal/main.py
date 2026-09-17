@@ -62,28 +62,28 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
             tb_dict = {
                 "enable_b01": bool(tb_cfg.get("enable_b01", False)),
                 "enable_b02": bool(tb_cfg.get("enable_b02", False)),
-                "enable_b03": bool(tb_cfg.get("enable_b03", True)),
-                "enable_b12": bool(tb_cfg.get("enable_b12", True)),
-                "enable_b23": bool(tb_cfg.get("enable_b23", True)),
-                "enable_b13": bool(tb_cfg.get("enable_b13", True)),
+                "enable_b03": bool(tb_cfg.get("enable_b03", False)),
+                "enable_b12": bool(tb_cfg.get("enable_b12", False)),
+                "enable_b23": bool(tb_cfg.get("enable_b23", False)),
+                "enable_b13": bool(tb_cfg.get("enable_b13", False)),
             }
         else:
             tb_dict = {
                 "enable_b01": bool(getattr(tb_cfg, "enable_b01", False)),
                 "enable_b02": bool(getattr(tb_cfg, "enable_b02", False)),
-                "enable_b03": bool(getattr(tb_cfg, "enable_b03", True)),
-                "enable_b12": bool(getattr(tb_cfg, "enable_b12", True)),
-                "enable_b23": bool(getattr(tb_cfg, "enable_b23", True)),
-                "enable_b13": bool(getattr(tb_cfg, "enable_b13", True)),
+                "enable_b03": bool(getattr(tb_cfg, "enable_b03", False)),
+                "enable_b12": bool(getattr(tb_cfg, "enable_b12", False)),
+                "enable_b23": bool(getattr(tb_cfg, "enable_b23", False)),
+                "enable_b13": bool(getattr(tb_cfg, "enable_b13", False)),
             }
     else:
         tb_dict = {
             "enable_b01": False,
             "enable_b02": False,
-            "enable_b03": True,
-            "enable_b12": True,
-            "enable_b23": True,
-            "enable_b13": True,
+            "enable_b03": False,
+            "enable_b12": False,
+            "enable_b23": False,
+            "enable_b13": False,
         }
 
     logger.info(

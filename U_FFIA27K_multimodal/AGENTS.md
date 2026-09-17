@@ -55,11 +55,12 @@ This document defines the invariant architectural constraints, operational guide
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
-- **Tournament Decision Head (6 Pairwise Heads + 6 Audio Tie-Breakers)**: `307,119` (~`0.307M`)
+- **Tournament Decision Head (6 Pairwise Base Heads, 0 Tie-Breakers Default)**: `204,967` (~`0.205M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800`
-- **Total Trainable Parameters**: `4,180,313` (~`4.180M`)
-- **Remaining Headroom**: `819,687` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `1.7087 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+- **Total Trainable Parameters (Default 0 Tie-Breakers)**: `4,078,161` (~`4.078M`) [130 parameter tensors]
+- **Remaining Headroom**: `921,839` parameters below the 5.0M budget limit.
+- **Inference Complexity**: `1.7085 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+*(Note: With all 6 Audio STFT Tie-Breakers enabled, parameters scale up to 4,231,389 (~4.231M) across 172 tensors).*
 
 ---
 
@@ -124,9 +125,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,180,313).
-- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7087 GFLOPs).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current Default: 4,078,161).
+- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current Default: 1.7085 GFLOPs).
 - [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients.
-- [x] **Configurable Audio Tie-Breakers**: Full support for toggling any subset of 6 Audio Tie-Breakers via `train_config.json`.
+- [x] **Configurable Audio Tie-Breakers**: Full support for toggling any subset of 6 Audio Tie-Breakers via `train_config.json` (defaults to all disabled).
 - [x] **Algebraic Invariant**: Sum of Borda votes across 4 classes strictly equals 6.0.
 - [x] **Clean Exit**: Dry-run completes with exit code 0 on both CPU and CUDA.

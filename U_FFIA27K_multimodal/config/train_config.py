@@ -54,10 +54,10 @@ class TieBreakersConfig(BaseModel):
     """
     enable_b01: bool = Field(default=False, description="Enable Audio Tie-Breaker for None vs Strong (B01).")
     enable_b02: bool = Field(default=False, description="Enable Audio Tie-Breaker for None vs Medium (B02).")
-    enable_b03: bool = Field(default=True, description="Enable Audio Tie-Breaker for None vs Weak (B03).")
-    enable_b12: bool = Field(default=True, description="Enable Audio Tie-Breaker for Strong vs Medium (B12).")
-    enable_b23: bool = Field(default=True, description="Enable Audio Tie-Breaker for Medium vs Weak (B23).")
-    enable_b13: bool = Field(default=True, description="Enable Audio Tie-Breaker for Strong vs Weak (B13).")
+    enable_b03: bool = Field(default=False, description="Enable Audio Tie-Breaker for None vs Weak (B03).")
+    enable_b12: bool = Field(default=False, description="Enable Audio Tie-Breaker for Strong vs Medium (B12).")
+    enable_b23: bool = Field(default=False, description="Enable Audio Tie-Breaker for Medium vs Weak (B23).")
+    enable_b13: bool = Field(default=False, description="Enable Audio Tie-Breaker for Strong vs Weak (B13).")
 
 
 class PairwiseWeightsConfig(BaseModel):
@@ -74,10 +74,10 @@ class PairwiseWeightsConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model (~4.18M parameters).
+    Configuration for Multimodal Tournament Model (~4.08M parameters with 0 tie-breakers by default).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Flat 4-Class Round-Robin Tournament Decision Head with 6 Audio STFT Tie-Breakers ~0.31M
+    Fusion: Flat 4-Class Round-Robin Tournament Decision Head with 6 Configurable Audio STFT Tie-Breakers (~0.20M - 0.36M)
     """
     backbone: str = Field(
         default="MultimodalSOTANet",

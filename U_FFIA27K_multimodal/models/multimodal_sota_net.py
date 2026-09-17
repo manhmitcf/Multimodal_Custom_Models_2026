@@ -42,10 +42,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
         in_chans: int = 7,
         enable_b01: bool = False,
         enable_b02: bool = False,
-        enable_b03: bool = True,
-        enable_b12: bool = True,
-        enable_b23: bool = True,
-        enable_b13: bool = True,
+        enable_b03: bool = False,
+        enable_b12: bool = False,
+        enable_b23: bool = False,
+        enable_b13: bool = False,
         tie_breakers: Optional[Dict[str, bool]] = None,
         **kwargs
     ) -> None:
