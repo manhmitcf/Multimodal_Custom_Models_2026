@@ -43,8 +43,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
-        use_frequency_attention: bool = False,
-        seed: Optional[int] = None,
         enable_b12: bool = True,
         enable_b23: bool = True,
         enable_b13: bool = True,
