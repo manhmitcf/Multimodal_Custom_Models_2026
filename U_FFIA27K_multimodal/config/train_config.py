@@ -144,7 +144,7 @@ class TrainConfig(BaseModel):
     use_onecycle: bool = Field(default=True, description="Enable OneCycleLR scheduler.")
     seed: int = Field(default=42, ge=0, description="Master random seed.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
-    dataloader_workers: int = Field(default=-1, description="Number of worker processes for DataLoader (-1 = auto).")
+    dataloader_workers: int = Field(default=8, description="Number of worker processes for DataLoader (-1 = auto).")
     prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
     save_best_only: bool = Field(default=True, description="Save only the best checkpoint.")
     loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament' or 'clip_ce'.")
