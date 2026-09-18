@@ -64,7 +64,7 @@ def _safe_torch_save(obj: Any, target_path: str) -> bool:
 class MultimodalTrainer:
     """
     Unified Trainer class for Multimodal Fish Feeding Intensity Classification.
-    Supports Bilateral Boundary Loss, OneCycleLR, QWK monitoring, and Nelder-Mead post-calibration.
+    Supports Flat 4-Class Pairwise Tournament Loss, OneCycleLR, QWK monitoring, and Nelder-Mead post-calibration.
     """
     def __init__(
         self,

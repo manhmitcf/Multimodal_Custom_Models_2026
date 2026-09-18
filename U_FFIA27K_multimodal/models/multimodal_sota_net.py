@@ -117,7 +117,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
 
         Returns:
             Dictionary containing clipwise_output (logits), probabilities, uncertainties,
-            modality weights, bilateral scores & cutoffs, and continuous intensity scores.
+            modality weights, pairwise logits & probabilities, and continuous intensity scores.
         """
         # Step 1: Preprocessing & Frontend Extraction
         if video_input.ndim == 5 and video_input.size(2) == 3:
