@@ -12,9 +12,9 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Tournament Network (~4.09M Total Parameters).
+    Flat 4-Class Round-Robin Tournament Network (~4.08M - 4.23M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Video Tie-Breakers:
+    (None, Strong, Medium, Weak) via flat round-robin tournament with 6 Configurable Audio STFT Tie-Breakers:
 
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
@@ -22,13 +22,13 @@ class MultimodalBoundaryAwareNet(nn.Module):
       2. Acoustic Time-Frequency Stream (~1.17M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Round-Robin Tournament Fusion (~0.31M params):
+      3. Pairwise Round-Robin Tournament Fusion (~0.20M - 0.36M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - 6 Pairwise Subspace Expert Heads (B01, B02, B03, B12, B23, B13)
          - 6 Configurable Audio STFT Tie-Breakers.
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: ~4.18M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~4.08M (default 0 tie-breakers) to ~4.23M (all 6 tie-breakers enabled) (< 5.0M).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -88,7 +88,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Multimodal Tournament Fusion with 3 Configurable Tie-Breakers (~0.22M)
+        # 3. Multimodal Tournament Fusion with 6 Configurable Audio STFT Tie-Breakers (~0.20M - 0.36M)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,
