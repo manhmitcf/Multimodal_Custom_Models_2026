@@ -88,7 +88,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
 
         Returns:
             Dictionary containing clipwise_output (logits), probabilities, uncertainties,
-            modality weights, bilateral scores & cutoffs, and continuous intensity scores.
+            modality weights, pairwise logits & probabilities, and continuous intensity scores.
         """
         # Step 1: Preprocessing & Frontend Extraction
         if video_input.ndim == 5 and video_input.size(2) == 3:
@@ -112,14 +112,10 @@ class MultimodalBoundaryAwareNet(nn.Module):
         prob_video = F.softmax(logits_video, dim=-1)
         prob_audio = F.softmax(logits_audio, dim=-1)
 
-        # Step 3: Gated Bilateral Boundary Fusion
+        # Step 3: Gated Multimodal Tournament Fusion
         fusion_outputs = self.fusion(
             f_video=f_video,
-            f_audio=f_audio,
-            tokens_video=tokens_video,
-            tokens_audio=tokens_audio,
-            f_burst_v=f_burst_v,
-            f_burst_a=f_burst_a
+            f_audio=f_audio
         )
 
         # Step 4: Assemble Comprehensive Output
