@@ -20,10 +20,16 @@
   "weight_pairwise": 0.5,
   "weight_ce": 1.0,
   "aux_loss_weight": 0.3,
+  "use_sparse_moe_routing": true,
+  "router_hidden_dim": 32,
+  "lambda_balance": 0.01,
+  "lambda_sparse": 0.005,
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
     "embed_dim": 224,
+    "use_sparse_moe_routing": true,
+    "router_hidden_dim": 32,
     "tie_breakers": {
       "b12": {
         "enable_audio": true,

@@ -73,11 +73,15 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
     else:
         b12_str = b23_str = b13_str = "All True"
 
+    use_sparse_moe_routing = getattr(config.model, "use_sparse_moe_routing", getattr(config, "use_sparse_moe_routing", True))
+    router_hidden_dim = getattr(config.model, "router_hidden_dim", getattr(config, "router_hidden_dim", 32))
+
     logger.info(
         f"Dual Cross-Modal Referees configuration: "
         f"B12 (Weak vs Med)=[{b12_str}], "
         f"B23 (Med vs Strong)=[{b23_str}], "
-        f"B13 (Weak vs Strong)=[{b13_str}]"
+        f"B13 (Weak vs Strong)=[{b13_str}] | "
+        f"SMoR Routing={use_sparse_moe_routing} (Hidden Dim={router_hidden_dim})"
     )
 
     return model_cls(
@@ -88,6 +92,8 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         num_frames=config.num_frames,
         in_chans=in_chans,
         tie_breakers=tb_cfg,
+        use_sparse_moe_routing=use_sparse_moe_routing,
+        router_hidden_dim=router_hidden_dim,
     )
 
 
@@ -148,12 +154,15 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
         # 3. Test backward pass & gradient flow
         loss_type = getattr(config, "loss_type", "pairwise_tournament")
         from utils.losses import PairwiseTournamentLoss, ClipCELoss
-        if loss_type == "pairwise_tournament":
+        if loss_type in ("pairwise_tournament", "smor_pairwise_tournament"):
             loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(config, "weight_act", 0.5),
                 weight_pairwise=getattr(config, "weight_pairwise", 0.5),
                 weight_ce=getattr(config, "weight_ce", 1.0),
-                aux_loss_weight=getattr(config, "aux_loss_weight", 0.3)
+                aux_loss_weight=getattr(config, "aux_loss_weight", 0.3),
+                lambda_balance=getattr(config, "lambda_balance", 0.01),
+                lambda_sparse=getattr(config, "lambda_sparse", 0.005),
+                use_sparse_moe_routing=getattr(config, "use_sparse_moe_routing", True),
             ).to(device)
             loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
         else:

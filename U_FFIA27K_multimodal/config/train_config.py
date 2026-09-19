@@ -91,6 +91,15 @@ class ModelConfig(BaseModel):
         default_factory=DualTieBreakersConfig,
         description="Pairwise Dual Cross-Modal Referee configurations for B12, B23, B13."
     )
+    use_sparse_moe_routing: bool = Field(
+        default=True,
+        description="Enable Sparse Mixture-of-Referees (SMoR) dynamic routing."
+    )
+    router_hidden_dim: int = Field(
+        default=32,
+        gt=0,
+        description="Hidden dimension for Sparse Referee Routers."
+    )
 
 
 class SplitterConfig(BaseModel):
@@ -169,6 +178,10 @@ class TrainConfig(BaseModel):
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
+    use_sparse_moe_routing: bool = Field(default=True, description="Enable Sparse Mixture-of-Referees (SMoR) dynamic routing.")
+    router_hidden_dim: int = Field(default=32, gt=0, description="Hidden dimension for Sparse Referee Routers.")
+    lambda_balance: float = Field(default=0.01, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
+    lambda_sparse: float = Field(default=0.005, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
     model: ModelConfig = Field(default_factory=ModelConfig, description="Model architecture parameters.")
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
     video_features: VideoFeaturesConfig = Field(default_factory=VideoFeaturesConfig, description="Video preprocessing configuration.")

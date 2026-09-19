@@ -43,6 +43,9 @@ class PairwiseTournamentLoss(BaseLoss):
         weight_pairwise: float = 0.5,
         weight_ce: float = 1.0,
         aux_loss_weight: float = 0.3,
+        lambda_balance: float = 0.01,
+        lambda_sparse: float = 0.005,
+        use_sparse_moe_routing: bool = True,
         only_backbones: bool = False,
         **kwargs
     ) -> None:
@@ -51,6 +54,9 @@ class PairwiseTournamentLoss(BaseLoss):
         self.weight_pairwise = float(kwargs.get("weight_pairwise", weight_pairwise))
         self.weight_ce = float(kwargs.get("weight_ce", weight_ce))
         self.aux_loss_weight = float(kwargs.get("aux_loss_weight", aux_loss_weight))
+        self.lambda_balance = float(kwargs.get("lambda_balance", lambda_balance))
+        self.lambda_sparse = float(kwargs.get("lambda_sparse", lambda_sparse))
+        self.use_sparse_moe_routing = bool(kwargs.get("use_sparse_moe_routing", use_sparse_moe_routing))
         self.only_backbones = bool(kwargs.get("only_backbones", only_backbones))
 
     def _get_raw_targets(self, targets: torch.Tensor) -> torch.Tensor:
@@ -118,8 +124,6 @@ class PairwiseTournamentLoss(BaseLoss):
         # Dual-border Medium supervision (0.4 on B12, 0.4 on B23) + B13 anchor protection (0.2)
         loss_pairwise = 0.4 * loss_12 + 0.4 * loss_23 + 0.2 * loss_13
 
-
-
         # 3. Level 3: Multi-class Cross Entropy on Final Logits
         logits = output_dict.get("clipwise_output", output_dict.get("logits"))
         if logits is not None:
@@ -127,12 +131,54 @@ class PairwiseTournamentLoss(BaseLoss):
         else:
             loss_ce = torch.tensor(0.0, device=targets.device)
 
-        # Total Composite Tournament Loss + Auxiliary Regularization
+        # 4. Level 4: MoE Load Balancing & Sparsity Regularization (computed on feeding samples)
+        loss_balance = torch.tensor(0.0, device=targets.device)
+        loss_sparse = torch.tensor(0.0, device=targets.device)
+
+        if self.use_sparse_moe_routing:
+            feeding_mask = (y_raw != 0)
+            route_mask = feeding_mask if feeding_mask.sum() > 0 else torch.ones_like(feeding_mask, dtype=torch.bool)
+            
+            n_pairs = 0
+            for tag in ["12", "23", "13"]:
+                prob_a_key = f"prob_{tag}_a"
+                prob_v_key = f"prob_{tag}_v"
+                m_a_h_key = f"m_{tag}_a_hard"
+                m_v_h_key = f"m_{tag}_v_hard"
+
+                if prob_a_key in output_dict and prob_v_key in output_dict:
+                    p_a = output_dict[prob_a_key][route_mask]
+                    p_v = output_dict[prob_v_key][route_mask]
+                    m_a_h = output_dict[m_a_h_key][route_mask] if m_a_h_key in output_dict else (p_a >= 0.5).float()
+                    m_v_h = output_dict[m_v_h_key][route_mask] if m_v_h_key in output_dict else (p_v >= 0.5).float()
+
+                    P_A = torch.mean(p_a)
+                    P_V = torch.mean(p_v)
+                    f_A = torch.mean(m_a_h)
+                    f_V = torch.mean(m_v_h)
+
+                    # Switch Transformer Load Balancing Loss (minimized at 50/50 balance = 1.0)
+                    loss_balance = loss_balance + 2.0 * (f_A * P_A + f_V * P_V)
+                    # Sparsity penalty (L1 norm on routing probabilities)
+                    loss_sparse = loss_sparse + (torch.mean(p_a) + torch.mean(p_v))
+                    n_pairs += 1
+
+            if n_pairs > 0:
+                loss_balance = loss_balance / float(n_pairs)
+                loss_sparse = loss_sparse / float(n_pairs)
+
+        # Total Composite Tournament Loss + Auxiliary Regularization + MoE Balance/Sparsity
         total_loss = (
             self.weight_ce * loss_ce +
             self.weight_act * loss_act +
             self.weight_pairwise * loss_pairwise +
-            self.aux_loss_weight * (loss_v + loss_a)
+            self.aux_loss_weight * (loss_v + loss_a) +
+            self.lambda_balance * loss_balance +
+            self.lambda_sparse * loss_sparse
         )
 
         return total_loss
+
+
+# Alias for explicit MoE naming
+SMoRPairwiseTournamentLoss = PairwiseTournamentLoss
