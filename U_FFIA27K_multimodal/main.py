@@ -55,6 +55,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
     frontend = AudioFrontend(config.audio_features)
 
     active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
+    seed_everything(active_seed)
 
     in_chans = getattr(config, "in_chans", getattr(config.video_features, "num_channels", 7))
 

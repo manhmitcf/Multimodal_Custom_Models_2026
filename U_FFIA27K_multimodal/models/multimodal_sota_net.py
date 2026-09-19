@@ -197,9 +197,11 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "f_spatial": f_spatial,
             "f_motion": f_motion,
             "f_burst_v": f_burst_v,
+            "tokens_video": tokens_video,
             "f_frequency": f_frequency,
             "f_rhythm": f_rhythm,
             "f_burst_a": f_burst_a,
+            "tokens_audio": tokens_audio,
         }
         return outputs
 

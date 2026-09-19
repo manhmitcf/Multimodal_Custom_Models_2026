@@ -303,8 +303,6 @@ class MultimodalTrainer:
 
             # Determine if this is the best checkpoint for primary monitor
             is_best = False
-            is_best_qwk = False
-            is_best_acc = False
 
             if is_dual:
                 current_state_dict = self.model.state_dict()
@@ -315,7 +313,6 @@ class MultimodalTrainer:
                     best_val_qwk = val_qwk
                     best_epoch_qwk = epoch
                     best_val_stats_qwk = val_stats
-                    is_best_qwk = True
                     is_best = True
 
                     _safe_torch_save(current_state_dict, self.best_checkpoint_path_qwk)
@@ -333,7 +330,6 @@ class MultimodalTrainer:
                     best_val_acc = val_acc
                     best_epoch_acc = epoch
                     best_val_stats_acc = val_stats
-                    is_best_acc = True
                     is_best = True
 
                     _safe_torch_save(current_state_dict, self.best_checkpoint_path_acc)

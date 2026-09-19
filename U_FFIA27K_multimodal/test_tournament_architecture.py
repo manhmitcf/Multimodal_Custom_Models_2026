@@ -9,6 +9,7 @@ if project_root not in sys.path:
 import torch
 from models.multimodal_sota_net import MultimodalBoundaryAwareNet
 from utils.losses import PairwiseTournamentLoss
+from utils.seed import seed_everything
 
 
 def test_parameter_budget():
@@ -357,6 +358,8 @@ if __name__ == "__main__":
     print("\n" + "=" * 65)
     print("RUNNING MANDATORY SMoR-NET ARCHITECTURE VERIFICATION TEST SUITE")
     print("=" * 65)
+
+    seed_everything(42)
 
     test_parameter_budget()
     test_tournament_forward_and_pairwise()
