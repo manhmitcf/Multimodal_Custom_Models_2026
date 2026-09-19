@@ -48,16 +48,45 @@ class AudioFeaturesConfig(BaseModel):
     noise_std: float = Field(default=0.02, description="Standard deviation of Gaussian spectral jitter noise.")
 
 
-class TieBreakersConfig(BaseModel):
+class MatchupTieBreakersConfig(BaseModel):
     """
-    Configuration for Video Kinematics Tie-Breaker heads on 6 pairwise matchups.
+    Configuration for Dual Cross-Modal Referees (Audio STFT & Video Kinematics) on a single pairwise matchup.
     """
-    enable_b01: bool = Field(default=False, description="Enable Video Tie-Breaker for None vs Strong (B01).")
-    enable_b02: bool = Field(default=False, description="Enable Video Tie-Breaker for None vs Medium (B02).")
-    enable_b03: bool = Field(default=False, description="Enable Video Tie-Breaker for None vs Weak (B03).")
-    enable_b12: bool = Field(default=False, description="Enable Video Tie-Breaker for Strong vs Medium (B12).")
-    enable_b23: bool = Field(default=False, description="Enable Video Tie-Breaker for Medium vs Weak (B23).")
-    enable_b13: bool = Field(default=False, description="Enable Video Tie-Breaker for Strong vs Weak (B13).")
+    enable_audio: bool = Field(default=False, description="Enable Audio STFT Tie-Breaker for this matchup.")
+    enable_video: bool = Field(default=False, description="Enable Video Kinematics Tie-Breaker for this matchup.")
+
+
+class DualTieBreakersConfig(BaseModel):
+    """
+    Configuration for Dual Cross-Modal Referee heads on 6 Flat Round-Robin pairwise matchups.
+    """
+    b12: MatchupTieBreakersConfig = Field(
+        default_factory=lambda: MatchupTieBreakersConfig(enable_audio=True, enable_video=True),
+        description="Dual Referees for Strong vs Medium (B12)."
+    )
+    b23: MatchupTieBreakersConfig = Field(
+        default_factory=lambda: MatchupTieBreakersConfig(enable_audio=True, enable_video=True),
+        description="Dual Referees for Medium vs Weak (B23)."
+    )
+    b13: MatchupTieBreakersConfig = Field(
+        default_factory=lambda: MatchupTieBreakersConfig(enable_audio=True, enable_video=True),
+        description="Dual Referees for Strong vs Weak (B13)."
+    )
+    b01: MatchupTieBreakersConfig = Field(
+        default_factory=lambda: MatchupTieBreakersConfig(enable_audio=False, enable_video=False),
+        description="Dual Referees for None vs Strong (B01)."
+    )
+    b02: MatchupTieBreakersConfig = Field(
+        default_factory=lambda: MatchupTieBreakersConfig(enable_audio=False, enable_video=False),
+        description="Dual Referees for None vs Medium (B02)."
+    )
+    b03: MatchupTieBreakersConfig = Field(
+        default_factory=lambda: MatchupTieBreakersConfig(enable_audio=False, enable_video=False),
+        description="Dual Referees for None vs Weak (B03)."
+    )
+
+
+TieBreakersConfig = DualTieBreakersConfig
 
 
 class PairwiseWeightsConfig(BaseModel):
@@ -74,10 +103,10 @@ class PairwiseWeightsConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model (~4.08M - 4.23M parameters).
+    Configuration for Multimodal Tournament Model (~4.15M - 4.30M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Flat 4-Class Round-Robin Tournament Decision Head with 6 Configurable Video Kinematics Tie-Breakers (~0.20M - 0.36M)
+    Fusion: Flat 4-Class Round-Robin Tournament Decision Head with Dual Referees (Audio + Video) ~0.28M - 0.43M
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
@@ -85,9 +114,9 @@ class ModelConfig(BaseModel):
     )
     embed_dim: int = Field(default=224, description="Common multimodal embedding dimension.")
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
-    tie_breakers: TieBreakersConfig = Field(
-        default_factory=TieBreakersConfig,
-        description="Pairwise Video Kinematics Tie-Breaker configurations."
+    tie_breakers: DualTieBreakersConfig = Field(
+        default_factory=DualTieBreakersConfig,
+        description="Pairwise Dual Cross-Modal Referee configurations."
     )
 
 

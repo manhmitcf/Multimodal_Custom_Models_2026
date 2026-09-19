@@ -9,12 +9,14 @@ if project_root not in sys.path:
 import torch
 from models.multimodal_sota_net import MultimodalBoundaryAwareNet
 from utils.losses import PairwiseTournamentLoss
+from utils.seed import seed_everything
 
 
 def test_parameter_budget():
     print("\n" + "=" * 65)
-    print("TEST 1: FLAT 4-CLASS TOURNAMENT PARAMETER BUDGET (< 5.0M)")
+    print("TEST 1: FLAT 4-CLASS DUAL REFEREES PARAMETER BUDGET (< 5.0M)")
     print("=" * 65)
+    seed_everything(42)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
     total_params = sum(p.numel() for p in model.parameters())
@@ -22,10 +24,10 @@ def test_parameter_budget():
     a_params = sum(p.numel() for p in model.audio_backbone.parameters())
     f_params = sum(p.numel() for p in model.fusion.parameters())
 
-    print(f"Total Model Parameters:               {total_params:,}")
-    print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
-    print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
-    print(f"  - Pairwise Tournament Fusion (6 heads):{f_params:,}")
+    print(f"Total Model Parameters:                     {total_params:,}")
+    print(f"  - Video Backbone (ConvNeXt-Nano 7ch):       {v_params:,}")
+    print(f"  - Audio Backbone (STFT-MLP 2049):           {a_params:,}")
+    print(f"  - Dual Tournament Fusion (6 Base + Dual):   {f_params:,}")
 
     strict_limit = 5000000
     assert total_params < strict_limit, f"FAILED: Exceeded budget {total_params} >= {strict_limit}"
@@ -35,8 +37,9 @@ def test_parameter_budget():
 
 def test_tournament_forward_and_pairwise():
     print("\n" + "=" * 65)
-    print("TEST 2: FLAT 4-CLASS FORWARD PASS & 6 PAIRWISE MATCHUPS")
+    print("TEST 2: FLAT 4-CLASS FORWARD PASS & 6 PAIRWISE DUAL MATCHUPS")
     print("=" * 65)
+    seed_everything(42)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
     model.eval()
@@ -76,17 +79,18 @@ def test_tournament_forward_and_pairwise():
 
 def test_gradient_flow_tournament_loss():
     print("\n" + "=" * 65)
-    print("TEST 3: 100% GRADIENT FLOW THROUGH FLAT 4-CLASS TOURNAMENT LOSS")
+    print("TEST 3: 100% GRADIENT FLOW THROUGH FLAT 4-CLASS DUAL REFEREES LOSS")
     print("=" * 65)
+    seed_everything(42)
 
+    # Enable all 6 boundaries with both Audio and Video Referees (12 referee heads + 6 base heads = 18 heads)
+    all_dual_tb = {
+        f"b{pair}": {"enable_audio": True, "enable_video": True}
+        for pair in ["01", "02", "03", "12", "23", "13"]
+    }
     model = MultimodalBoundaryAwareNet(
         num_frames=2,
-        enable_b01=True,
-        enable_b02=True,
-        enable_b03=True,
-        enable_b12=True,
-        enable_b23=True,
-        enable_b13=True
+        tie_breakers=all_dual_tb
     )
     model.train()
     criterion = PairwiseTournamentLoss(weight_pairwise=1.0, weight_ce=1.0)
@@ -114,13 +118,14 @@ def test_gradient_flow_tournament_loss():
             raise AssertionError(f"Parameter without gradient: {name}")
 
     print(f"[PASSED] 100% Gradient flow verified: {valid_grads}/{total_tensors} parameters with healthy gradients!")
-    print(f"  Flat Tournament Composite Loss: {loss.item():.4f}")
+    print(f"  Flat Dual Tournament Composite Loss: {loss.item():.4f}")
 
 
 def test_end_to_end_from_scratch():
     print("\n" + "=" * 65)
     print("TEST 4: END-TO-END FROM SCRATCH SIMULTANEOUS TRAINING")
     print("=" * 65)
+    seed_everything(42)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
     model.train()
@@ -152,62 +157,76 @@ def test_end_to_end_from_scratch():
 
 def test_tie_breakers_toggle_config():
     print("\n" + "=" * 65)
-    print("TEST 5: CONFIGURABLE VIDEO TIE-BREAKER TOGGLE (6 MATCHUPS)")
+    print("TEST 5: CONFIGURABLE DUAL REFEREES TOGGLE (ABLATION VERIFICATION)")
     print("=" * 65)
+    seed_everything(42)
 
     B = 2
     v_input = torch.randn(B, 2, 3, 224, 224)
     a_input = torch.randn(B, 512000)
 
-    # Case A: Only B03, B12, B23 enabled
-    model_subset = MultimodalBoundaryAwareNet(
-        enable_b01=False, enable_b02=False, enable_b03=True,
-        enable_b12=True, enable_b23=True, enable_b13=False
-    )
-    th = model_subset.fusion.tournament_head
-    assert th.head_b01_v is None
-    assert th.head_b02_v is None
-    assert th.head_b03_v is not None
-    assert th.head_b12_v is not None
-    assert th.head_b23_v is not None
-    assert th.head_b13_v is None
+    # Case A: Selective Dual/Single Referees (B12 dual, B23 audio only, B13 video only, others off)
+    tb_selective = {
+        "b12": {"enable_audio": True, "enable_video": True},
+        "b23": {"enable_audio": True, "enable_video": False},
+        "b13": {"enable_audio": False, "enable_video": True},
+        "b01": {"enable_audio": False, "enable_video": False},
+        "b02": {"enable_audio": False, "enable_video": False},
+        "b03": {"enable_audio": False, "enable_video": False},
+    }
+    model_sel = MultimodalBoundaryAwareNet(tie_breakers=tb_selective)
+    th_sel = model_sel.fusion.tournament_head
 
-    out_subset = model_subset(v_input, a_input)
-    assert out_subset["probabilities"].shape == (B, 4)
-    p_params_subset = sum(p.numel() for p in model_subset.parameters())
-    print(f"  Case A (Selective Video Tie-Breakers): {p_params_subset:,} params - verified clean!")
+    assert th_sel.head_b12_a is not None and th_sel.head_b12_v is not None
+    assert th_sel.head_b23_a is not None and th_sel.head_b23_v is None
+    assert th_sel.head_b13_a is None and th_sel.head_b13_v is not None
+    assert th_sel.head_b01_a is None and th_sel.head_b01_v is None
 
-    # Case B: All tie-breakers disabled (pure joint tournament ablation)
-    model_none = MultimodalBoundaryAwareNet(
-        enable_b01=False, enable_b02=False, enable_b03=False,
-        enable_b12=False, enable_b23=False, enable_b13=False
-    )
+    out_sel = model_sel(v_input, a_input)
+    assert out_sel["probabilities"].shape == (B, 4)
+    p_params_sel = sum(p.numel() for p in model_sel.parameters())
+    print(f"  Case A (Selective Audio/Video Referees): {p_params_sel:,} params - verified clean!")
+
+    # Case B: All referees disabled (pure 6-base pairwise round-robin tournament)
+    tb_none = {
+        f"b{p}": {"enable_audio": False, "enable_video": False}
+        for p in ["01", "02", "03", "12", "23", "13"]
+    }
+    model_none = MultimodalBoundaryAwareNet(tie_breakers=tb_none)
     th_none = model_none.fusion.tournament_head
-    assert all(getattr(th_none, f"head_b{pair}_v") is None for pair in ["01", "02", "03", "12", "23", "13"])
+    for p in ["01", "02", "03", "12", "23", "13"]:
+        assert getattr(th_none, f"head_b{p}_a") is None
+        assert getattr(th_none, f"head_b{p}_v") is None
+
     out_none = model_none(v_input, a_input)
     assert out_none["probabilities"].shape == (B, 4)
     p_params_none = sum(p.numel() for p in model_none.parameters())
-    print(f"  Case B (All video tie-breakers disabled): {p_params_none:,} params - verified clean!")
+    print(f"  Case B (All Dual Referees disabled - Base Only): {p_params_none:,} params - verified clean!")
 
-    # Case C: All 6 tie-breakers enabled
-    model_all = MultimodalBoundaryAwareNet(
-        enable_b01=True, enable_b02=True, enable_b03=True,
-        enable_b12=True, enable_b23=True, enable_b13=True
-    )
+    # Case C: All 6 boundaries dual enabled (6 Base + 6 Audio Referees + 6 Video Referees = 18 heads)
+    tb_all = {
+        f"b{p}": {"enable_audio": True, "enable_video": True}
+        for p in ["01", "02", "03", "12", "23", "13"]
+    }
+    model_all = MultimodalBoundaryAwareNet(tie_breakers=tb_all)
     th_all = model_all.fusion.tournament_head
-    assert all(getattr(th_all, f"head_b{pair}_v") is not None for pair in ["01", "02", "03", "12", "23", "13"])
+    for p in ["01", "02", "03", "12", "23", "13"]:
+        assert getattr(th_all, f"head_b{p}_a") is not None
+        assert getattr(th_all, f"head_b{p}_v") is not None
+
     out_all = model_all(v_input, a_input)
     assert out_all["probabilities"].shape == (B, 4)
     p_params_all = sum(p.numel() for p in model_all.parameters())
-    print(f"  Case C (All 6 video tie-breakers enabled): {p_params_all:,} params - verified clean!")
+    print(f"  Case C (All 6 Boundaries Dual Enabled - 18 Heads): {p_params_all:,} params - verified clean!")
 
-    print("[PASSED] Configurable video tie-breaker toggle verified across all ablation states!")
+    print("[PASSED] Configurable Dual Referees toggle verified across all ablation states!")
 
 
 def test_consistent_video_transform():
     print("\n" + "=" * 65)
     print("TEST 6: CLIP-SYNCHRONIZED VIDEO TRANSFORM & RANDOM ERASING")
     print("=" * 65)
+    seed_everything(42)
 
     import numpy as np
     from transforms.video_transform import ConsistentVideoTransform
@@ -247,5 +266,5 @@ if __name__ == "__main__":
     test_tie_breakers_toggle_config()
     test_consistent_video_transform()
     print("\n" + "=" * 65)
-    print("ALL FLAT 4-CLASS TOURNAMENT TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("ALL FLAT 4-CLASS DUAL REFEREES TESTS PASSED SUCCESSFULLY! (100% READY)")
     print("=" * 65 + "\n")

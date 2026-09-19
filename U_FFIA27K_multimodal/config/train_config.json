@@ -24,12 +24,30 @@
     "classes_num": 4,
     "embed_dim": 224,
     "tie_breakers": {
-      "enable_b01": false,
-      "enable_b02": false,
-      "enable_b03": false,
-      "enable_b12": true,
-      "enable_b23": true,
-      "enable_b13": true
+      "b12": {
+        "enable_audio": true,
+        "enable_video": true
+      },
+      "b23": {
+        "enable_audio": true,
+        "enable_video": true
+      },
+      "b13": {
+        "enable_audio": true,
+        "enable_video": true
+      },
+      "b01": {
+        "enable_audio": false,
+        "enable_video": false
+      },
+      "b02": {
+        "enable_audio": false,
+        "enable_video": false
+      },
+      "b03": {
+        "enable_audio": false,
+        "enable_video": false
+      }
     }
   },
   "video_features": {

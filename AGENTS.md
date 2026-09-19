@@ -1,7 +1,7 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/flat_4class_video_tie_breakers | Flat 4-Class Round-Robin Tournament Network with Video Kinematics Tie-Breakers (~4.16M Params)
+# Branch: main_architecture/flat_4class_dual_referees | Flat 4-Class Round-Robin Tournament Network with Dual Referees (~4.23M Params)
 
-This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `main_architecture/flat_4class_video_tie_breakers`.
+This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `main_architecture/flat_4class_dual_referees`.
 
 ---
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
- FLAT 4-CLASS ROUND-ROBIN WITH VIDEO KINEMATICS TIE-BREAKERS (~4.16M PARAMS)
+ FLAT 4-CLASS ROUND-ROBIN WITH DUAL REFEREES (~4.23M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -36,19 +36,19 @@ This document defines the invariant architectural constraints, operational guide
                      - Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A])
                      - Fused Representation: f_fused = g * f_V + (1-g) * f_A (dim=224)
                      - 6 Direct Pairwise Expert Heads (Binomial(4, 2) = 6):
-                         * B01: None (0) <-> Strong (1) (+ Optional Video Kinematics Tie-Breaker)
-                         * B02: None (0) <-> Medium (2) (+ Optional Video Kinematics Tie-Breaker)
-                         * B03: None (0) <-> Weak (3)   (+ Optional Video Kinematics Tie-Breaker)
-                         * B12: Strong (1) <-> Medium (2) (+ Video Kinematics Tie-Breaker) [Default: Enabled]
-                         * B23: Medium (2) <-> Weak (3)   (+ Video Kinematics Tie-Breaker) [Default: Enabled]
-                         * B13: Strong (1) <-> Weak (3)   (+ Video Kinematics Tie-Breaker) [Default: Enabled]
-                     - Video Referee Intervention:
+                         * B01: None (0) <-> Strong (1) (+ Optional Audio & Video Referees)
+                         * B02: None (0) <-> Medium (2) (+ Optional Audio & Video Referees)
+                         * B03: None (0) <-> Weak (3)   (+ Optional Audio & Video Referees)
+                         * B12: Strong (1) <-> Medium (2) (+ Dual Referees: Audio & Video) [Default: Enabled]
+                         * B23: Medium (2) <-> Weak (3)   (+ Dual Referees: Audio & Video) [Default: Enabled]
+                         * B13: Strong (1) <-> Weak (3)   (+ Dual Referees: Audio & Video) [Default: Enabled]
+                     - Dual Referee Intervention:
                          u_tie = exp(-|logit_base|)
-                         logit = logit_base + gamma * u_tie * logit_video
+                         logit = logit_base + u_tie * (enable_A * gamma_A * logit_A + enable_V * gamma_V * logit_V)
                      - 4-Class Tournament Borda Voting:
                          * V_c = Sum_{k != c} P(c > k), Sum(V_c) = 6.0
                          * P_final = Softmax([V_0, V_1, V_2, V_3] * tau)
-                     [~0.282M params | FLOPs: 1.7087 GFLOPs]
+                     [~0.358M params | FLOPs: 1.7088 GFLOPs]
                                        │
                                        ▼
                      [4 Feeding Intensity Predictions]
@@ -58,12 +58,13 @@ This document defines the invariant architectural constraints, operational guide
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
-- **Tournament Decision Head (6 Base Heads + 3 Active Video Tie-Breakers B12, B23, B13)**: `281,581` (~`0.282M`)
+- **Audio Frontend (TKEO-STFT 256k)**: `4,098`
+- **Tournament Decision Head (6 Base Heads + 6 Dual Referees B12, B23, B13)**: `358,195` (~`0.358M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800`
-- **Total Trainable Parameters (Default 3 Video Tie-Breakers)**: `4,154,775` (~`4.155M`) [151 parameter tensors]
-- **Remaining Headroom**: `845,225` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `1.7087 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
-*(Note: Range spans from 4,078,161 (~4.078M, 130 tensors) with 0 tie-breakers up to 4,231,389 (~4.231M, 172 tensors) if all 6 video tie-breakers are enabled).*
+- **Total Trainable Parameters (Default 6 Dual Referees)**: `4,231,389` (~`4.231M`) [172 parameter tensors]
+- **Remaining Headroom**: `768,611` parameters below the 5.0M budget limit.
+- **Inference Complexity**: `1.7088 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+*(Note: Range spans from 4,078,161 (~4.078M, 130 tensors) with 0 referees up to 4,384,617 (~4.385M, 214 tensors) if all 12 dual referees across all 6 boundaries are enabled).*
 
 ---
 
@@ -97,7 +98,10 @@ This document defines the invariant architectural constraints, operational guide
 - **Reliability Gating**: alpha = sigma(W_gate[f_V || f_A]).
 - **Flat 4-Class Round-Robin Matchups**:
   - 6 Pairwise Heads: B01, B02, B03, B12, B23, B13.
-  - Configurable Video Kinematics Tie-Breakers: $u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}|)$, $\text{logit} = \text{logit}_{\text{base}} + \gamma \cdot u_{\text{tie}} \cdot \text{logit}_{\text{video}}$.
+  - Configurable Dual Referees (Audio STFT & Video Kinematics):
+    $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}|)$$
+    $$\text{logit} = \text{logit}_{\text{base}} + u_{\text{tie}} \cdot \Big(\text{enable}_A \cdot \gamma_A \cdot \text{logit}_A + \text{enable}_V \cdot \gamma_V \cdot \text{logit}_V\Big)$$
+    where $\gamma_A, \gamma_V$ are learnable scalars initialized to 0.5.
 - **Borda Voting**:
   - V_c = Sum_{k != c} P(c > k). Sum of all 4 scores equals strictly 6.0.
   - Final probabilities derived via Softmax with temperature tau=2.0.
@@ -133,7 +137,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 - `evaluation_detailed_report.txt` and `.json`: Comprehensive classification reports.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_main_architecture_flat_4class_video_tie_breakers`.
+- Remote dataset repository: `manhmitcf/Results_main_architecture_flat_4class_dual_referees`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
@@ -143,7 +147,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 
 ## 5. Mandatory Verification Checklist
 
-Before proposing or committing any code changes on branch `main_architecture/flat_4class_video_tie_breakers`, agents **MUST** execute and pass:
+Before proposing or committing any code changes on branch `main_architecture/flat_4class_dual_referees`, agents **MUST** execute and pass:
 
 ```bash
 cd U_FFIA27K_multimodal
@@ -151,9 +155,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current Default: 4,154,775).
-- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current Default: 1.7087 GFLOPs).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current Default: 4,231,389).
+- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current Default: 1.7088 GFLOPs).
 - [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients.
-- [x] **Configurable Video Tie-Breakers**: Full support for toggling any subset of 6 Video Tie-Breakers via `train_config.json` (defaults to B12, B23, B13 enabled).
+- [x] **Configurable Dual Referees**: Full support for toggling any subset of Audio and Video Referees across all 6 matchups via `train_config.json` (defaults to B12, B23, B13 dual enabled).
 - [x] **Algebraic Invariant**: Sum of Borda votes across 4 classes strictly equals 6.0.
 - [x] **Clean Exit**: Dry-run completes with exit code 0 on both CPU and CUDA.

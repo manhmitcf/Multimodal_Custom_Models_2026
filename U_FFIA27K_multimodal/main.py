@@ -54,46 +54,41 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
     from features.audio_frontend import AudioFrontend
     frontend = AudioFrontend(config.audio_features)
 
+    active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
+    seed_everything(active_seed)
+
     in_chans = getattr(config, "in_chans", getattr(config.video_features, "num_channels", 7))
 
     tb_cfg = getattr(config.model, "tie_breakers", None)
     if tb_cfg is not None:
-        if isinstance(tb_cfg, dict):
-            tb_dict = {
-                "enable_b01": bool(tb_cfg.get("enable_b01", False)),
-                "enable_b02": bool(tb_cfg.get("enable_b02", False)),
-                "enable_b03": bool(tb_cfg.get("enable_b03", False)),
-                "enable_b12": bool(tb_cfg.get("enable_b12", False)),
-                "enable_b23": bool(tb_cfg.get("enable_b23", False)),
-                "enable_b13": bool(tb_cfg.get("enable_b13", False)),
-            }
-        else:
-            tb_dict = {
-                "enable_b01": bool(getattr(tb_cfg, "enable_b01", False)),
-                "enable_b02": bool(getattr(tb_cfg, "enable_b02", False)),
-                "enable_b03": bool(getattr(tb_cfg, "enable_b03", False)),
-                "enable_b12": bool(getattr(tb_cfg, "enable_b12", False)),
-                "enable_b23": bool(getattr(tb_cfg, "enable_b23", False)),
-                "enable_b13": bool(getattr(tb_cfg, "enable_b13", False)),
-            }
+        def _fmt(pair_name: str, def_a: bool, def_v: bool):
+            if hasattr(tb_cfg, pair_name):
+                p = getattr(tb_cfg, pair_name)
+                return f"Audio={getattr(p, 'enable_audio', def_a)}, Video={getattr(p, 'enable_video', def_v)}"
+            elif isinstance(tb_cfg, dict):
+                p = tb_cfg.get(pair_name, {})
+                if isinstance(p, dict):
+                    return f"Audio={p.get('enable_audio', def_a)}, Video={p.get('enable_video', def_v)}"
+            return f"Audio={def_a}, Video={def_v}"
+
+        b12_str = _fmt("b12", True, True)
+        b23_str = _fmt("b23", True, True)
+        b13_str = _fmt("b13", True, True)
+        b01_str = _fmt("b01", False, False)
+        b02_str = _fmt("b02", False, False)
+        b03_str = _fmt("b03", False, False)
     else:
-        tb_dict = {
-            "enable_b01": False,
-            "enable_b02": False,
-            "enable_b03": False,
-            "enable_b12": False,
-            "enable_b23": False,
-            "enable_b13": False,
-        }
+        b12_str = b23_str = b13_str = "Audio=True, Video=True"
+        b01_str = b02_str = b03_str = "Audio=False, Video=False"
 
     logger.info(
-        f"Video Kinematics Tie-Breakers configuration: "
-        f"B01(None vs Strong)={tb_dict['enable_b01']}, "
-        f"B02(None vs Med)={tb_dict['enable_b02']}, "
-        f"B03(None vs Weak)={tb_dict['enable_b03']}, "
-        f"B12(Strong vs Med)={tb_dict['enable_b12']}, "
-        f"B23(Med vs Weak)={tb_dict['enable_b23']}, "
-        f"B13(Strong vs Weak)={tb_dict['enable_b13']}"
+        f"Flat 4-Class Dual Referees configuration: "
+        f"B12(Strong vs Med)=[{b12_str}], "
+        f"B23(Med vs Weak)=[{b23_str}], "
+        f"B13(Strong vs Weak)=[{b13_str}], "
+        f"B01(None vs Strong)=[{b01_str}], "
+        f"B02(None vs Med)=[{b02_str}], "
+        f"B03(None vs Weak)=[{b03_str}]"
     )
 
     return model_cls(
@@ -103,7 +98,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=in_chans,
-        tie_breakers=tb_dict,
+        tie_breakers=tb_cfg,
     )
 
 

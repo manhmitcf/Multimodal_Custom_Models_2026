@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
@@ -12,9 +12,10 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Flat 4-Class Round-Robin Tournament Network with Video Kinematics Tie-Breakers (~4.08M - 4.23M Total Parameters).
+    Flat 4-Class Round-Robin Tournament Network with Dual Referees (~4.15M - 4.30M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via flat round-robin tournament with 6 Configurable Video Kinematics Tie-Breakers:
+    (None, Strong, Medium, Weak) via flat round-robin tournament with 6 Configurable Dual Referees
+    (Audio STFT & Video Kinematics):
 
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
@@ -22,13 +23,13 @@ class MultimodalBoundaryAwareNet(nn.Module):
       2. Acoustic Time-Frequency Stream (~1.17M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Round-Robin Tournament Fusion (~0.20M - 0.36M params):
+      3. Pairwise Round-Robin Tournament Fusion (~0.28M - 0.43M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
-         - 6 Pairwise Subspace Expert Heads (B01, B02, B03, B12, B23, B13)
-         - 6 Configurable Video Kinematics Tie-Breakers.
-         - Tournament Borda Voting to derive final calibrated multi-class probabilities.
+         - 6 Pairwise Subspace Expert Heads (B01, B02, B03, B12, B23, B13).
+         - Configurable Dual Referees (Audio STFT & Video Kinematics) with dynamic uncertainty weighting.
+         - Tournament Borda Voting to derive final calibrated multi-class probabilities (Sum = 6.0).
 
-    Total Parameters: ~4.08M (default 0 tie-breakers) to ~4.23M (all 6 tie-breakers enabled) (< 5.0M).
+    Total Parameters: ~4.15M (default 6 dual referees B12, B23, B13) (< 5.0M).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -40,13 +41,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
-        enable_b01: bool = False,
-        enable_b02: bool = False,
-        enable_b03: bool = False,
-        enable_b12: bool = False,
-        enable_b23: bool = False,
-        enable_b13: bool = False,
-        tie_breakers: Optional[Dict[str, bool]] = None,
+        tie_breakers: Optional[Any] = None,
         **kwargs
     ) -> None:
         super().__init__()
@@ -55,22 +50,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.num_frames = num_frames
         self.image_size = image_size
         self.in_chans = in_chans
-
-        # Extract tie_breaker flags from tie_breakers dict or explicit args
-        if tie_breakers is not None:
-            self.enable_b01 = bool(tie_breakers.get("enable_b01", enable_b01))
-            self.enable_b02 = bool(tie_breakers.get("enable_b02", enable_b02))
-            self.enable_b03 = bool(tie_breakers.get("enable_b03", enable_b03))
-            self.enable_b12 = bool(tie_breakers.get("enable_b12", enable_b12))
-            self.enable_b23 = bool(tie_breakers.get("enable_b23", enable_b23))
-            self.enable_b13 = bool(tie_breakers.get("enable_b13", enable_b13))
-        else:
-            self.enable_b01 = bool(enable_b01)
-            self.enable_b02 = bool(enable_b02)
-            self.enable_b03 = bool(enable_b03)
-            self.enable_b12 = bool(enable_b12)
-            self.enable_b23 = bool(enable_b23)
-            self.enable_b13 = bool(enable_b13)
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
@@ -88,16 +67,12 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Multimodal Tournament Fusion with 6 Configurable Video Kinematics Tie-Breakers (~0.20M - 0.36M)
+        # 3. Multimodal Tournament Fusion with Flat 4-Class Dual Referees (~0.28M - 0.43M)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,
-            enable_b01=self.enable_b01,
-            enable_b02=self.enable_b02,
-            enable_b03=self.enable_b03,
-            enable_b12=self.enable_b12,
-            enable_b23=self.enable_b23,
-            enable_b13=self.enable_b13,
+            tie_breakers=tie_breakers,
+            **kwargs
         )
 
         # 4. Auxiliary Unimodal Classifier Heads (~1.8K params)
