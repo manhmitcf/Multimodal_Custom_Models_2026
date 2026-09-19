@@ -51,6 +51,9 @@ def validate_model_config(config: TrainConfig) -> None:
 def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Module:
     validate_model_config(config)
     model_cls = MODEL_REGISTRY[config.model.backbone]
+    active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
+    seed_everything(active_seed)
+
     from features.audio_frontend import AudioFrontend
     frontend = AudioFrontend(config.audio_features)
 
