@@ -29,21 +29,7 @@
     "classes_num": 4,
     "embed_dim": 224,
     "use_sparse_moe_routing": true,
-    "router_hidden_dim": 32,
-    "tie_breakers": {
-      "b12": {
-        "enable_audio": true,
-        "enable_video": true
-      },
-      "b23": {
-        "enable_audio": true,
-        "enable_video": true
-      },
-      "b13": {
-        "enable_audio": true,
-        "enable_video": true
-      }
-    }
+    "router_hidden_dim": 32
   },
   "video_features": {
     "image_size": 224,
