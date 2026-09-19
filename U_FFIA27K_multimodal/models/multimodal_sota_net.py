@@ -111,8 +111,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
             stft_feat = audio_input
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
-        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_7ch)
-        f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(stft_feat)
+        f_video, f_spatial, f_motion, f_burst_v, _ = self.video_backbone(frames_7ch)
+        f_audio, f_frequency, f_rhythm, f_burst_a, _ = self.audio_backbone(stft_feat)
 
         # Auxiliary Unimodal Logits & Probabilities (for standalone evaluation & Phase 1 warmup)
         logits_video = self.aux_head_video(f_video)
