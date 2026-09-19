@@ -37,17 +37,17 @@ find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
 find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
 
 # ==============================================================================
-# 3. HUẤN LUYỆN: Nhánh Thực Nghiệm (main_architecture/triple_audio_tie_breakers) (400 EPOCHS)
-#    (7-ch ConvNeXt-Nano + TKEO-STFT-MLP 2049 + Tournament Fusion 3 Tie-Breakers: 4.09M params)
-#    Artifact Upload Repo: manhmitcf/Results_main_architecture_triple_audio_tie_breakers
+# 3. HUẤN LUYỆN: Nhánh Thực Nghiệm (main_architecture/dual_referees_tie_breakers) (400 EPOCHS)
+#    (7-ch ConvNeXt-Nano + TKEO-STFT-MLP 2049 + Dual Cross-Modal Referees B12/B23/B13: ~4.17M params)
+#    Artifact Upload Repo: manhmitcf/Results_main_architecture_dual_referees_tie_breakers
 # ==============================================================================
 if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
     git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
 fi
 cd /marimo/Capstone_2026_Fish_Feeding_Intensity
 git fetch origin
-git checkout main_architecture/triple_audio_tie_breakers
-git pull origin main_architecture/triple_audio_tie_breakers
+git checkout main_architecture/dual_referees_tie_breakers
+git pull origin main_architecture/dual_referees_tie_breakers
 
 cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
 pip install --upgrade pip

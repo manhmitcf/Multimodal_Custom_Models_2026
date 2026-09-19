@@ -60,17 +60,24 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     tb_cfg = getattr(config.model, "tie_breakers", None)
     if tb_cfg is not None:
-        enable_b12 = getattr(tb_cfg, "enable_b12", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b12", True)
-        enable_b23 = getattr(tb_cfg, "enable_b23", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b23", True)
-        enable_b13 = getattr(tb_cfg, "enable_b13", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b13", True)
+        if hasattr(tb_cfg, "b12"):
+            b12_str = f"Audio={tb_cfg.b12.enable_audio}, Video={tb_cfg.b12.enable_video}"
+            b23_str = f"Audio={tb_cfg.b23.enable_audio}, Video={tb_cfg.b23.enable_video}"
+            b13_str = f"Audio={tb_cfg.b13.enable_audio}, Video={tb_cfg.b13.enable_video}"
+        elif isinstance(tb_cfg, dict):
+            b12_str = f"Audio={tb_cfg.get('b12', {}).get('enable_audio', True)}, Video={tb_cfg.get('b12', {}).get('enable_video', True)}"
+            b23_str = f"Audio={tb_cfg.get('b23', {}).get('enable_audio', True)}, Video={tb_cfg.get('b23', {}).get('enable_video', True)}"
+            b13_str = f"Audio={tb_cfg.get('b13', {}).get('enable_audio', True)}, Video={tb_cfg.get('b13', {}).get('enable_video', True)}"
+        else:
+            b12_str = b23_str = b13_str = "Default"
     else:
-        enable_b12 = True
-        enable_b23 = True
-        enable_b13 = True
+        b12_str = b23_str = b13_str = "All True"
 
     logger.info(
-        f"Audio STFT Tie-Breakers configuration: B12 (Weak vs Med)={enable_b12}, "
-        f"B23 (Med vs Strong)={enable_b23}, B13 (Weak vs Strong)={enable_b13}"
+        f"Dual Cross-Modal Referees configuration: "
+        f"B12 (Weak vs Med)=[{b12_str}], "
+        f"B23 (Med vs Strong)=[{b23_str}], "
+        f"B13 (Weak vs Strong)=[{b13_str}]"
     )
 
     return model_cls(
@@ -80,9 +87,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=in_chans,
-        enable_b12=enable_b12,
-        enable_b23=enable_b23,
-        enable_b13=enable_b13,
+        tie_breakers=tb_cfg,
     )
 
 

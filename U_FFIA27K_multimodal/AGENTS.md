@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/triple_audio_tie_breakers | Multimodal SOTA Tournament Network (~4.09M Params)
+# Branch: main_architecture/dual_referees_tie_breakers | Multimodal SOTA Tournament Network with Dual Cross-Modal Referees (~4.17M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-             MULTIMODAL SOTA TOURNAMENT NETWORK (~4.09M PARAMS)
+     HIERARCHICAL 2-LEVEL TOURNAMENT WITH DUAL CROSS-MODAL REFEREES (~4.17M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -32,17 +32,23 @@ This document defines the invariant architectural constraints, operational guide
              │                                                    │
              └─────────────────────────┬──────────────────────────┘
                                        ▼
+                     [CROSS-MODAL RELIABILITY GATING]
+                     - Reliability Gating: g = sigma(W[f_V || f_A])
+                     - Fused Representation: f_fused = LayerNorm(g * f_V + (1-g) * f_A)
+                     - Projected Joint Representation: f_joint = ProjJoint(f_fused) (dim=224)
+                                       │
+                                       ▼
                      [MULTIMODAL TOURNAMENT FUSION ENGINE]
-                     - Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A])
-                     - Fused Representation: f_fused = g * f_V + (1-g) * f_A (dim=224)
                      - Level 1: Feeding Activity Gate Head (None vs Active Feeding)
-                     - Level 2: 3 Specialized Pairwise Subspace Expert Heads
-                       with 3 Configurable Audio STFT Tie-Breakers:
-                         * B12: Weak vs Medium (+ Audio STFT Tie-Breaker)
-                         * B23: Medium vs Strong (+ Audio STFT Tie-Breaker)
-                         * B13: Weak vs Strong (+ Audio STFT Tie-Breaker)
+                     - Level 2: 3 Specialized Pairwise Subspace Heads with Dual Cross-Modal Referees:
+                         * B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee)
+                         * B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee)
+                         * B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee)
+                     - Dual Referee Intervention Formula:
+                         u_tie = exp(-|logit_base|)
+                         logit = logit_base + u_tie * (gamma_A * logit_audio + gamma_V * logit_video)
                      - Tournament Borda Voting -> Final Calibrated Probabilities
-                     [~0.219M params | FLOPs: 1.7085 GFLOPs]
+                     [~0.296M params | FLOPs: 1.7087 GFLOPs]
                                        │
                                        ▼
                      [4 Feeding Intensity Predictions]
@@ -52,11 +58,12 @@ This document defines the invariant architectural constraints, operational guide
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
-- **Tournament Decision Head (Pairwise 3 Tie-Breakers + Borda)**: `219,435` (~`0.219M`)
-- **Auxiliary Heads (Deep Supervision)**: `1,800`
-- **Total Trainable Parameters**: `4,092,629` (~`4.093M`)
-- **Remaining Headroom**: `907,371` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `1.7085 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+- **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
+- **Tournament Decision Head (Pairwise Base + 6 Dual Referees + Borda)**: `296,049` (~`0.296M`)
+- **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
+- **Total Trainable Parameters**: `4,169,243` (~`4.169M`)
+- **Remaining Headroom**: `830,757` parameters below the 5.0M budget limit.
+- **Inference Complexity**: `1.7087 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
 
@@ -88,20 +95,27 @@ This document defines the invariant architectural constraints, operational guide
 
 ### 2.3 Tournament Fusion Engine (`MultimodalTournamentFusion`)
 - **Reliability Gating**: alpha = sigma(W_gate[f_V || f_A]).
+- **Fused & Joint Projection**: f_fused = LayerNorm(g * f_V + (1-g) * f_A), f_joint = ProjJoint(f_fused).
 - **2-Level Tournament Decision Hierarchy**:
   - **Level 1**: Activity Gate Head classifies P(Feeding) vs P(None).
-  - **Level 2**: 3 specialized pairwise subspace heads:
-    - B12: Weak vs Medium.
-    - B23: Medium vs Strong (with Audio STFT Tie-Breaker to resolve boundary overlap).
-    - B13: Weak vs Strong (cross boundary).
-  - **Borda Voting**: Derives calibrated multi-class distribution from tournament matchup scores.
+  - **Level 2**: 3 specialized pairwise subspace heads with Dual Cross-Modal Referees:
+    - B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee).
+    - B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee).
+    - B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee).
+  - **Dual Referee Intervention Formulation**:
+    $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}|)$$
+    $$\text{logit} = \text{logit}_{\text{base}} + u_{\text{tie}} \cdot \Big(\gamma_A \cdot \text{logit}_{\text{audio}} + \gamma_V \cdot \text{logit}_{\text{video}}\Big)$$
+    where $\gamma_A, \gamma_V$ are learnable scalars initialized to $0.5$.
+  - **Borda Voting**: Derives calibrated multi-class distribution from tournament matchup scores:
+    $$V_c = \sum_{k \neq c} P(c > k)$$
+    with exact algebraic invariant $V_{\text{Weak}} + V_{\text{Medium}} + V_{\text{Strong}} = 3.0$.
 
 ---
 
 ## 3. Training & Optimization Policy
 
 Configurations are defined in `config/train_config.json` and validated by `config/train_config.py`:
-- **Training Strategy**: Single-Phase End-to-End simultaneously optimizing all 123 parameter tensors.
+- **Training Strategy**: Single-Phase End-to-End simultaneously optimizing all 158 parameter tensors.
 - **Optimizer**: AdamW (learning_rate = 1e-3, weight_decay = 0.05).
 - **Learning Rate Schedule**: OneCycleLR (batch-level, epochs = 400, pct_start = 0.05, div_factor = 25, final_div_factor = 1000).
 - **Gradient Clipping**: max_norm = 5.0.
@@ -133,7 +147,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_main_architecture_triple_audio_tie_breakers`.
+- Remote dataset repository: `manhmitcf/Results_main_architecture_dual_referees_tie_breakers`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
@@ -143,7 +157,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 
 ## 5. Mandatory Verification Checklist
 
-Before proposing or committing any code changes on branch `main_architecture/triple_audio_tie_breakers`, agents **MUST** execute and pass:
+Before proposing or committing any code changes on branch `main_architecture/dual_referees_tie_breakers`, agents **MUST** execute and pass:
 
 ```bash
 cd U_FFIA27K_multimodal
@@ -151,9 +165,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,092,629).
-- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7085 GFLOPs).
-- [x] **Gradient Propagation**: 100% of trainable parameters (137/137 tensors) receive active gradients.
-- [x] **Configurable Tie-Breakers**: Full support for toggling B12, B23, B13 Audio Tie-Breakers via `train_config.json`.
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,169,243).
+- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7087 GFLOPs).
+- [x] **Gradient Propagation**: 100% of trainable parameters (158/158 tensors) receive active gradients.
+- [x] **Configurable Tie-Breakers**: Full support for toggling B12, B23, B13 Audio and Video Referees via `train_config.json`.
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
 - [x] **Clean Exit**: Dry-run completes with exit code 0 on both CPU and CUDA.

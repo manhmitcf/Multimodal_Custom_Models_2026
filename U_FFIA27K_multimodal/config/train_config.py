@@ -48,21 +48,38 @@ class AudioFeaturesConfig(BaseModel):
     noise_std: float = Field(default=0.02, description="Standard deviation of Gaussian spectral jitter noise.")
 
 
-class TieBreakersConfig(BaseModel):
+class MatchupTieBreakersConfig(BaseModel):
     """
-    Configuration for Audio STFT Tie-Breaker heads on Level 2 pairwise matchups.
+    Configuration for Dual Cross-Modal Referees (Audio STFT & Video Kinematics) on a single pairwise matchup.
     """
-    enable_b12: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Weak vs Medium (B12).")
-    enable_b23: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Medium vs Strong (B23).")
-    enable_b13: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Weak vs Strong (B13).")
+    enable_audio: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for this matchup.")
+    enable_video: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for this matchup.")
+
+
+class DualTieBreakersConfig(BaseModel):
+    """
+    Configuration for Dual Cross-Modal Referee heads on Level 2 pairwise matchups (B12, B23, B13).
+    """
+    b12: MatchupTieBreakersConfig = Field(
+        default_factory=MatchupTieBreakersConfig,
+        description="Dual Referees for Weak vs Medium (B12)."
+    )
+    b23: MatchupTieBreakersConfig = Field(
+        default_factory=MatchupTieBreakersConfig,
+        description="Dual Referees for Medium vs Strong (B23)."
+    )
+    b13: MatchupTieBreakersConfig = Field(
+        default_factory=MatchupTieBreakersConfig,
+        description="Dual Referees for Weak vs Strong (B13)."
+    )
 
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model (~4.09M parameters).
+    Configuration for Multimodal Tournament Model with Dual Cross-Modal Referees (~4.17M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Pairwise Boundary Tournament Decision Head with 3 Audio Tie-Breakers ~0.22M
+    Fusion: Pairwise Boundary Tournament Decision Head with Dual Referees (Audio + Video) ~0.30M
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
@@ -70,9 +87,9 @@ class ModelConfig(BaseModel):
     )
     embed_dim: int = Field(default=224, description="Common multimodal embedding dimension.")
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
-    tie_breakers: TieBreakersConfig = Field(
-        default_factory=TieBreakersConfig,
-        description="Pairwise Audio STFT Tie-Breaker configurations."
+    tie_breakers: DualTieBreakersConfig = Field(
+        default_factory=DualTieBreakersConfig,
+        description="Pairwise Dual Cross-Modal Referee configurations for B12, B23, B13."
     )
 
 

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
@@ -12,9 +12,10 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Tournament Network (~4.09M Total Parameters).
+    Multimodal Tournament Network with Dual Cross-Modal Referees (~4.17M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Audio Tie-Breakers:
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Dual Cross-Modal Referees
+    (Audio STFT + Video Kinematics) for all pairwise matchups (B12, B23, B13):
 
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
@@ -22,16 +23,16 @@ class MultimodalBoundaryAwareNet(nn.Module):
       2. Acoustic Time-Frequency Stream (~1.17M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion (~0.22M params):
+      3. Pairwise Tournament Fusion with Dual Referees (~0.30M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
-         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with 3 Configurable Audio STFT Tie-Breakers:
-             * B12: Weak vs Medium (with Audio STFT Tie-Breaker)
-             * B23: Medium vs Strong (with Audio STFT Tie-Breaker)
-             * B13: Weak vs Strong (with Audio STFT Tie-Breaker)
+         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with Dual Cross-Modal Referees:
+             * B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee)
+             * B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee)
+             * B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee)
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: ~4.09M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~4.17M (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -43,10 +44,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
-        enable_b12: bool = True,
-        enable_b23: bool = True,
-        enable_b13: bool = True,
-        tie_breakers: Optional[Dict[str, bool]] = None,
+        tie_breakers: Optional[Any] = None,
         **kwargs
     ) -> None:
         super().__init__()
@@ -55,16 +53,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.num_frames = num_frames
         self.image_size = image_size
         self.in_chans = in_chans
-
-        # Extract tie_breaker flags from tie_breakers dict or explicit args
-        if tie_breakers is not None:
-            self.enable_b12 = bool(tie_breakers.get("enable_b12", enable_b12))
-            self.enable_b23 = bool(tie_breakers.get("enable_b23", enable_b23))
-            self.enable_b13 = bool(tie_breakers.get("enable_b13", enable_b13))
-        else:
-            self.enable_b12 = bool(enable_b12)
-            self.enable_b23 = bool(enable_b23)
-            self.enable_b13 = bool(enable_b13)
+        self.tie_breakers = tie_breakers
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
@@ -82,13 +71,12 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Multimodal Tournament Fusion with 3 Configurable Tie-Breakers (~0.22M)
+        # 3. Multimodal Tournament Fusion with Dual Cross-Modal Referees (~0.30M)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,
-            enable_b12=self.enable_b12,
-            enable_b23=self.enable_b23,
-            enable_b13=self.enable_b13,
+            tie_breakers=tie_breakers,
+            **kwargs
         )
 
         # 4. Auxiliary Unimodal Classifier Heads (~1.8K params)
@@ -159,18 +147,24 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "logit_12": fusion_outputs.get("logit_12"),
             "logit_12_base": fusion_outputs.get("logit_12_base"),
             "logit_12_a": fusion_outputs.get("logit_12_a"),
+            "logit_12_v": fusion_outputs.get("logit_12_v"),
             "u_tie_12": fusion_outputs.get("u_tie_12"),
-            "gamma_12": fusion_outputs.get("gamma_12"),
+            "gamma_12_a": fusion_outputs.get("gamma_12_a"),
+            "gamma_12_v": fusion_outputs.get("gamma_12_v"),
             "logit_23": fusion_outputs.get("logit_23"),
             "logit_23_base": fusion_outputs.get("logit_23_base"),
             "logit_23_a": fusion_outputs.get("logit_23_a"),
+            "logit_23_v": fusion_outputs.get("logit_23_v"),
             "u_tie_23": fusion_outputs.get("u_tie_23"),
-            "gamma_23": fusion_outputs.get("gamma_23"),
+            "gamma_23_a": fusion_outputs.get("gamma_23_a"),
+            "gamma_23_v": fusion_outputs.get("gamma_23_v"),
             "logit_13": fusion_outputs.get("logit_13"),
             "logit_13_base": fusion_outputs.get("logit_13_base"),
             "logit_13_a": fusion_outputs.get("logit_13_a"),
+            "logit_13_v": fusion_outputs.get("logit_13_v"),
             "u_tie_13": fusion_outputs.get("u_tie_13"),
-            "gamma_13": fusion_outputs.get("gamma_13"),
+            "gamma_13_a": fusion_outputs.get("gamma_13_a"),
+            "gamma_13_v": fusion_outputs.get("gamma_13_v"),
             # Tournament pairwise winning probabilities & Borda voting scores
             "p_w_over_m": fusion_outputs.get("p_w_over_m"),
             "p_m_over_s": fusion_outputs.get("p_m_over_s"),
