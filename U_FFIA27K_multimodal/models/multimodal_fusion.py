@@ -8,19 +8,13 @@ logger = logging.getLogger(__name__)
 
 
 def _make_subspace_head(dim: int, hidden_dim: int = 112) -> nn.Sequential:
-    """Helper to build a 2-layer MLP head with LayerNorm and Kaiming initialization."""
-    head = nn.Sequential(
+    """Helper to build a 2-layer MLP head with LayerNorm using 100% native PyTorch initialization."""
+    return nn.Sequential(
         nn.Linear(dim, hidden_dim),
         nn.GELU(),
         nn.LayerNorm(hidden_dim),
         nn.Linear(hidden_dim, 1)
     )
-    for m in head.modules():
-        if isinstance(m, nn.Linear):
-            nn.init.kaiming_uniform_(m.weight, a=0.2, nonlinearity='leaky_relu')
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-    return head
 
 
 class PairwiseBoundaryTournamentHead(nn.Module):
