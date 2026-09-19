@@ -152,7 +152,7 @@ def test_end_to_end_from_scratch():
 
 def test_tie_breakers_toggle_config():
     print("\n" + "=" * 65)
-    print("TEST 5: CONFIGURABLE AUDIO TIE-BREAKER TOGGLE (6 MATCHUPS)")
+    print("TEST 5: CONFIGURABLE VIDEO TIE-BREAKER TOGGLE (6 MATCHUPS)")
     print("=" * 65)
 
     B = 2
@@ -165,17 +165,17 @@ def test_tie_breakers_toggle_config():
         enable_b12=True, enable_b23=True, enable_b13=False
     )
     th = model_subset.fusion.tournament_head
-    assert th.head_b01_a is None
-    assert th.head_b02_a is None
-    assert th.head_b03_a is not None
-    assert th.head_b12_a is not None
-    assert th.head_b23_a is not None
-    assert th.head_b13_a is None
+    assert th.head_b01_v is None
+    assert th.head_b02_v is None
+    assert th.head_b03_v is not None
+    assert th.head_b12_v is not None
+    assert th.head_b23_v is not None
+    assert th.head_b13_v is None
 
     out_subset = model_subset(v_input, a_input)
     assert out_subset["probabilities"].shape == (B, 4)
     p_params_subset = sum(p.numel() for p in model_subset.parameters())
-    print(f"  Case A (Selective Tie-Breakers): {p_params_subset:,} params - verified clean!")
+    print(f"  Case A (Selective Video Tie-Breakers): {p_params_subset:,} params - verified clean!")
 
     # Case B: All tie-breakers disabled (pure joint tournament ablation)
     model_none = MultimodalBoundaryAwareNet(
@@ -183,11 +183,11 @@ def test_tie_breakers_toggle_config():
         enable_b12=False, enable_b23=False, enable_b13=False
     )
     th_none = model_none.fusion.tournament_head
-    assert all(getattr(th_none, f"head_b{pair}_a") is None for pair in ["01", "02", "03", "12", "23", "13"])
+    assert all(getattr(th_none, f"head_b{pair}_v") is None for pair in ["01", "02", "03", "12", "23", "13"])
     out_none = model_none(v_input, a_input)
     assert out_none["probabilities"].shape == (B, 4)
     p_params_none = sum(p.numel() for p in model_none.parameters())
-    print(f"  Case B (All tie-breakers disabled): {p_params_none:,} params - verified clean!")
+    print(f"  Case B (All video tie-breakers disabled): {p_params_none:,} params - verified clean!")
 
     # Case C: All 6 tie-breakers enabled
     model_all = MultimodalBoundaryAwareNet(
@@ -195,13 +195,13 @@ def test_tie_breakers_toggle_config():
         enable_b12=True, enable_b23=True, enable_b13=True
     )
     th_all = model_all.fusion.tournament_head
-    assert all(getattr(th_all, f"head_b{pair}_a") is not None for pair in ["01", "02", "03", "12", "23", "13"])
+    assert all(getattr(th_all, f"head_b{pair}_v") is not None for pair in ["01", "02", "03", "12", "23", "13"])
     out_all = model_all(v_input, a_input)
     assert out_all["probabilities"].shape == (B, 4)
     p_params_all = sum(p.numel() for p in model_all.parameters())
-    print(f"  Case C (All 6 tie-breakers enabled): {p_params_all:,} params - verified clean!")
+    print(f"  Case C (All 6 video tie-breakers enabled): {p_params_all:,} params - verified clean!")
 
-    print("[PASSED] Configurable audio tie-breaker toggle verified across all ablation states!")
+    print("[PASSED] Configurable video tie-breaker toggle verified across all ablation states!")
 
 
 def test_consistent_video_transform():

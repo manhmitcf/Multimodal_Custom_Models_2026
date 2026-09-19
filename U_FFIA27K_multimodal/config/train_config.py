@@ -50,14 +50,14 @@ class AudioFeaturesConfig(BaseModel):
 
 class TieBreakersConfig(BaseModel):
     """
-    Configuration for Audio STFT Tie-Breaker heads on 6 pairwise matchups.
+    Configuration for Video Kinematics Tie-Breaker heads on 6 pairwise matchups.
     """
-    enable_b01: bool = Field(default=False, description="Enable Audio Tie-Breaker for None vs Strong (B01).")
-    enable_b02: bool = Field(default=False, description="Enable Audio Tie-Breaker for None vs Medium (B02).")
-    enable_b03: bool = Field(default=False, description="Enable Audio Tie-Breaker for None vs Weak (B03).")
-    enable_b12: bool = Field(default=False, description="Enable Audio Tie-Breaker for Strong vs Medium (B12).")
-    enable_b23: bool = Field(default=False, description="Enable Audio Tie-Breaker for Medium vs Weak (B23).")
-    enable_b13: bool = Field(default=False, description="Enable Audio Tie-Breaker for Strong vs Weak (B13).")
+    enable_b01: bool = Field(default=False, description="Enable Video Tie-Breaker for None vs Strong (B01).")
+    enable_b02: bool = Field(default=False, description="Enable Video Tie-Breaker for None vs Medium (B02).")
+    enable_b03: bool = Field(default=False, description="Enable Video Tie-Breaker for None vs Weak (B03).")
+    enable_b12: bool = Field(default=False, description="Enable Video Tie-Breaker for Strong vs Medium (B12).")
+    enable_b23: bool = Field(default=False, description="Enable Video Tie-Breaker for Medium vs Weak (B23).")
+    enable_b13: bool = Field(default=False, description="Enable Video Tie-Breaker for Strong vs Weak (B13).")
 
 
 class PairwiseWeightsConfig(BaseModel):
@@ -74,10 +74,10 @@ class PairwiseWeightsConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model (~4.08M parameters with 0 tie-breakers by default).
+    Configuration for Multimodal Tournament Model (~4.08M - 4.23M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Flat 4-Class Round-Robin Tournament Decision Head with 6 Configurable Audio STFT Tie-Breakers (~0.20M - 0.36M)
+    Fusion: Flat 4-Class Round-Robin Tournament Decision Head with 6 Configurable Video Kinematics Tie-Breakers (~0.20M - 0.36M)
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
@@ -87,7 +87,7 @@ class ModelConfig(BaseModel):
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
     tie_breakers: TieBreakersConfig = Field(
         default_factory=TieBreakersConfig,
-        description="Pairwise Audio STFT Tie-Breaker configurations."
+        description="Pairwise Video Kinematics Tie-Breaker configurations."
     )
 
 
@@ -159,7 +159,7 @@ class TrainConfig(BaseModel):
     use_onecycle: bool = Field(default=True, description="Enable OneCycleLR scheduler.")
     seed: int = Field(default=42, ge=0, description="Master random seed.")
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
-    dataloader_workers: int = Field(default=8, description="Number of worker processes for DataLoader (-1 = auto).")
+    dataloader_workers: int = Field(default=-1, description="Number of worker processes for DataLoader (-1 = auto).")
     prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
     save_best_only: bool = Field(default=True, description="Save only the best checkpoint.")
     loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament' or 'clip_ce'.")

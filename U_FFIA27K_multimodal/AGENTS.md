@@ -1,7 +1,7 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/flat_4class_round_robin | Flat 4-Class Round-Robin Tournament Network (~4.18M Params)
+# Branch: main_architecture/flat_4class_video_tie_breakers | Flat 4-Class Round-Robin Tournament Network with Video Kinematics Tie-Breakers (~4.16M Params)
 
-This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `main_architecture/flat_4class_round_robin`.
+This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `main_architecture/flat_4class_video_tie_breakers`.
 
 ---
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-       FLAT 4-CLASS ROUND-ROBIN TOURNAMENT NETWORK (~4.18M PARAMS)
+ FLAT 4-CLASS ROUND-ROBIN WITH VIDEO KINEMATICS TIE-BREAKERS (~4.16M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -36,16 +36,19 @@ This document defines the invariant architectural constraints, operational guide
                      - Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A])
                      - Fused Representation: f_fused = g * f_V + (1-g) * f_A (dim=224)
                      - 6 Direct Pairwise Expert Heads (Binomial(4, 2) = 6):
-                         * B01: None (0) <-> Strong (1) (+ Optional Audio STFT Tie-Breaker)
-                         * B02: None (0) <-> Medium (2) (+ Optional Audio STFT Tie-Breaker)
-                         * B03: None (0) <-> Weak (3)   (+ Optional Audio STFT Tie-Breaker)
-                         * B12: Strong (1) <-> Medium (2) (+ Optional Audio STFT Tie-Breaker)
-                         * B23: Medium (2) <-> Weak (3)   (+ Optional Audio STFT Tie-Breaker)
-                         * B13: Strong (1) <-> Weak (3)   (+ Optional Audio STFT Tie-Breaker)
+                         * B01: None (0) <-> Strong (1) (+ Optional Video Kinematics Tie-Breaker)
+                         * B02: None (0) <-> Medium (2) (+ Optional Video Kinematics Tie-Breaker)
+                         * B03: None (0) <-> Weak (3)   (+ Optional Video Kinematics Tie-Breaker)
+                         * B12: Strong (1) <-> Medium (2) (+ Video Kinematics Tie-Breaker) [Default: Enabled]
+                         * B23: Medium (2) <-> Weak (3)   (+ Video Kinematics Tie-Breaker) [Default: Enabled]
+                         * B13: Strong (1) <-> Weak (3)   (+ Video Kinematics Tie-Breaker) [Default: Enabled]
+                     - Video Referee Intervention:
+                         u_tie = exp(-|logit_base|)
+                         logit = logit_base + gamma * u_tie * logit_video
                      - 4-Class Tournament Borda Voting:
                          * V_c = Sum_{k != c} P(c > k), Sum(V_c) = 6.0
                          * P_final = Softmax([V_0, V_1, V_2, V_3] * tau)
-                     [~0.307M params | FLOPs: 1.7087 GFLOPs]
+                     [~0.282M params | FLOPs: 1.7087 GFLOPs]
                                        │
                                        ▼
                      [4 Feeding Intensity Predictions]
@@ -55,12 +58,12 @@ This document defines the invariant architectural constraints, operational guide
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
-- **Tournament Decision Head (6 Pairwise Base Heads, 0 Tie-Breakers Default)**: `204,967` (~`0.205M`)
+- **Tournament Decision Head (6 Base Heads + 3 Active Video Tie-Breakers B12, B23, B13)**: `281,581` (~`0.282M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800`
-- **Total Trainable Parameters (Default 0 Tie-Breakers)**: `4,078,161` (~`4.078M`) [130 parameter tensors]
-- **Remaining Headroom**: `921,839` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `1.7085 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
-*(Note: With all 6 Audio STFT Tie-Breakers enabled, parameters scale up to 4,231,389 (~4.231M) across 172 tensors).*
+- **Total Trainable Parameters (Default 3 Video Tie-Breakers)**: `4,154,775` (~`4.155M`) [151 parameter tensors]
+- **Remaining Headroom**: `845,225` parameters below the 5.0M budget limit.
+- **Inference Complexity**: `1.7087 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+*(Note: Range spans from 4,078,161 (~4.078M, 130 tensors) with 0 tie-breakers up to 4,231,389 (~4.231M, 172 tensors) if all 6 video tie-breakers are enabled).*
 
 ---
 
@@ -94,7 +97,7 @@ This document defines the invariant architectural constraints, operational guide
 - **Reliability Gating**: alpha = sigma(W_gate[f_V || f_A]).
 - **Flat 4-Class Round-Robin Matchups**:
   - 6 Pairwise Heads: B01, B02, B03, B12, B23, B13.
-  - Configurable Audio STFT Tie-Breakers: u_tie = exp(-|logit_base|), logit = logit_base + gamma * u_tie * logit_audio.
+  - Configurable Video Kinematics Tie-Breakers: $u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}|)$, $\text{logit} = \text{logit}_{\text{base}} + \gamma \cdot u_{\text{tie}} \cdot \text{logit}_{\text{video}}$.
 - **Borda Voting**:
   - V_c = Sum_{k != c} P(c > k). Sum of all 4 scores equals strictly 6.0.
   - Final probabilities derived via Softmax with temperature tau=2.0.
@@ -115,9 +118,32 @@ Configurations are defined in `config/train_config.json` and validated by `confi
 
 ---
 
-## 4. Mandatory Verification Checklist
+## 4. Checkpoint & Artifact Management
 
-Before proposing or committing any code changes on branch `main_architecture/flat_4class_round_robin`, agents **MUST** execute and pass:
+### 4.1 Checkpoint Saving Hierarchy
+Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
+1. `best_model.pth`: Full multimodal model weights achieving peak performance.
+2. `best_video_backbone.pth`: Peak weights of ConvNeXt-Nano video backbone + video aux head.
+3. `best_audio_backbone.pth`: Peak weights of STFT-MLP audio backbone + frontend + audio aux head.
+4. `last_model.pth`: Full resumption state (model, optimizer, scheduler, epoch, metrics).
+
+### 4.2 Logging Files
+- `history.csv`: 36 columns recorded per epoch.
+- `summary.csv`: Single-row consolidated metrics, latency, parameters, and GFLOPs.
+- `evaluation_detailed_report.txt` and `.json`: Comprehensive classification reports.
+
+### 4.3 Hugging Face Integration & Security
+- Remote dataset repository: `manhmitcf/Results_main_architecture_flat_4class_video_tie_breakers`.
+- Token Discovery Order:
+  1. `HF_TOKEN` environment variable.
+  2. Local `token.txt` (or `/marimo/token.txt`).
+- **CRITICAL SECURITY RULE**: `token.txt`, `*.secret`, and private keys are listed in `.gitignore` and **MUST NEVER BE COMMITTED** to version control.
+
+---
+
+## 5. Mandatory Verification Checklist
+
+Before proposing or committing any code changes on branch `main_architecture/flat_4class_video_tie_breakers`, agents **MUST** execute and pass:
 
 ```bash
 cd U_FFIA27K_multimodal
@@ -125,9 +151,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current Default: 4,078,161).
-- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current Default: 1.7085 GFLOPs).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current Default: 4,154,775).
+- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current Default: 1.7087 GFLOPs).
 - [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients.
-- [x] **Configurable Audio Tie-Breakers**: Full support for toggling any subset of 6 Audio Tie-Breakers via `train_config.json` (defaults to all disabled).
+- [x] **Configurable Video Tie-Breakers**: Full support for toggling any subset of 6 Video Tie-Breakers via `train_config.json` (defaults to B12, B23, B13 enabled).
 - [x] **Algebraic Invariant**: Sum of Borda votes across 4 classes strictly equals 6.0.
 - [x] **Clean Exit**: Dry-run completes with exit code 0 on both CPU and CUDA.

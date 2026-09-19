@@ -87,7 +87,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         }
 
     logger.info(
-        f"Audio STFT Tie-Breakers configuration: "
+        f"Video Kinematics Tie-Breakers configuration: "
         f"B01(None vs Strong)={tb_dict['enable_b01']}, "
         f"B02(None vs Med)={tb_dict['enable_b02']}, "
         f"B03(None vs Weak)={tb_dict['enable_b03']}, "
