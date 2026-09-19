@@ -84,7 +84,7 @@ This document defines the invariant architectural constraints, operational guide
   - Log Magnitude: log(|X| + 1e-8) followed by temporal mean pooling -> [B, 2049].
   - Spectral 1D Augmentation (`Spectral1DAugmentation`): Cutout (24 bins, p=0.5) and Gaussian Jitter (std=0.02) during training; identity pass-through during evaluation.
 - **Backbone (`AudioMLPBackbone`)**:
-  - 2-layer MLP projection with LayerNorm and GELU (2049 -> 224 -> 224).
+  - 2-layer MLP projection with LayerNorm and GELU (2049 -> 512 -> 224).
 
 ### 2.3 Tournament Fusion Engine (`MultimodalTournamentFusion`)
 - **Reliability Gating**: alpha = sigma(W_gate[f_V || f_A]).
