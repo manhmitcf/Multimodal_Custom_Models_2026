@@ -860,7 +860,6 @@ class FishDataSplitter(BaseDataSplitter):
                                             video_fix_example = (raw_video_path, fixed_path)
                                         raw_video_path = fixed_path
                                         fixed_count += 1
-                                        need_rewrite_files = True
                                     else:
                                         if missing_count < 3:
                                             # Display the primary checked path in warning for reference
@@ -878,7 +877,6 @@ class FishDataSplitter(BaseDataSplitter):
                                 if audio_fix_example is None:
                                     audio_fix_example = (original_audio_path, audio_path_str)
                                 audio_updated_count += 1
-                                need_rewrite_files = True
                             loaded_data.append([audio_path_str, raw_video_path, label])
                     
                     # Print detailed logs
