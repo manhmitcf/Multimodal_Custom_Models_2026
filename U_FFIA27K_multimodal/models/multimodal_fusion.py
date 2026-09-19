@@ -19,7 +19,7 @@ def _make_subspace_head(dim: int, hidden_dim: int = 112) -> nn.Sequential:
 
 class PairwiseBoundaryTournamentHead(nn.Module):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Head with Dual Cross-Modal Referees (~208K params).
+    Hierarchical Pairwise Cross-Boundary Tournament Head with Dual Cross-Modal Referees (~244K params).
     
     Level 1: Feeding Activity Gating
       - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
