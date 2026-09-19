@@ -81,21 +81,22 @@ def _make_subspace_head(dim: int, hidden_dim: int = 112) -> nn.Sequential:
 
 class PairwiseBoundaryTournamentHead(nn.Module):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Head with Dual Cross-Modal Referees (~244K params).
+    Hierarchical Pairwise Cross-Boundary Tournament Head with Sparse Mixture-of-Referees (SMoR, ~288K params).
     
     Level 1: Feeding Activity Gating
       - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
       - p_feeding = sigmoid(w_act^T * f) in (0, 1)
       - p_none = 1 - p_feeding
 
-    Level 2: 3-Way Pairwise Cross-Boundary Tournament with Dual Referees (Audio STFT + Video Kinematics)
-      - B12: Weak <-> Medium    -> Base Head on f_joint + Optional Audio STFT + Optional Video Kinematics
-      - B23: Medium <-> Strong  -> Base Head on f_joint + Optional Audio STFT + Optional Video Kinematics
-      - B13: Weak <-> Strong    -> Base Head on f_joint + Optional Audio STFT + Optional Video Kinematics
+    Level 2: 3-Way Pairwise Cross-Boundary Tournament with Sparse Mixture-of-Referees (SMoR)
+      - B12: Weak <-> Medium    -> Base Head on f_joint + Audio STFT Referee + Video Kinematics Referee + Router B12
+      - B23: Medium <-> Strong  -> Base Head on f_joint + Audio STFT Referee + Video Kinematics Referee + Router B23
+      - B13: Weak <-> Strong    -> Base Head on f_joint + Audio STFT Referee + Video Kinematics Referee + Router B13
 
-    Dual Referee Intervention:
-      logit = logit_base + u_tie * (gamma_A * logit_A + gamma_V * logit_V)
-      where u_tie = exp(-|logit_base|) represents referee indecisiveness.
+    Sparse Referee Dynamic Intervention:
+      logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V)
+      where u_tie = exp(-|logit_base|) represents referee indecisiveness,
+      and [m_A, m_V] in {0, 1}^2 are discrete binary decisions via Straight-Through Estimator (STE).
 
     Tournament Scoring (Borda count):
       - V_Weak   = P(W > M) + P(W > S)
@@ -155,7 +156,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             nn.Linear(64, 1)
         )
 
-        # Level 2: 3 Specialized Pairwise Subspace Heads + Dual Referees
+        # Level 2: 3 Specialized Pairwise Subspace Heads + Referees
         # B12: Weak vs Medium
         self.head_b12 = _make_subspace_head(dim, 112)
         if self.enable_b12_a:
@@ -228,7 +229,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         p_feeding = torch.sigmoid(logit_act)                # [B] in (0, 1)
         p_none = torch.clamp(1.0 - p_feeding, min=1e-6)     # [B]
 
-        # 2. Level 2: 3 Pairwise Cross-Boundary Logits with Dual Referees & SMoR Routing
+        # 2. Level 2: 3 Pairwise Cross-Boundary Logits with Referees & SMoR Routing
         # B12 (Weak vs Medium)
         logit_12_base = self.head_b12(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Medium)
         u_tie_12 = torch.exp(-torch.abs(logit_12_base))
@@ -429,10 +430,10 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~296K params).
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine with SMoR (~339K params).
     1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
     2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
-       with Dual Cross-Modal Referees (Audio STFT + Video Kinematics) on B12, B23, B13.
+       with Sparse Mixture-of-Referees (Audio STFT + Video Kinematics + Dynamic STE Routers) on B12, B23, B13.
     """
     def __init__(
         self,
@@ -495,7 +496,7 @@ class MultimodalTournamentFusion(nn.Module):
         f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)
         f_joint = self.proj_joint(f_fused)
 
-        # Step 2: Pairwise Boundary Tournament with Dual Cross-Modal Referees
+        # Step 2: Pairwise Boundary Tournament with Sparse Mixture-of-Referees (SMoR)
         out = self.tournament_head(f_joint, f_audio=f_audio, f_video=f_video)
 
         # Step 3: Package metrics

@@ -12,27 +12,30 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Tournament Network with Dual Cross-Modal Referees (~4.17M Total Parameters).
+    Hierarchical Multimodal Tournament Network with Sparse Mixture-of-Referees (SMoR-Net, ~4.21M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Dual Cross-Modal Referees
-    (Audio STFT + Video Kinematics) for all pairwise matchups (B12, B23, B13):
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Sparse Mixture-of-Referees
+    (SMoR: Audio STFT + Video Kinematics + Dynamic STE Routers) for all pairwise matchups (B12, B23, B13):
 
-      1. Visual-Kinematic Stream (~2.70M params):
+      1. Visual-Kinematic Stream (~2.701M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
-      2. Acoustic Time-Frequency Stream (~1.17M params):
+      2. Acoustic Time-Frequency Stream (~1.166M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion with Dual Referees (~0.30M params):
+      3. Pairwise Tournament Fusion with Sparse Mixture-of-Referees (~0.339M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
-         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with Dual Cross-Modal Referees:
-             * B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee)
-             * B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee)
-             * B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee)
+         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with Sparse Mixture-of-Referees (SMoR):
+             * B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B12)
+             * B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23)
+             * B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13)
+         - Sparse Referee Routers with Straight-Through Estimator (STE) supporting 4 discrete states:
+           (1,1), (1,0), (0,1), (0,0).
+         - Dynamic Referee Intervention: logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: ~4.17M (Strictly < 5.0M parameter constraint).
+    Total Parameters: 4,212,545 (~4.213M) (Strictly < 5.0M parameter constraint, remaining headroom: 787,455).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -71,7 +74,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Multimodal Tournament Fusion with Dual Cross-Modal Referees (~0.30M)
+        # 3. Multimodal Tournament Fusion with Sparse Mixture-of-Referees (~0.339M)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,

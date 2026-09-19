@@ -13,7 +13,7 @@ from utils.losses import PairwiseTournamentLoss
 
 def test_parameter_budget():
     print("\n" + "=" * 65)
-    print("TEST 1: DUAL REFEREES TOURNAMENT PARAMETER BUDGET (< 5.0M)")
+    print("TEST 1: SMoR-NET TOURNAMENT PARAMETER BUDGET (< 5.0M)")
     print("=" * 65)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
@@ -25,7 +25,7 @@ def test_parameter_budget():
     print(f"Total Model Parameters:               {total_params:,}")
     print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
     print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
-    print(f"  - Pairwise Dual Referees Fusion:      {f_params:,}")
+    print(f"  - Pairwise SMoR Fusion:               {f_params:,}")
 
     strict_limit = 5000000
     assert total_params < strict_limit, f"FAILED: Exceeded budget {total_params} >= {strict_limit}"
@@ -35,7 +35,7 @@ def test_parameter_budget():
 
 def test_tournament_forward_and_pairwise():
     print("\n" + "=" * 65)
-    print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & DUAL CROSS-MODAL REFEREES")
+    print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & SPARSE MIXTURE-OF-REFEREES")
     print("=" * 65)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
@@ -53,7 +53,7 @@ def test_tournament_forward_and_pairwise():
     print(f"Level 1 Feeding Activity Probabilities: {p_feeding.tolist()}")
     assert (p_feeding >= 0.0).all() and (p_feeding <= 1.0).all(), "p_feeding out of [0, 1] range"
 
-    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13 and Dual Referees
+    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13 and Referees
     p_w_over_m = out["p_w_over_m"]
     p_m_over_s = out["p_m_over_s"]
     p_w_over_s = out["p_w_over_s"]
@@ -105,12 +105,12 @@ def test_tournament_forward_and_pairwise():
     assert intensity.shape == (B, 1)
     assert (intensity >= 0.0).all() and (intensity <= 3.0).all(), "Intensity must be in [0, 3]"
 
-    print("[PASSED] Dual Referees Tournament 2-level forward pass verified!")
+    print("[PASSED] SMoR Tournament 2-level forward pass verified!")
 
 
 def test_gradient_flow_through_loss():
     print("\n" + "=" * 65)
-    print("TEST 3: 100% GRADIENT FLOW THROUGH DUAL REFEREES LOSS")
+    print("TEST 3: 100% GRADIENT FLOW THROUGH SMoR LOSS")
     print("=" * 65)
 
     model = MultimodalBoundaryAwareNet(num_frames=2)
@@ -146,7 +146,7 @@ def test_gradient_flow_through_loss():
         assert False, f"Gradient flow broken for {len(missing_grad_params)} parameters!"
 
     print(f"[PASSED] 100% Gradient flow verified: {param_count}/{param_count} parameters with healthy gradients!")
-    print(f"  Dual Referees Composite Loss: {loss.item():.4f}")
+    print(f"  SMoR Composite Loss: {loss.item():.4f}")
 
 
 def test_end_to_end_from_scratch():
@@ -183,7 +183,7 @@ def test_end_to_end_from_scratch():
 
 def test_tie_breakers_toggle_config():
     print("\n" + "=" * 65)
-    print("TEST 5: CONFIGURABLE DUAL REFEREES TOGGLE (ABLATION VERIFICATION)")
+    print("TEST 5: CONFIGURABLE REFEREES TOGGLE (ABLATION VERIFICATION)")
     print("=" * 65)
 
     B = 2
@@ -238,7 +238,7 @@ def test_tie_breakers_toggle_config():
     p_params_v = sum(p.numel() for p in model_video.parameters())
     print(f"  Case C (Triple Video Referees Only):      {p_params_v:,} params - verified clean!")
 
-    # Case D: Full Dual Referees (Audio + Video enabled on all 3 matchups)
+    # Case D: Both Referees (Audio + Video enabled on all 3 matchups)
     tb_full_dual = {
         "b12": {"enable_audio": True, "enable_video": True},
         "b23": {"enable_audio": True, "enable_video": True},
@@ -252,9 +252,9 @@ def test_tie_breakers_toggle_config():
     out_d = model_dual(v_input, a_input)
     assert out_d["probabilities"].shape == (B, 4)
     p_params_d = sum(p.numel() for p in model_dual.parameters())
-    print(f"  Case D (Full Dual Referees - Audio + Video): {p_params_d:,} params - verified clean!")
+    print(f"  Case D (Both Referees - Audio + Video): {p_params_d:,} params - verified clean!")
 
-    print("[PASSED] Configurable dual referee toggle verified across all ablation states!")
+    print("[PASSED] Configurable referee toggle verified across all ablation states!")
 
 
 def test_consistent_video_transform():

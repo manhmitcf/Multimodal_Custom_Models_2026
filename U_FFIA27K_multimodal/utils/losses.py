@@ -28,14 +28,15 @@ class ClipCELoss(BaseLoss):
 
 class PairwiseTournamentLoss(BaseLoss):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Loss.
-    Optimizes 2-level tournament decision:
+    Hierarchical Pairwise Cross-Boundary Tournament Loss with Sparse Mixture-of-Referees (SMoR).
+    Optimizes 2-level tournament decision with MoE Load Balancing and Sparsity:
       Level 1: Activity Gating Loss (None vs Active Feeding).
       Level 2: 3 Pairwise Cross-Boundary Losses:
                - B12: Weak vs Medium
                - B23: Medium vs Strong
                - B13: Weak vs Strong (Cross-boundary jumping protection)
       Level 3: End-to-End Multi-Class Cross Entropy on final tournament voting probabilities.
+      Level 4: MoE Switch Transformer Load Balancing Loss & Parsimonious Sparsity Penalty.
     """
     def __init__(
         self,

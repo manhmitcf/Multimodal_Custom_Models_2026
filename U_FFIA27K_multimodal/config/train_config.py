@@ -50,7 +50,7 @@ class AudioFeaturesConfig(BaseModel):
 
 class MatchupTieBreakersConfig(BaseModel):
     """
-    Configuration for Dual Cross-Modal Referees (Audio STFT & Video Kinematics) on a single pairwise matchup.
+    Configuration for Cross-Modal Referees (Audio STFT & Video Kinematics) on a single pairwise matchup.
     """
     enable_audio: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for this matchup.")
     enable_video: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for this matchup.")
@@ -58,28 +58,30 @@ class MatchupTieBreakersConfig(BaseModel):
 
 class DualTieBreakersConfig(BaseModel):
     """
-    Configuration for Dual Cross-Modal Referee heads on Level 2 pairwise matchups (B12, B23, B13).
+    Configuration for Cross-Modal Referee heads on Level 2 pairwise matchups (B12, B23, B13).
     """
     b12: MatchupTieBreakersConfig = Field(
         default_factory=MatchupTieBreakersConfig,
-        description="Dual Referees for Weak vs Medium (B12)."
+        description="Referees (Audio & Video) for Weak vs Medium (B12)."
     )
     b23: MatchupTieBreakersConfig = Field(
         default_factory=MatchupTieBreakersConfig,
-        description="Dual Referees for Medium vs Strong (B23)."
+        description="Referees (Audio & Video) for Medium vs Strong (B23)."
     )
     b13: MatchupTieBreakersConfig = Field(
         default_factory=MatchupTieBreakersConfig,
-        description="Dual Referees for Weak vs Strong (B13)."
+        description="Referees (Audio & Video) for Weak vs Strong (B13)."
     )
 
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model with Dual Cross-Modal Referees (~4.17M parameters).
-    Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
-    Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Pairwise Boundary Tournament Decision Head with Dual Referees (Audio + Video) ~0.30M
+    Configuration for Multimodal Tournament Model with Sparse Mixture-of-Referees (SMoR-Net, ~4.21M parameters).
+    Video: ConvNeXt-Nano (7-ch Kinematics) ~2.701M
+    Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.166M
+    Audio Frontend: TKEO-STFT LayerNorm ~0.004M
+    Fusion: Pairwise Boundary Tournament Decision Head with SMoR Dynamic Routing ~0.339M
+    Auxiliary Heads: Video + Audio Aux Heads ~0.002M
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
@@ -89,7 +91,7 @@ class ModelConfig(BaseModel):
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
     tie_breakers: DualTieBreakersConfig = Field(
         default_factory=DualTieBreakersConfig,
-        description="Pairwise Dual Cross-Modal Referee configurations for B12, B23, B13."
+        description="Pairwise Cross-Modal Referee configurations for B12, B23, B13."
     )
     use_sparse_moe_routing: bool = Field(
         default=True,

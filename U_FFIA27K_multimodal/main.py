@@ -77,7 +77,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
     router_hidden_dim = getattr(config.model, "router_hidden_dim", getattr(config, "router_hidden_dim", 32))
 
     logger.info(
-        f"Dual Cross-Modal Referees configuration: "
+        f"Sparse Mixture-of-Referees (SMoR) configuration: "
         f"B12 (Weak vs Med)=[{b12_str}], "
         f"B23 (Med vs Strong)=[{b23_str}], "
         f"B13 (Weak vs Strong)=[{b13_str}] | "
