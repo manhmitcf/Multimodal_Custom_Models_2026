@@ -23,7 +23,7 @@
   "use_sparse_moe_routing": true,
   "router_hidden_dim": 32,
   "lambda_balance": 0.01,
-  "lambda_sparse": 0.005,
+  "lambda_sparse": 0.0005,
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,

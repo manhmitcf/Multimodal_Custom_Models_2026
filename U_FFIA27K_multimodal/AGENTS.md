@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/sparse_mixture_of_referees | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.21M Params)
+# Branch: main_architecture/sparse_mixture_of_referees | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.23M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-     HIERARCHICAL 2-LEVEL TOURNAMENT WITH SPARSE MIXTURE-OF-REFEREES (~4.21M PARAMS)
+     HIERARCHICAL 2-LEVEL TOURNAMENT WITH SPARSE MIXTURE-OF-REFEREES (~4.23M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -46,14 +46,14 @@ This document defines the invariant architectural constraints, operational guide
                          * B23: Medium vs Strong (Base + Audio Referee + Video Referee + Router B23)
                          * B13: Weak vs Strong (Base + Audio Referee + Video Referee + Router B13)
                      - Sparse Referee Router with Straight-Through Estimator (STE):
-                         Input: [f_joint || Delta_f] (dim=448) -> Linear(448->32) -> GELU -> Linear(32->2)
+                         Input: [f_video || f_audio || Delta_f || u_tie] (dim=673) -> Linear(673->32) -> GELU -> Linear(32->2)
                          Continuous Probabilities: [p_A, p_V] = sigmoid(logits)
                          Discrete Binary Decisions: m_A, m_V in {0, 1}^2 via STE
                      - Dynamic Referee Intervention Formula:
-                         u_tie = exp(-|logit_base|)
+                         u_tie = exp(-|logit_base| / 2.0)
                          logit = logit_base + u_tie * (m_A * gamma_A * logit_audio + m_V * gamma_V * logit_video)
                      - Tournament Borda Voting -> Final Calibrated Probabilities
-                     [~0.339M params | FLOPs: 1.7088 GFLOPs]
+                     [~0.361M params | FLOPs: 1.7088 GFLOPs]
                                        │
                                        ▼
                      [4 Feeding Intensity Predictions]
@@ -64,10 +64,10 @@ This document defines the invariant architectural constraints, operational guide
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
-- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `339,351` (~`0.339M`)
+- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `360,951` (~`0.361M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,212,545` (~`4.213M`)
-- **Remaining Headroom**: `787,455` parameters below the 5.0M budget limit.
+- **Total Trainable Parameters**: `4,234,145` (~`4.234M`)
+- **Remaining Headroom**: `765,855` parameters below the 5.0M budget limit.
 - **Inference Complexity**: `1.7088 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
@@ -109,13 +109,13 @@ This document defines the invariant architectural constraints, operational guide
     - B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23).
     - B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13).
   - **Sparse Referee Router with Straight-Through Estimator (STE)**:
-    $$x_{\text{route}} = [f_{\text{joint}} \parallel \Delta f] \in \mathbb{R}^{448}$$
-    $$[p_A, p_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{448 \to 32}(x_{\text{route}}))))$$
+    $$x_{\text{route}} = [f_V \parallel f_A \parallel \Delta f \parallel u_{\text{tie}}] \in \mathbb{R}^{673}$$
+    $$[p_A, p_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{673 \to 32}(x_{\text{route}}))))$$
     $$m_A = p_A + \text{detach}(m_A^{\text{hard}} - p_A), \quad m_V = p_V + \text{detach}(m_V^{\text{hard}} - p_V)$$
   - **Dynamic Referee Intervention Formulation**:
-    $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}|)$$
+    $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}| / 2.0)$$
     $$\text{logit} = \text{logit}_{\text{base}} + u_{\text{tie}} \cdot \Big(m_A \cdot \gamma_A \cdot \text{logit}_{\text{audio}} + m_V \cdot \gamma_V \cdot \text{logit}_{\text{video}}\Big)$$
-    where $\gamma_A, \gamma_V$ are learnable scalars initialized to $0.5$, and $m_A, m_V \in \{0, 1\}$ provide 4 operational states: $(1,1), (1,0), (0,1), (0,0)$.
+    where $\gamma_A, \gamma_V$ are learnable scalars initialized to $1.0$, and $m_A, m_V \in \{0, 1\}$ provide 4 operational states: $(1,1), (1,0), (0,1), (0,0)$.
   - **Borda Voting**: Derives calibrated multi-class distribution from tournament matchup scores:
     $$V_c = \sum_{k \neq c} P(c > k)$$
     with exact algebraic invariant $V_{\text{Weak}} + V_{\text{Medium}} + V_{\text{Strong}} = 3.0$.
@@ -130,7 +130,7 @@ Configurations are defined in `config/train_config.json` and validated by `confi
 - **Learning Rate Schedule**: OneCycleLR (batch-level, epochs = 400, pct_start = 0.05, div_factor = 25, final_div_factor = 1000).
 - **Gradient Clipping**: max_norm = 5.0.
 - **Loss Function (`PairwiseTournamentLoss` / `SMoRPairwiseTournamentLoss`)**:
-  $$\mathcal{L}_{\text{total}} = 0.5 \mathcal{L}_{\text{act}} + 0.5 \mathcal{L}_{\text{pairwise}} + 1.0 \mathcal{L}_{\text{CE}} + 0.3 \mathcal{L}_{\text{aux}} + 0.01 \mathcal{L}_{\text{balance}} + 0.005 \mathcal{L}_{\text{sparse}}$$
+  $$\mathcal{L}_{\text{total}} = 0.5 \mathcal{L}_{\text{act}} + 0.5 \mathcal{L}_{\text{pairwise}} + 1.0 \mathcal{L}_{\text{CE}} + 0.3 \mathcal{L}_{\text{aux}} + 0.01 \mathcal{L}_{\text{balance}} + 0.0005 \mathcal{L}_{\text{sparse}}$$
   - $\mathcal{L}_{\text{balance}} = 2 \cdot (f_A P_A + f_V P_V)$: Switch Transformer Load Balancing Loss preventing gating collapse.
   - $\mathcal{L}_{\text{sparse}} = \text{mean}(p_A + p_V)$: Parsimonious Sparsity Penalty discouraging unnecessary dual-referee activation.
 - **DataLoader Workers**: Fixed strictly to `8`.
@@ -178,7 +178,7 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,212,545).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,234,145).
 - [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7088 GFLOPs).
 - [x] **Gradient Propagation**: 100% of trainable parameters (170/170 tensors) receive active gradients.
 - [x] **SMoR Dynamic Routing**: 4 discrete states $(1,1), (1,0), (0,1), (0,0)$ verified via Straight-Through Estimator.

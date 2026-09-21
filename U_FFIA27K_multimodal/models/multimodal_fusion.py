@@ -10,16 +10,18 @@ logger = logging.getLogger(__name__)
 
 class SparseRefereeRouter(nn.Module):
     """
-    Sparse Referee Router with Straight-Through Estimator (STE).
+    Context-Aware Sparse Referee Router with Straight-Through Estimator (STE).
     Generates dynamic on/off binary gating decisions [m_audio, m_video] in {0, 1}^2
-    conditioned on joint embedding and cross-modal discrepancy [f_joint || |f_video - f_audio|].
+    conditioned on unimodal embeddings, cross-modal discrepancy, and matchup indecision:
+    x_route = [f_video || f_audio || |f_video - f_audio| || u_tie] (dim = embed_dim * 3 + 1).
     """
     def __init__(self, embed_dim: int = 224, hidden_dim: int = 32) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.hidden_dim = hidden_dim
+        in_dim = embed_dim * 3 + 1  # 224 * 3 + 1 = 673
         self.router_mlp = nn.Sequential(
-            nn.Linear(embed_dim * 2, hidden_dim),
+            nn.Linear(in_dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, 2)
         )
@@ -31,19 +33,24 @@ class SparseRefereeRouter(nn.Module):
         if self.router_mlp[0].bias is not None:
             nn.init.zeros_(self.router_mlp[0].bias)
 
-        # FC2: Small Normal (mean=0.0, std=0.01) + Zero bias for unbiased early exploration (p ~= 0.5)
+        # FC2: Small Normal (mean=0.0, std=0.01) + Positive bias (+0.5) so initial exploration starts receptive (p ~= 0.62)
         nn.init.normal_(self.router_mlp[2].weight, mean=0.0, std=0.01)
         if self.router_mlp[2].bias is not None:
-            nn.init.zeros_(self.router_mlp[2].bias)
+            nn.init.constant_(self.router_mlp[2].bias, 0.5)
 
     def forward(
         self,
-        f_joint: torch.Tensor,
         f_video: torch.Tensor,
-        f_audio: torch.Tensor
+        f_audio: torch.Tensor,
+        u_tie: torch.Tensor,
+        f_joint: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
         delta_f = torch.abs(f_video - f_audio)
-        x_route = torch.cat([f_joint, delta_f], dim=-1)  # [B, embed_dim * 2]
+        if u_tie.ndim == 1:
+            u_tie_in = u_tie.unsqueeze(-1)
+        else:
+            u_tie_in = u_tie
+        x_route = torch.cat([f_video, f_audio, delta_f, u_tie_in], dim=-1)  # [B, in_dim]
 
         logits = self.router_mlp(x_route)               # [B, 2]
         probs = torch.sigmoid(logits)                    # [B, 2] in (0, 1)
@@ -161,14 +168,14 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b12 = _make_subspace_head(dim, 112)
         if self.enable_b12_a:
             self.head_b12_a = _make_subspace_head(dim, 112)
-            self.gamma_12_a = nn.Parameter(torch.tensor(0.5))
+            self.gamma_12_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b12_a = None
             self.gamma_12_a = None
 
         if self.enable_b12_v:
             self.head_b12_v = _make_subspace_head(dim, 112)
-            self.gamma_12_v = nn.Parameter(torch.tensor(0.5))
+            self.gamma_12_v = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b12_v = None
             self.gamma_12_v = None
@@ -177,14 +184,14 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b23 = _make_subspace_head(dim, 112)
         if self.enable_b23_a:
             self.head_b23_a = _make_subspace_head(dim, 112)
-            self.gamma_23_a = nn.Parameter(torch.tensor(0.5))
+            self.gamma_23_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b23_a = None
             self.gamma_23_a = None
 
         if self.enable_b23_v:
             self.head_b23_v = _make_subspace_head(dim, 112)
-            self.gamma_23_v = nn.Parameter(torch.tensor(0.5))
+            self.gamma_23_v = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b23_v = None
             self.gamma_23_v = None
@@ -193,14 +200,14 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b13 = _make_subspace_head(dim, 112)
         if self.enable_b13_a:
             self.head_b13_a = _make_subspace_head(dim, 112)
-            self.gamma_13_a = nn.Parameter(torch.tensor(0.5))
+            self.gamma_13_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b13_a = None
             self.gamma_13_a = None
 
         if self.enable_b13_v:
             self.head_b13_v = _make_subspace_head(dim, 112)
-            self.gamma_13_v = nn.Parameter(torch.tensor(0.5))
+            self.gamma_13_v = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b13_v = None
             self.gamma_13_v = None
@@ -232,11 +239,11 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         # 2. Level 2: 3 Pairwise Cross-Boundary Logits with Referees & SMoR Routing
         # B12 (Weak vs Medium)
         logit_12_base = self.head_b12(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Medium)
-        u_tie_12 = torch.exp(-torch.abs(logit_12_base))
+        u_tie_12 = torch.exp(-torch.abs(logit_12_base) / 2.0)
         ref_effect_12 = torch.zeros_like(logit_12_base)
 
         if self.use_sparse_moe_routing and self.router_b12 is not None and f_audio is not None and f_video is not None:
-            r12 = self.router_b12(f, f_video, f_audio)
+            r12 = self.router_b12(f_video=f_video, f_audio=f_audio, u_tie=u_tie_12, f_joint=f)
             m_12_a, m_12_v = r12["m_audio"], r12["m_video"]
             prob_12_a, prob_12_v = r12["prob_audio"], r12["prob_video"]
             m_12_a_h, m_12_v_h = r12["m_audio_hard"], r12["m_video_hard"]
@@ -264,11 +271,11 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
         # B23 (Medium vs Strong)
         logit_23_base = self.head_b23(f).squeeze(-1)        # [B] (Positive -> Medium, Negative -> Strong)
-        u_tie_23 = torch.exp(-torch.abs(logit_23_base))
+        u_tie_23 = torch.exp(-torch.abs(logit_23_base) / 2.0)
         ref_effect_23 = torch.zeros_like(logit_23_base)
 
         if self.use_sparse_moe_routing and self.router_b23 is not None and f_audio is not None and f_video is not None:
-            r23 = self.router_b23(f, f_video, f_audio)
+            r23 = self.router_b23(f_video=f_video, f_audio=f_audio, u_tie=u_tie_23, f_joint=f)
             m_23_a, m_23_v = r23["m_audio"], r23["m_video"]
             prob_23_a, prob_23_v = r23["prob_audio"], r23["prob_video"]
             m_23_a_h, m_23_v_h = r23["m_audio_hard"], r23["m_video_hard"]
@@ -296,11 +303,11 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
         # B13 (Weak vs Strong)
         logit_13_base = self.head_b13(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Strong)
-        u_tie_13 = torch.exp(-torch.abs(logit_13_base))
+        u_tie_13 = torch.exp(-torch.abs(logit_13_base) / 2.0)
         ref_effect_13 = torch.zeros_like(logit_13_base)
 
         if self.use_sparse_moe_routing and self.router_b13 is not None and f_audio is not None and f_video is not None:
-            r13 = self.router_b13(f, f_video, f_audio)
+            r13 = self.router_b13(f_video=f_video, f_audio=f_audio, u_tie=u_tie_13, f_joint=f)
             m_13_a, m_13_v = r13["m_audio"], r13["m_video"]
             prob_13_a, prob_13_v = r13["prob_audio"], r13["prob_video"]
             m_13_a_h, m_13_v_h = r13["m_audio_hard"], r13["m_video_hard"]
