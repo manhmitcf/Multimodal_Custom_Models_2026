@@ -183,7 +183,7 @@ class TrainConfig(BaseModel):
     use_sparse_moe_routing: bool = Field(default=True, description="Enable Sparse Mixture-of-Referees (SMoR) dynamic routing.")
     router_hidden_dim: int = Field(default=32, gt=0, description="Hidden dimension for Sparse Referee Routers.")
     lambda_balance: float = Field(default=0.01, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
-    lambda_sparse: float = Field(default=0.0005, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
+    lambda_sparse: float = Field(default=0.001, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
     model: ModelConfig = Field(default_factory=ModelConfig, description="Model architecture parameters.")
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
     video_features: VideoFeaturesConfig = Field(default_factory=VideoFeaturesConfig, description="Video preprocessing configuration.")

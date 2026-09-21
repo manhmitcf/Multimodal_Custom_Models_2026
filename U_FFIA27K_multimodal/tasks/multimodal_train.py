@@ -94,7 +94,7 @@ class MultimodalTrainer:
                 weight_ce=getattr(self.config, "weight_ce", 1.0),
                 aux_loss_weight=getattr(self.config, "aux_loss_weight", 0.3),
                 lambda_balance=getattr(self.config, "lambda_balance", 0.01),
-                lambda_sparse=getattr(self.config, "lambda_sparse", 0.005),
+                lambda_sparse=getattr(self.config, "lambda_sparse", 0.001),
                 use_sparse_moe_routing=getattr(self.config, "use_sparse_moe_routing", True),
             ).to(self.device)
             logger.info("Configured SMoRPairwiseTournamentLoss (Activity Gate + 3 Boundaries + MoE Balancing & Sparsity).")
