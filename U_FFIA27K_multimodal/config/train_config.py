@@ -26,7 +26,7 @@ class VideoFeaturesConfig(BaseModel):
     """
     image_size: int = Field(default=224, description="Target spatial resolution H=W.")
     num_frames: int = Field(default=2, description="Number of uniform frames sampled per video clip (T=2).")
-    num_channels: int = Field(default=7, description="7-channel representation (RGB + 4 Kinematics: u, v, vorticity, decel).")
+    num_channels: int = Field(default=7, description="7-channel representation (RGB + 4 Kinematics: u, v, |V| magnitude, vorticity omega).")
 
 
 class AudioFeaturesConfig(BaseModel):

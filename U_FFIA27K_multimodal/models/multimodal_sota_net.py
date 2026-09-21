@@ -35,7 +35,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
          - Dynamic Referee Intervention: logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,212,545 (~4.213M) (Strictly < 5.0M parameter constraint, remaining headroom: 787,455).
+    Total Parameters: 4,212,641 (~4.213M) (Strictly < 5.0M parameter constraint, remaining headroom: 787,359).
     """
     model_name: str = "MultimodalSOTANet"
 
