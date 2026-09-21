@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/sparse_mixture_of_referees | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.23M Params)
+# Branch: main_architecture/sparse_mixture_of_referees | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.21M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-     HIERARCHICAL 2-LEVEL TOURNAMENT WITH SPARSE MIXTURE-OF-REFEREES (~4.23M PARAMS)
+     HIERARCHICAL 2-LEVEL TOURNAMENT WITH SPARSE MIXTURE-OF-REFEREES (~4.21M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -36,7 +36,6 @@ This document defines the invariant architectural constraints, operational guide
                      - Reliability Gating: g = sigma(W[f_V || f_A])
                      - Fused Representation: f_fused = LayerNorm(g * f_V + (1-g) * f_A)
                      - Projected Joint Representation: f_joint = ProjJoint(f_fused) (dim=224)
-                     - Cross-Modal Discrepancy: Delta_f = |f_V - f_A| (dim=224)
                                        │
                                        ▼
                      [MULTIMODAL TOURNAMENT FUSION ENGINE]
@@ -46,14 +45,14 @@ This document defines the invariant architectural constraints, operational guide
                          * B23: Medium vs Strong (Base + Audio Referee + Video Referee + Router B23)
                          * B13: Weak vs Strong (Base + Audio Referee + Video Referee + Router B13)
                      - Sparse Referee Router with Straight-Through Estimator (STE):
-                         Input: [f_video || f_audio || Delta_f || u_tie] (dim=673) -> Linear(673->32) -> GELU -> Linear(32->2)
+                         Input: [f_video || f_audio || u_tie] (dim=449) -> Linear(449->32) -> GELU -> Linear(32->2)
                          Continuous Probabilities: [p_A, p_V] = sigmoid(logits)
                          Discrete Binary Decisions: m_A, m_V in {0, 1}^2 via STE
                      - Dynamic Referee Intervention Formula:
                          u_tie = exp(-|logit_base|)
                          logit = logit_base + u_tie * (m_A * gamma_A * logit_audio + m_V * gamma_V * logit_video)
                      - Tournament Borda Voting -> Final Calibrated Probabilities
-                     [~0.361M params | FLOPs: 1.7088 GFLOPs]
+                     [~0.339M params | FLOPs: 1.7088 GFLOPs]
                                        │
                                        ▼
                      [4 Feeding Intensity Predictions]
@@ -64,10 +63,10 @@ This document defines the invariant architectural constraints, operational guide
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
-- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `360,951` (~`0.361M`)
+- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `339,447` (~`0.339M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,234,145` (~`4.234M`)
-- **Remaining Headroom**: `765,855` parameters below the 5.0M budget limit.
+- **Total Trainable Parameters**: `4,212,641` (~`4.213M`)
+- **Remaining Headroom**: `787,359` parameters below the 5.0M budget limit.
 - **Inference Complexity**: `1.7088 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
@@ -101,7 +100,6 @@ This document defines the invariant architectural constraints, operational guide
 ### 2.3 Tournament Fusion Engine (`MultimodalTournamentFusion`)
 - **Reliability Gating**: alpha = sigma(W_gate[f_V || f_A]).
 - **Fused & Joint Projection**: f_fused = LayerNorm(g * f_V + (1-g) * f_A), f_joint = ProjJoint(f_fused).
-- **Cross-Modal Discrepancy**: Delta_f = |f_V - f_A| (dim=224).
 - **2-Level Tournament Decision Hierarchy**:
   - **Level 1**: Activity Gate Head classifies P(Feeding) vs P(None).
   - **Level 2**: 3 specialized pairwise subspace heads with Sparse Mixture-of-Referees (SMoR):
@@ -109,8 +107,8 @@ This document defines the invariant architectural constraints, operational guide
     - B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23).
     - B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13).
   - **Sparse Referee Router with Straight-Through Estimator (STE)**:
-    $$x_{\text{route}} = [f_V \parallel f_A \parallel \Delta f \parallel u_{\text{tie}}] \in \mathbb{R}^{673}$$
-    $$[p_A, p_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{673 \to 32}(x_{\text{route}}))))$$
+    $$x_{\text{route}} = [f_V \parallel f_A \parallel u_{\text{tie}}] \in \mathbb{R}^{449}$$
+    $$[p_A, p_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{449 \to 32}(x_{\text{route}}))))$$
     $$m_A = p_A + \text{detach}(m_A^{\text{hard}} - p_A), \quad m_V = p_V + \text{detach}(m_V^{\text{hard}} - p_V)$$
   - **Dynamic Referee Intervention Formulation**:
     $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}|)$$
@@ -178,7 +176,7 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,234,145).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,212,641).
 - [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7088 GFLOPs).
 - [x] **Gradient Propagation**: 100% of trainable parameters (170/170 tensors) receive active gradients.
 - [x] **SMoR Dynamic Routing**: 4 discrete states $(1,1), (1,0), (0,1), (0,0)$ verified via Straight-Through Estimator.
