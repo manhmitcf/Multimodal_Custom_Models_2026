@@ -24,7 +24,7 @@ def test_parameter_budget():
 
     print(f"Total Model Parameters:               {total_params:,}")
     print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
-    print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
+    print(f"  - Audio Backbone (Phy-Conformer 256k): {a_params:,}")
     print(f"  - Pairwise Tournament Fusion:         {f_params:,}")
 
     strict_limit = 5000000
@@ -249,5 +249,5 @@ if __name__ == "__main__":
     test_tie_breakers_toggle_config()
     test_consistent_video_transform()
     print("\n" + "=" * 65)
-    print("ALL TOURNAMENT STFT-MLP TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("ALL TOURNAMENT PHY-CONFORMER TESTS PASSED SUCCESSFULLY! (100% READY)")
     print("=" * 65 + "\n")

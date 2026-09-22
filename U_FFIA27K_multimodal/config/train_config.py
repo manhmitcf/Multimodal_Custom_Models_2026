@@ -59,10 +59,10 @@ class TieBreakersConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model (~4.09M parameters).
+    Configuration for Multimodal Tournament Model (~3.84M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
-    Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Pairwise Boundary Tournament Decision Head with 3 Audio Tie-Breakers ~0.22M
+    Audio: Phy-Conformer (256 kHz 2D STFT) ~0.99M
+    Fusion: Pairwise Boundary Tournament Decision Head (Ablation: No Tie-Breakers) ~0.14M
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
