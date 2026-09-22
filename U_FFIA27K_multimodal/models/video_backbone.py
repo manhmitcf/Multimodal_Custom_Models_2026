@@ -6,6 +6,39 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def drop_path(x: torch.Tensor, drop_prob: float = 0.0, training: bool = False) -> torch.Tensor:
+    """
+    Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    Guarantees active gradient propagation on small batch sizes by ensuring at least one sample is kept.
+    """
+    if drop_prob == 0.0 or not training:
+        return x
+    keep_prob = 1.0 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize to 0 or 1
+    if random_tensor.sum() == 0:
+        random_tensor[0] = 1.0
+    output = x.div(keep_prob) * random_tensor
+    return output
+
+
+class DropPath(nn.Module):
+    """
+    Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    Zero trainable parameters; identity pass-through during evaluation mode.
+    """
+    def __init__(self, drop_prob: float = 0.0) -> None:
+        super().__init__()
+        self.drop_prob = float(drop_prob)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return drop_path(x, self.drop_prob, self.training)
+
+    def extra_repr(self) -> str:
+        return f"drop_prob={self.drop_prob}"
+
+
 class ConvNeXtBlock(nn.Module):
     """
     ConvNeXt Block (Liu et al., CVPR 2022).
@@ -14,6 +47,7 @@ class ConvNeXtBlock(nn.Module):
     - Pointwise Conv / Linear (dim -> 4*dim)
     - GELU activation
     - Pointwise Conv / Linear (4*dim -> dim)
+    - DropPath (Stochastic Depth)
     - Residual Connection
     """
     def __init__(self, dim: int, drop_path: float = 0.0) -> None:
@@ -23,6 +57,7 @@ class ConvNeXtBlock(nn.Module):
         self.pwconv1 = nn.Linear(dim, 4 * dim)
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(4 * dim, dim)
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shortcut = x
@@ -34,7 +69,7 @@ class ConvNeXtBlock(nn.Module):
         x = self.act(x)
         x = self.pwconv2(x)
         x = x.permute(0, 3, 1, 2)  # [B, C, H, W]
-        return shortcut + x
+        return shortcut + self.drop_path(x)
 
 
 class ConvNeXtNanoVideoBackbone(nn.Module):
@@ -48,10 +83,10 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
 
     Architecture:
       - Stem: Conv 4x4 (7 -> 48) + LayerNorm
-      - Stage 1: 48ch  x 1 block
-      - Stage 2: 96ch  x 1 block
-      - Stage 3: 192ch x 3 blocks
-      - Stage 4: 384ch x 1 block
+      - Stage 1: 48ch  x 1 block  (DropPath linear schedule)
+      - Stage 2: 96ch  x 1 block  (DropPath linear schedule)
+      - Stage 3: 192ch x 3 blocks (DropPath linear schedule)
+      - Stage 4: 384ch x 1 block  (DropPath linear schedule)
       - Total parameters: ~2.70M params.
     """
     def __init__(
@@ -61,11 +96,14 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         dims: Tuple[int, ...] = (48, 96, 192, 384),
         depths: Tuple[int, ...] = (1, 1, 3, 1),
         num_frames: int = 2,
+        drop_path_rate: float = 0.1,
+        **kwargs
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.in_chans = in_chans
         self.num_frames = num_frames
+        self.drop_path_rate = drop_path_rate
 
         # 1. Stem: Patchify 4x4
         self.stem = nn.Sequential(
@@ -82,12 +120,16 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
             )
             self.downsample_layers.append(downsample)
 
-        # 3. Stages
+        # 3. Stages with Stochastic Depth (Linear Schedule — Chuẩn Meta AI)
+        dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
+        cur = 0
         self.stages = nn.ModuleList()
         for i in range(4):
-            stage = nn.Sequential(
-                *[ConvNeXtBlock(dim=dims[i]) for _ in range(depths[i])]
-            )
+            stage = nn.Sequential(*[
+                ConvNeXtBlock(dim=dims[i], drop_path=dp_rates[cur + j])
+                for j in range(depths[i])
+            ])
+            cur += depths[i]
             self.stages.append(stage)
 
         # 4. Final normalization & projection

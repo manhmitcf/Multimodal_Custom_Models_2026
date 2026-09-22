@@ -70,6 +70,7 @@ class ModelConfig(BaseModel):
     )
     embed_dim: int = Field(default=224, description="Common multimodal embedding dimension.")
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
+    video_drop_path: float = Field(default=0.1, ge=0.0, le=0.5, description="Stochastic Depth / DropPath rate for ConvNeXt-Nano video backbone.")
     tie_breakers: TieBreakersConfig = Field(
         default_factory=TieBreakersConfig,
         description="Pairwise Audio STFT Tie-Breaker configurations."

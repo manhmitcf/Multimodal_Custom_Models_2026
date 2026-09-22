@@ -24,6 +24,7 @@
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
     "embed_dim": 224,
+    "video_drop_path": 0.1,
     "tie_breakers": {
       "enable_b12": true,
       "enable_b23": true,

@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/triple_audio_tie_breakers | Multimodal SOTA Tournament Network (~4.09M Params)
+# Branch: exp/convnext_droppath_linear | Multimodal SOTA Tournament Network (~4.09M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -75,6 +75,7 @@ This document defines the invariant architectural constraints, operational guide
   - Color Jitter: Brightness and contrast factors sampled once per clip ([0.85, 1.15]), applied identically to all frames.
   - Random Erasing / Cutout: Rectangular region sampled once per clip (scale [0.05, 0.15], ratio [0.5, 2.0], p=0.3), applied identically to all frames in training mode (producing zero temporal optical flow difference).
   - Bilinear Resize (224x224) and ImageNet normalization.
+- **Stochastic Depth (`DropPath`)**: Linear schedule across depth sum(depths) = 6 blocks (p in [0.0, 0.02, 0.04, 0.06, 0.08, 0.10]), scaling by 1/(1-p) during training, identity pass-through during inference with small-batch gradient safeguard.
 
 ### 2.2 Audio Pipeline
 - **Input**: Raw 1D acoustic waveform sampled at 256,000 Hz (2.0s = 512,000 samples).
@@ -127,13 +128,13 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
    - `best_model_acc.pth`, `best_video_backbone_acc.pth`, `best_audio_backbone_acc.pth`: Peak validation Accuracy candidate checkpoints.
 
 ### 4.2 Logging Files
-- `history.csv`: 36 columns recorded per epoch (runtime, learning rate, train metrics, val metrics, per-class AUC/AP, and flattened 4x4 confusion matrix).
+- `history.csv`: 38 columns recorded per epoch (runtime, learning rate, train metrics including video & audio backbone accuracies, val metrics, per-class AUC/AP, and flattened 4x4 confusion matrix).
 - `summary.csv`: Single-row consolidated metrics, latency, parameters, and GFLOPs.
 - `evaluation_detailed_report.txt` and `.json`: Comprehensive classification reports for Fusion, Video, and Audio branches.
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_main_architecture_triple_audio_tie_breakers`.
+- Remote dataset repository: `manhmitcf/Results_exp_convnext_droppath_linear`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
@@ -143,7 +144,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 
 ## 5. Mandatory Verification Checklist
 
-Before proposing or committing any code changes on branch `main_architecture/triple_audio_tie_breakers`, agents **MUST** execute and pass:
+Before proposing or committing any code changes on branch `exp/convnext_droppath_linear`, agents **MUST** execute and pass:
 
 ```bash
 cd U_FFIA27K_multimodal

@@ -47,6 +47,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         enable_b23: bool = True,
         enable_b13: bool = True,
         tie_breakers: Optional[Dict[str, bool]] = None,
+        video_drop_path: float = 0.1,
         **kwargs
     ) -> None:
         super().__init__()
@@ -74,7 +75,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
-            num_frames=num_frames
+            num_frames=num_frames,
+            drop_path_rate=video_drop_path
         )
         self.audio_backbone = AudioMLPBackbone(
             in_features=2049,
