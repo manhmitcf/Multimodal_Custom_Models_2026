@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/sparse_mixture_of_referees | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.21M Params)
+# Branch: main_architecture/sparse_mixture_of_referees | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.26M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-     HIERARCHICAL 2-LEVEL TOURNAMENT WITH SPARSE MIXTURE-OF-REFEREES (~4.21M PARAMS)
+     HIERARCHICAL 2-LEVEL TOURNAMENT WITH SPARSE MIXTURE-OF-REFEREES (~4.26M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]

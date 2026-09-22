@@ -38,7 +38,7 @@ find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
 
 # ==============================================================================
 # 3. HUẤN LUYỆN: Nhánh Thực Nghiệm (main_architecture/sparse_mixture_of_referees) (400 EPOCHS)
-#    (7-ch ConvNeXt-Nano + TKEO-STFT-MLP 2049 + Sparse Mixture-of-Referees B12/B23/B13: ~4.21M params)
+#    (7-ch ConvNeXt-Nano + TKEO-STFT-MLP 2049 + Sparse Mixture-of-Referees B12/B23/B13: ~4.26M params)
 #    Artifact Upload Repo: manhmitcf/Results_main_architecture_sparse_mixture_of_referees
 # ==============================================================================
 if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then

@@ -12,7 +12,7 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Hierarchical Multimodal Tournament Network with Sparse Mixture-of-Referees (SMoR-Net, ~4.21M Total Parameters).
+    Hierarchical Multimodal Tournament Network with Sparse Mixture-of-Referees (SMoR-Net, ~4.26M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
     (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Sparse Mixture-of-Referees
     (SMoR: Audio STFT + Video Kinematics + Dynamic STE Routers) for all pairwise matchups (B12, B23, B13):
@@ -23,7 +23,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
       2. Acoustic Time-Frequency Stream (~1.166M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion with Sparse Mixture-of-Referees (~0.339M params):
+      3. Pairwise Tournament Fusion with Sparse Mixture-of-Referees (~0.382M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
          - Level 2: 3 Specialized Pairwise Subspace Expert Heads with Sparse Mixture-of-Referees (SMoR):
@@ -35,7 +35,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
          - Dynamic Referee Intervention: logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,212,641 (~4.213M) (Strictly < 5.0M parameter constraint, remaining headroom: 787,359).
+    Total Parameters: 4,255,553 (~4.256M) (Strictly < 5.0M parameter constraint, remaining headroom: 744,447).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -74,7 +74,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Multimodal Tournament Fusion with Sparse Mixture-of-Referees (~0.339M)
+        # 3. Multimodal Tournament Fusion with Sparse Mixture-of-Referees (~0.382M)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,

@@ -76,11 +76,11 @@ class DualTieBreakersConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model with Sparse Mixture-of-Referees (SMoR-Net, ~4.21M parameters).
+    Configuration for Multimodal Tournament Model with Sparse Mixture-of-Referees (SMoR-Net, ~4.26M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.701M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.166M
     Audio Frontend: TKEO-STFT LayerNorm ~0.004M
-    Fusion: Pairwise Boundary Tournament Decision Head with SMoR Dynamic Routing ~0.339M
+    Fusion: Pairwise Boundary Tournament Decision Head with SMoR Dynamic Routing ~0.382M
     Auxiliary Heads: Video + Audio Aux Heads ~0.002M
     """
     backbone: str = Field(
