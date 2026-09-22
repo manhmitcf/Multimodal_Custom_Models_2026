@@ -84,6 +84,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         enable_b12=enable_b12,
         enable_b23=enable_b23,
         enable_b13=enable_b13,
+        audio_drop_path=getattr(config.model, "audio_drop_path", 0.1),
     )
 
 

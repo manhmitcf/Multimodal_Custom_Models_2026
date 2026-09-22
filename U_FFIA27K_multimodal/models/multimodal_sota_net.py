@@ -47,6 +47,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         enable_b23: bool = True,
         enable_b13: bool = True,
         tie_breakers: Optional[Dict[str, bool]] = None,
+        audio_drop_path: float = 0.1,
         **kwargs
     ) -> None:
         super().__init__()
@@ -79,7 +80,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.audio_backbone = PhyConformerBackbone(
             in_features=2049,
             embed_dim=embed_dim,
-            num_tokens=num_frames
+            num_tokens=num_frames,
+            drop_path=audio_drop_path
         )
 
         # 3. Multimodal Tournament Fusion with 3 Configurable Tie-Breakers (~0.22M)

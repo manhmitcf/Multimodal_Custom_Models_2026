@@ -83,12 +83,12 @@ This document defines the invariant architectural constraints, operational guide
   - Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis: psi[x_n] = x_n^2 - x_{n-1}x_{n+1}.
   - Hann-windowed cuFFT Real FFT: n_fft = 4096, hop_size = 2048 -> 2049 linear frequency bins, T=251 frames.
   - Log Magnitude: log(|X| + 1e-8) followed by Layer Normalization across 2049 frequency bins -> [B, 1, 251, 2049].
-  - 2D Hydrophone Augmentation (`UnderwaterHydroAcousticAugmenter`): Subband Frequency Masking (16 bins, p=0.5), Circular Time Shift (+/-15 frames), and Gaussian Sensor Jitter (std=0.015) during training; identity pass-through during evaluation.
+  - 2D Hydrophone Augmentation (`UnderwaterHydroAcousticAugmenter`): Subband Frequency Masking (16 bins, p=0.5), Temporal Time Masking (8 frames, p=0.3), Circular Time Shift (+/-15 frames), and Gaussian Sensor Jitter (std=0.015) during training; identity pass-through during evaluation.
 - **Backbone (`PhyConformerBackbone`)**:
   - **Tier 1 (`SpectralStemBlock`)**: 3-cell hierarchical Asymmetric Depthwise-Separable Conv2D compressing $2049 \to 257 \to 65 \to 33$ bins while downsampling temporal dimension $251 \to 126 \to 63$.
   - **Tier 2 (`AcousticDualStreamBlock`)**: Orthogonal physical decomposition via Depthwise-Separable Tonal Stream ($5 \times 1$ conv for aerator/motor lines) and Transient Stream ($1 \times 5, d=2$ dilated conv for ultrasonic feeding clicks), fused with residual shortcut.
   - **Tokenizer**: Linear($1584 \to 160$) + LayerNorm(160) + learnable positional embedding `pos_emb` (std=0.02).
-  - **Tier 3 (`CadenceConformerBlock`)**: Macaron Conformer Block (FFN1/2 -> MHSA 4-heads -> 1D Depthwise ConvModule $k=15$ -> FFN1/2 -> LayerNorm).
+  - **Tier 3 (`CadenceConformerBlock`)**: Macaron Conformer Block (FFN1/2 -> MHSA 4-heads -> 1D Depthwise ConvModule $k=15$ -> FFN1/2 -> LayerNorm) with Stochastic Depth / DropPath ($p=0.1$) on residual paths.
   - **Head (`DecoupledFeatureHead`)**: Decouples 5 output representations (`f_audio`, `f_frequency`, `f_rhythm`, `f_burst_a`, `tokens_audio`) normalized to 224-D with LayerNorm.
 
 ### 2.3 Tournament Fusion Engine (`MultimodalTournamentFusion`)

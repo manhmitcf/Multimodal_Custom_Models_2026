@@ -122,12 +122,52 @@ class AcousticDualStreamBlock(nn.Module):
 # ------------------------------------------------------------------------------
 # TẦNG 3: Cadence Conformer Block (Đo nhịp điệu cá ăn trên chuỗi thời gian)
 # ------------------------------------------------------------------------------
+def drop_path(x: torch.Tensor, drop_prob: float = 0.0, training: bool = False) -> torch.Tensor:
+    """
+    Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    Guarantees active gradient propagation on small batch sizes by ensuring at least one sample is kept.
+    """
+    if drop_prob == 0.0 or not training:
+        return x
+    keep_prob = 1.0 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize to 0 or 1
+    if random_tensor.sum() == 0:
+        random_tensor[0] = 1.0
+    output = x.div(keep_prob) * random_tensor
+    return output
+
+
+class DropPath(nn.Module):
+    """
+    Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    Zero trainable parameters; identity pass-through during evaluation mode.
+    """
+    def __init__(self, drop_prob: float = 0.0) -> None:
+        super().__init__()
+        self.drop_prob = float(drop_prob)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return drop_path(x, self.drop_prob, self.training)
+
+    def extra_repr(self) -> str:
+        return f"drop_prob={self.drop_prob}"
+
+
 class ConformerConvModule1D(nn.Module):
     """
     1D Depthwise Convolutional Module for Conformer (~80.3k params):
     LayerNorm -> Pointwise 1x1 -> GLU -> Depthwise 1D (k=15) -> BatchNorm1d -> GELU -> Pointwise 1x1 -> Dropout
+    Residual path protected by DropPath (Stochastic Depth).
     """
-    def __init__(self, dim: int = 160, kernel_size: int = 15, dropout: float = 0.1) -> None:
+    def __init__(
+        self,
+        dim: int = 160,
+        kernel_size: int = 15,
+        dropout: float = 0.1,
+        drop_path: float = 0.0
+    ) -> None:
         super().__init__()
         self.layer_norm = nn.LayerNorm(dim)
         self.pointwise1 = nn.Conv1d(dim, 2 * dim, kernel_size=1)
@@ -140,6 +180,7 @@ class ConformerConvModule1D(nn.Module):
         self.act = nn.GELU()
         self.pointwise2 = nn.Conv1d(dim, dim, kernel_size=1)
         self.dropout = nn.Dropout(dropout)
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [B, T, D]
@@ -153,16 +194,16 @@ class ConformerConvModule1D(nn.Module):
         x = self.pointwise2(x)
         x = self.dropout(x)
         x = x.transpose(1, 2)  # [B, T, D]
-        return res + x
+        return res + self.drop_path(x)
 
 
 class CadenceConformerBlock(nn.Module):
     """
     Macaron-style Conformer Block (~595.8k params, ~0.06 GFLOPs):
-      x = x + 0.5 * FFN1(x)
-      x = x + MHSA(x)
-      x = x + ConvModule1D(x)
-      x = x + 0.5 * FFN2(x)
+      x = x + DropPath(0.5 * FFN1(x))
+      x = x + DropPath(MHSA(x))
+      x = x + ConvModule1D(x) (with DropPath on conv branch)
+      x = x + DropPath(0.5 * FFN2(x))
       x = LayerNorm(x)
     """
     def __init__(
@@ -170,9 +211,12 @@ class CadenceConformerBlock(nn.Module):
         d_model: int = 160,
         num_heads: int = 4,
         mlp_ratio: int = 4,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        drop_path: float = 0.1
     ) -> None:
         super().__init__()
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
+
         # Feed-forward 1 (half-step)
         self.norm_ffn1 = nn.LayerNorm(d_model)
         self.ffn1 = nn.Sequential(
@@ -187,7 +231,9 @@ class CadenceConformerBlock(nn.Module):
         self.attn = nn.MultiheadAttention(d_model, num_heads=num_heads, dropout=dropout, batch_first=True)
 
         # 1D Depthwise Convolution Module (k=15)
-        self.conv_module = ConformerConvModule1D(dim=d_model, kernel_size=15, dropout=dropout)
+        self.conv_module = ConformerConvModule1D(
+            dim=d_model, kernel_size=15, dropout=dropout, drop_path=drop_path
+        )
 
         # Feed-forward 2 (half-step)
         self.norm_ffn2 = nn.LayerNorm(d_model)
@@ -202,15 +248,15 @@ class CadenceConformerBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # 1. Half-step FFN 1
-        x = x + 0.5 * self.ffn1(self.norm_ffn1(x))
+        x = x + self.drop_path(0.5 * self.ffn1(self.norm_ffn1(x)))
         # 2. Multi-Head Self-Attention
         norm_x = self.norm_attn(x)
         attn_out, _ = self.attn(norm_x, norm_x, norm_x)
-        x = x + attn_out
+        x = x + self.drop_path(attn_out)
         # 3. Depthwise 1D Convolution Module
         x = self.conv_module(x)
         # 4. Half-step FFN 2
-        x = x + 0.5 * self.ffn2(self.norm_ffn2(x))
+        x = x + self.drop_path(0.5 * self.ffn2(self.norm_ffn2(x)))
         return self.final_norm(x)
 
 
@@ -287,6 +333,7 @@ class PhyConformerBackbone(nn.Module):
         num_tokens: int = 2,
         d_model: int = 160,
         dropout: float = 0.1,
+        drop_path: float = 0.1,
         **kwargs
     ) -> None:
         super().__init__()
@@ -294,6 +341,7 @@ class PhyConformerBackbone(nn.Module):
         self.embed_dim = embed_dim
         self.num_tokens = num_tokens
         self.d_model = d_model
+        self.drop_path = drop_path
 
         # 1. Tier 1: Spectral Stem Block (Nén tần số 2049 -> 33)
         self.tier1_stem = SpectralStemBlock(in_channels=1, out_channels=64)
@@ -316,7 +364,8 @@ class PhyConformerBackbone(nn.Module):
             d_model=d_model,
             num_heads=4,
             mlp_ratio=4,
-            dropout=dropout
+            dropout=dropout,
+            drop_path=drop_path
         )
 
         # 4. Decoupled Multi-Feature Head

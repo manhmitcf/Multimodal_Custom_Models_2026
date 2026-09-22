@@ -45,6 +45,8 @@ class AudioFeaturesConfig(BaseModel):
     use_spectral_aug: bool = Field(default=True, description="Enable 2D Hydrophone Spectral Augmentation (Subband Cutout, Circular Time Shift, and Noise Jitter).")
     cutout_width: int = Field(default=16, description="Width of contiguous frequency cutout mask in bins.")
     cutout_prob: float = Field(default=0.5, description="Probability of applying frequency cutout per sample.")
+    time_mask_width: int = Field(default=8, description="Width of contiguous temporal frame mask.")
+    time_mask_prob: float = Field(default=0.3, description="Probability of applying temporal time mask per sample.")
     max_time_shift: int = Field(default=15, description="Max circular time shift in frames (+/- 15 frames).")
     noise_std: float = Field(default=0.015, description="Standard deviation of Gaussian spectral jitter noise.")
 
@@ -71,6 +73,7 @@ class ModelConfig(BaseModel):
     )
     embed_dim: int = Field(default=224, description="Common multimodal embedding dimension.")
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
+    audio_drop_path: float = Field(default=0.1, ge=0.0, le=0.5, description="Stochastic Depth / DropPath rate for Cadence Conformer.")
     tie_breakers: TieBreakersConfig = Field(
         default_factory=TieBreakersConfig,
         description="Pairwise Audio STFT Tie-Breaker configurations."

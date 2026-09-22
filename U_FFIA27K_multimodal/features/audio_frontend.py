@@ -23,19 +23,25 @@ class UnderwaterHydroAcousticAugmenter(nn.Module):
     Encapsulates physically grounded augmentation techniques:
       1. Subband Frequency Masking: Masks a narrow contiguous frequency band (cutout_width bins)
          with the sample's minimum energy (noise floor) instead of 0.0 to prevent energy explosion.
-      2. Circular Time Shift: Simulates arbitrary clip start time (up to max_time_shift frames).
-      3. Gaussian Sensor Jitter: Simulates hydrophone sensor thermal and quantization noise.
+      2. Temporal Time Masking: Masks a short contiguous time span (time_mask_width frames)
+         with minimum energy, forcing cadence learning across bursts.
+      3. Circular Time Shift: Simulates arbitrary clip start time (up to max_time_shift frames).
+      4. Gaussian Sensor Jitter: Simulates hydrophone sensor thermal and quantization noise.
     """
     def __init__(
         self,
         cutout_width: int = 16,
         cutout_prob: float = 0.5,
+        time_mask_width: int = 8,
+        time_mask_prob: float = 0.3,
         max_time_shift: int = 15,
         noise_std: float = 0.015
     ) -> None:
         super().__init__()
         self.cutout_width = int(cutout_width)
         self.cutout_prob = float(cutout_prob)
+        self.time_mask_width = int(time_mask_width)
+        self.time_mask_prob = float(time_mask_prob)
         self.max_time_shift = int(max_time_shift)
         self.noise_std = float(noise_std)
 
@@ -66,7 +72,19 @@ class UnderwaterHydroAcousticAugmenter(nn.Module):
                 min_vals = out.amin(dim=(-2, -1), keepdim=True)
                 out = torch.where(cutout_mask, min_vals, out)
 
-        # 2. Circular Time Shift (Vectorized per-sample circular roll)
+        # 2. Temporal Time Masking (Short duration burst cutout with min energy)
+        if self.time_mask_width > 0 and self.time_mask_prob > 0.0 and T > self.time_mask_width:
+            mask_time_decisions = (torch.rand(B, 1, 1, 1, device=out.device) < self.time_mask_prob)
+            if mask_time_decisions.any():
+                start_t = torch.randint(
+                    0, T - self.time_mask_width, (B, 1, 1, 1), device=out.device
+                )
+                time_indices = torch.arange(T, device=out.device).view(1, 1, T, 1)
+                time_mask = (time_indices >= start_t) & (time_indices < start_t + self.time_mask_width) & mask_time_decisions
+                min_vals = out.amin(dim=(-2, -1), keepdim=True)
+                out = torch.where(time_mask, min_vals, out)
+
+        # 3. Circular Time Shift (Vectorized per-sample circular roll)
         if self.max_time_shift > 0 and T > self.max_time_shift * 2:
             shifts = torch.randint(-self.max_time_shift, self.max_time_shift + 1, (B,), device=out.device)
             for i in range(B):
@@ -74,7 +92,7 @@ class UnderwaterHydroAcousticAugmenter(nn.Module):
                 if shift != 0:
                     out[i] = torch.roll(out[i], shifts=shift, dims=-2)
 
-        # 3. Gaussian Sensor Noise Jitter
+        # 4. Gaussian Sensor Noise Jitter
         if self.noise_std > 0.0:
             noise = torch.randn_like(out) * self.noise_std
             out = out + noise
@@ -109,6 +127,8 @@ class AudioFrontend(nn.Module):
         self.use_spectral_aug = bool(getattr(self.config, 'use_spectral_aug', True))
         self.cutout_width = int(getattr(self.config, 'cutout_width', 16))
         self.cutout_prob = float(getattr(self.config, 'cutout_prob', 0.5))
+        self.time_mask_width = int(getattr(self.config, 'time_mask_width', 8))
+        self.time_mask_prob = float(getattr(self.config, 'time_mask_prob', 0.3))
         self.max_time_shift = int(getattr(self.config, 'max_time_shift', 15))
         self.noise_std = float(getattr(self.config, 'noise_std', 0.015))
 
@@ -121,6 +141,8 @@ class AudioFrontend(nn.Module):
             self.spectral_augmenter = UnderwaterHydroAcousticAugmenter(
                 cutout_width=self.cutout_width,
                 cutout_prob=self.cutout_prob,
+                time_mask_width=self.time_mask_width,
+                time_mask_prob=self.time_mask_prob,
                 max_time_shift=self.max_time_shift,
                 noise_std=self.noise_std
             )
@@ -139,7 +161,8 @@ class AudioFrontend(nn.Module):
         logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max})")
         logger.info(f"  - 2D Spectral Aug:    {'ENABLED' if self.use_spectral_aug else 'DISABLED'}")
         if self.use_spectral_aug:
-            logger.info(f"    * Cutout Band Width:{self.cutout_width} bins (Prob={self.cutout_prob})")
+            logger.info(f"    * Freq Cutout Band: {self.cutout_width} bins (Prob={self.cutout_prob})")
+            logger.info(f"    * Time Mask Width:  {self.time_mask_width} frames (Prob={self.time_mask_prob})")
             logger.info(f"    * Circular Shift:   +/-{self.max_time_shift} frames")
             logger.info(f"    * Gaussian Noise:   Std={self.noise_std}")
         logger.info("==================================================")
