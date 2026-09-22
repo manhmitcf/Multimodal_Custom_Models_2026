@@ -42,10 +42,11 @@ class AudioFeaturesConfig(BaseModel):
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
     beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
-    use_spectral_aug: bool = Field(default=True, description="Enable 1D Spectral Augmentation (Cutout & Jitter) for STFT.")
-    cutout_width: int = Field(default=24, description="Width of contiguous frequency cutout mask in bins.")
+    use_spectral_aug: bool = Field(default=True, description="Enable 2D Hydrophone Spectral Augmentation (Subband Cutout, Circular Time Shift, and Noise Jitter).")
+    cutout_width: int = Field(default=16, description="Width of contiguous frequency cutout mask in bins.")
     cutout_prob: float = Field(default=0.5, description="Probability of applying frequency cutout per sample.")
-    noise_std: float = Field(default=0.02, description="Standard deviation of Gaussian spectral jitter noise.")
+    max_time_shift: int = Field(default=15, description="Max circular time shift in frames (+/- 15 frames).")
+    noise_std: float = Field(default=0.015, description="Standard deviation of Gaussian spectral jitter noise.")
 
 
 class TieBreakersConfig(BaseModel):

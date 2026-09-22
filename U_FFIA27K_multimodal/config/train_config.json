@@ -43,9 +43,10 @@
     "fmin": 0,
     "fmax": 128000,
     "use_spectral_aug": true,
-    "cutout_width": 24,
+    "cutout_width": 16,
     "cutout_prob": 0.5,
-    "noise_std": 0.02
+    "max_time_shift": 15,
+    "noise_std": 0.015
   },
   "dataset_splitter": {
     "dataset_path": "/marimo/Fish_Feeding_Intensity_Dataset",

@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class PairwiseBoundaryTournamentHead(nn.Module):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Head (~131K params with 3 tie-breakers).
+    Hierarchical Pairwise Cross-Boundary Tournament Head (~143K params without tie-breakers, ~219K with tie-breakers).
     
     Level 1: Feeding Activity Gating
       - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
@@ -225,7 +225,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~219K params).
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~143K params without tie-breakers, ~219K with tie-breakers).
     1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
     2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
        with 3 Configurable Audio STFT Tie-Breakers on B12, B23, B13.

@@ -6,23 +6,23 @@ from typing import Dict, Optional
 from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone
-from .audio_backbone import AudioMLPBackbone
+from .audio_backbone import PhyConformerBackbone, AudioBackbone
 from .multimodal_fusion import MultimodalTournamentFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Tournament Network (~4.09M Total Parameters).
+    Multimodal Tournament Network (~3.84M Params without tie-breakers, ~3.92M with tie-breakers).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
     (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Audio Tie-Breakers:
 
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
-      2. Acoustic Time-Frequency Stream (~1.17M params):
+      2. Acoustic Time-Frequency Stream (~0.99M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
-         + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion (~0.22M params):
+         + Phy-Conformer Backbone (Spectral Stem -> Acoustic Dual-Stream -> Cadence Conformer).
+      3. Pairwise Tournament Fusion (~0.14M params without tie-breakers, ~0.22M with tie-breakers):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
          - Level 2: 3 Specialized Pairwise Subspace Expert Heads with 3 Configurable Audio STFT Tie-Breakers:
@@ -31,7 +31,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
              * B13: Weak vs Strong (with Audio STFT Tie-Breaker)
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: ~4.09M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~3.84M (Ablation: No Tie-Breakers) / ~3.92M (Full) (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -70,13 +70,13 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~3.87M)
+        # 2. Backbones (~3.70M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
             num_frames=num_frames
         )
-        self.audio_backbone = AudioMLPBackbone(
+        self.audio_backbone = PhyConformerBackbone(
             in_features=2049,
             embed_dim=embed_dim,
             num_tokens=num_frames
