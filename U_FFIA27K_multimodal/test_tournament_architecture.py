@@ -333,7 +333,7 @@ def test_smor_routing_and_ste_states():
         weight_ce=1.0,
         aux_loss_weight=0.3,
         lambda_balance=0.01,
-        lambda_sparse=0.001,
+        lambda_sparse=0.0001,
         use_sparse_moe_routing=True
     )
     loss = criterion(out, targets)

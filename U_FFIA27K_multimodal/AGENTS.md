@@ -128,7 +128,7 @@ Configurations are defined in `config/train_config.json` and validated by `confi
 - **Learning Rate Schedule**: OneCycleLR (batch-level, epochs = 400, pct_start = 0.05, div_factor = 25, final_div_factor = 1000).
 - **Gradient Clipping**: max_norm = 5.0.
 - **Loss Function (`PairwiseTournamentLoss` / `SMoRPairwiseTournamentLoss`)**:
-  $$\mathcal{L}_{\text{total}} = 0.5 \mathcal{L}_{\text{act}} + 0.5 \mathcal{L}_{\text{pairwise}} + 1.0 \mathcal{L}_{\text{CE}} + 0.3 \mathcal{L}_{\text{aux}} + 0.01 \mathcal{L}_{\text{balance}} + 0.001 \mathcal{L}_{\text{sparse}}$$
+  $$\mathcal{L}_{\text{total}} = 0.5 \mathcal{L}_{\text{act}} + 0.5 \mathcal{L}_{\text{pairwise}} + 1.0 \mathcal{L}_{\text{CE}} + 0.3 \mathcal{L}_{\text{aux}} + 0.01 \mathcal{L}_{\text{balance}} + 0.0001 \mathcal{L}_{\text{sparse}}$$
   - $\mathcal{L}_{\text{balance}} = 2 \cdot (f_A P_A + f_V P_V)$: Switch Transformer Load Balancing Loss preventing gating collapse.
   - $\mathcal{L}_{\text{sparse}} = \text{mean}(p_A + p_V)$: Parsimonious Sparsity Penalty discouraging unnecessary dual-referee activation.
 - **DataLoader Workers**: Fixed strictly to `8`.
