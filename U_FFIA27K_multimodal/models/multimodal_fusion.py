@@ -12,14 +12,14 @@ class SparseRefereeRouter(nn.Module):
     """
     Context-Aware Sparse Referee Router with Straight-Through Estimator (STE).
     Generates dynamic on/off binary gating decisions [m_audio, m_video] in {0, 1}^2
-    conditioned on unimodal embeddings and matchup indecision:
-    x_route = [f_video || f_audio || u_tie] (dim = embed_dim * 2 + 1 = 449).
+    conditioned on unimodal embeddings, cross-modal discrepancy, and cross-modal product:
+    x_route = [f_video || f_audio || |f_video - f_audio| || f_video * f_audio] (dim = embed_dim * 4 = 896).
     """
     def __init__(self, embed_dim: int = 224, hidden_dim: int = 32) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.hidden_dim = hidden_dim
-        in_dim = embed_dim * 2 + 1  # 224 * 2 + 1 = 449
+        in_dim = embed_dim * 4  # 224 * 4 = 896
         self.router_mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.GELU(),
@@ -42,14 +42,12 @@ class SparseRefereeRouter(nn.Module):
         self,
         f_video: torch.Tensor,
         f_audio: torch.Tensor,
-        u_tie: torch.Tensor,
+        u_tie: Optional[torch.Tensor] = None,
         f_joint: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
-        if u_tie.ndim == 1:
-            u_tie_in = u_tie.unsqueeze(-1)
-        else:
-            u_tie_in = u_tie
-        x_route = torch.cat([f_video, f_audio, u_tie_in], dim=-1)  # [B, in_dim]
+        delta_f = torch.abs(f_video - f_audio)
+        prod_f = f_video * f_audio
+        x_route = torch.cat([f_video, f_audio, delta_f, prod_f], dim=-1)  # [B, in_dim=896]
 
         logits = self.router_mlp(x_route)               # [B, 2]
         probs = torch.sigmoid(logits)                    # [B, 2] in (0, 1)

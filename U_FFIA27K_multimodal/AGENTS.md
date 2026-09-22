@@ -44,29 +44,29 @@ This document defines the invariant architectural constraints, operational guide
                          * B12: Weak vs Medium (Base + Audio Referee + Video Referee + Router B12)
                          * B23: Medium vs Strong (Base + Audio Referee + Video Referee + Router B23)
                          * B13: Weak vs Strong (Base + Audio Referee + Video Referee + Router B13)
-                     - Sparse Referee Router with Straight-Through Estimator (STE):
-                         Input: [f_video || f_audio || u_tie] (dim=449) -> Linear(449->32) -> GELU -> Linear(32->2)
-                         Continuous Probabilities: [p_A, p_V] = sigmoid(logits)
-                         Discrete Binary Decisions: m_A, m_V in {0, 1}^2 via STE
-                     - Dynamic Referee Intervention Formula:
-                         u_tie = exp(-|logit_base|)
-                         logit = logit_base + u_tie * (m_A * gamma_A * logit_audio + m_V * gamma_V * logit_video)
-                     - Tournament Borda Voting -> Final Calibrated Probabilities
-                     [~0.339M params | FLOPs: 1.7088 GFLOPs]
-                                       │
-                                       ▼
-                     [4 Feeding Intensity Predictions]
-                     None (0), Strong (1), Medium (2), Weak (3)
+                      - Sparse Referee Router with Straight-Through Estimator (STE):
+                          Input: [f_video || f_audio || |f_video - f_audio| || f_video * f_audio] (dim=896) -> Linear(896->32) -> GELU -> Linear(32->2)
+                          Continuous Probabilities: [p_A, p_V] = sigmoid(logits)
+                          Discrete Binary Decisions: m_A, m_V in {0, 1}^2 via STE
+                      - Dynamic Referee Intervention Formula:
+                          u_tie = exp(-|logit_base|)
+                          logit = logit_base + u_tie * (m_A * gamma_A * logit_audio + m_V * gamma_V * logit_video)
+                      - Tournament Borda Voting -> Final Calibrated Probabilities
+                      [~0.382M params | FLOPs: 1.7088 GFLOPs]
+                                        │
+                                        ▼
+                      [4 Feeding Intensity Predictions]
+                      None (0), Strong (1), Medium (2), Weak (3)
 ```
 
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
-- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `339,447` (~`0.339M`)
+- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `382,359` (~`0.382M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,212,641` (~`4.213M`)
-- **Remaining Headroom**: `787,359` parameters below the 5.0M budget limit.
+- **Total Trainable Parameters**: `4,255,553` (~`4.256M`)
+- **Remaining Headroom**: `744,447` parameters below the 5.0M budget limit.
 - **Inference Complexity**: `1.7088 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
@@ -107,8 +107,8 @@ This document defines the invariant architectural constraints, operational guide
     - B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23).
     - B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13).
   - **Sparse Referee Router with Straight-Through Estimator (STE)**:
-    $$x_{\text{route}} = [f_V \parallel f_A \parallel u_{\text{tie}}] \in \mathbb{R}^{449}$$
-    $$[p_A, p_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{449 \to 32}(x_{\text{route}}))))$$
+    $$x_{\text{route}} = [f_V \parallel f_A \parallel |f_V - f_A| \parallel f_V \odot f_A] \in \mathbb{R}^{896}$$
+    $$[p_A, p_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{896 \to 32}(x_{\text{route}}))))$$
     $$m_A = p_A + \text{detach}(m_A^{\text{hard}} - p_A), \quad m_V = p_V + \text{detach}(m_V^{\text{hard}} - p_V)$$
   - **Dynamic Referee Intervention Formulation**:
     $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}|)$$
@@ -176,7 +176,7 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,212,641).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,255,553).
 - [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7088 GFLOPs).
 - [x] **Gradient Propagation**: 100% of trainable parameters (170/170 tensors) receive active gradients.
 - [x] **SMoR Dynamic Routing**: 4 discrete states $(1,1), (1,0), (0,1), (0,0)$ verified via Straight-Through Estimator.
