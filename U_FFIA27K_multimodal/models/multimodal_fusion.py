@@ -99,7 +99,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
     Sparse Referee Dynamic Intervention:
       logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V)
-      where u_tie = exp(-|logit_base|) represents referee indecisiveness,
+      where u_tie = exp(-|logit_base| / 2.0) represents referee indecisiveness,
       and [m_A, m_V] in {0, 1}^2 are discrete binary decisions via Straight-Through Estimator (STE).
 
     Tournament Scoring (Borda count):
@@ -165,14 +165,14 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b12 = _make_subspace_head(dim, 112)
         if self.enable_b12_a:
             self.head_b12_a = _make_subspace_head(dim, 112)
-            self.gamma_12_a = nn.Parameter(torch.tensor(0.5))
+            self.gamma_12_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b12_a = None
             self.gamma_12_a = None
 
         if self.enable_b12_v:
             self.head_b12_v = _make_subspace_head(dim, 112)
-            self.gamma_12_v = nn.Parameter(torch.tensor(0.5))
+            self.gamma_12_v = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b12_v = None
             self.gamma_12_v = None
@@ -181,14 +181,14 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b23 = _make_subspace_head(dim, 112)
         if self.enable_b23_a:
             self.head_b23_a = _make_subspace_head(dim, 112)
-            self.gamma_23_a = nn.Parameter(torch.tensor(0.5))
+            self.gamma_23_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b23_a = None
             self.gamma_23_a = None
 
         if self.enable_b23_v:
             self.head_b23_v = _make_subspace_head(dim, 112)
-            self.gamma_23_v = nn.Parameter(torch.tensor(0.5))
+            self.gamma_23_v = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b23_v = None
             self.gamma_23_v = None
@@ -197,14 +197,14 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b13 = _make_subspace_head(dim, 112)
         if self.enable_b13_a:
             self.head_b13_a = _make_subspace_head(dim, 112)
-            self.gamma_13_a = nn.Parameter(torch.tensor(0.5))
+            self.gamma_13_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b13_a = None
             self.gamma_13_a = None
 
         if self.enable_b13_v:
             self.head_b13_v = _make_subspace_head(dim, 112)
-            self.gamma_13_v = nn.Parameter(torch.tensor(0.5))
+            self.gamma_13_v = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b13_v = None
             self.gamma_13_v = None
@@ -236,7 +236,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         # 2. Level 2: 3 Pairwise Cross-Boundary Logits with Referees & SMoR Routing
         # B12 (Weak vs Medium)
         logit_12_base = self.head_b12(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Medium)
-        u_tie_12 = torch.exp(-torch.abs(logit_12_base))
+        u_tie_12 = torch.exp(-torch.abs(logit_12_base) / 2.0)
         ref_effect_12 = torch.zeros_like(logit_12_base)
 
         if self.use_sparse_moe_routing and self.router_b12 is not None and f_audio is not None and f_video is not None:
@@ -268,7 +268,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
         # B23 (Medium vs Strong)
         logit_23_base = self.head_b23(f).squeeze(-1)        # [B] (Positive -> Medium, Negative -> Strong)
-        u_tie_23 = torch.exp(-torch.abs(logit_23_base))
+        u_tie_23 = torch.exp(-torch.abs(logit_23_base) / 2.0)
         ref_effect_23 = torch.zeros_like(logit_23_base)
 
         if self.use_sparse_moe_routing and self.router_b23 is not None and f_audio is not None and f_video is not None:
@@ -300,7 +300,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
         # B13 (Weak vs Strong)
         logit_13_base = self.head_b13(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Strong)
-        u_tie_13 = torch.exp(-torch.abs(logit_13_base))
+        u_tie_13 = torch.exp(-torch.abs(logit_13_base) / 2.0)
         ref_effect_13 = torch.zeros_like(logit_13_base)
 
         if self.use_sparse_moe_routing and self.router_b13 is not None and f_audio is not None and f_video is not None:

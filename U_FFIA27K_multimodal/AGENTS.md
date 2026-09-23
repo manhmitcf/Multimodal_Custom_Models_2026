@@ -49,7 +49,7 @@ This document defines the invariant architectural constraints, operational guide
                           Continuous Probabilities: [p_A, p_V] = sigmoid(logits)
                           Discrete Binary Decisions: m_A, m_V in {0, 1}^2 via STE
                       - Dynamic Referee Intervention Formula:
-                          u_tie = exp(-|logit_base|)
+                          u_tie = exp(-|logit_base| / 2.0)
                           logit = logit_base + u_tie * (m_A * gamma_A * logit_audio + m_V * gamma_V * logit_video)
                       - Tournament Borda Voting -> Final Calibrated Probabilities
                       [~0.382M params | FLOPs: 1.7088 GFLOPs]
@@ -114,9 +114,9 @@ This document defines the invariant architectural constraints, operational guide
     $$[p_A, p_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{896 \to 32}(x_{\text{route}}))))$$
     $$m_A = p_A + \text{detach}(m_A^{\text{hard}} - p_A), \quad m_V = p_V + \text{detach}(m_V^{\text{hard}} - p_V)$$
   - **Dynamic Referee Intervention Formulation**:
-    $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}|)$$
+    $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}| / 2.0)$$
     $$\text{logit} = \text{logit}_{\text{base}} + u_{\text{tie}} \cdot \Big(m_A \cdot \gamma_A \cdot \text{logit}_{\text{audio}} + m_V \cdot \gamma_V \cdot \text{logit}_{\text{video}}\Big)$$
-    where $\gamma_A, \gamma_V$ are learnable scalars initialized to $0.5$, and $m_A, m_V \in \{0, 1\}$ provide 4 operational states: $(1,1), (1,0), (0,1), (0,0)$.
+    where $\gamma_A, \gamma_V$ are learnable scalars initialized to $1.0$, and $m_A, m_V \in \{0, 1\}$ provide 4 operational states: $(1,1), (1,0), (0,1), (0,0)$.
   - **Borda Voting**: Derives calibrated multi-class distribution from tournament matchup scores:
     $$V_c = \sum_{k \neq c} P(c > k)$$
     with exact algebraic invariant $V_{\text{Weak}} + V_{\text{Medium}} + V_{\text{Strong}} = 3.0$.
