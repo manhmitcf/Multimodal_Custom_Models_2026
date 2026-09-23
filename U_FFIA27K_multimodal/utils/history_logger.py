@@ -32,6 +32,8 @@ class HistoryLogger:
             'epoch_time_seconds',
             'train_loss',
             'train_accuracy',
+            'train_acc_video',
+            'train_acc_audio',
             'train_mAP',
             'val_loss',
             'val_accuracy',
@@ -78,7 +80,9 @@ class HistoryLogger:
         val_statistics: dict,
         lr: Optional[float] = None,
         epoch_time_seconds: Optional[float] = None,
-        is_best: bool = False
+        is_best: bool = False,
+        train_acc_video: Optional[float] = None,
+        train_acc_audio: Optional[float] = None
     ) -> None:
         val_acc = float(np.mean(val_statistics.get('accuracy', 0.0)))
         val_qwk = float(val_statistics.get('qwk', 0.0))
@@ -108,6 +112,8 @@ class HistoryLogger:
 
         lr_str = f"{lr:.8e}" if lr is not None else "N/A"
         time_str = f"{epoch_time_seconds:.2f}" if epoch_time_seconds is not None else "N/A"
+        t_acc_v = f"{train_acc_video:.6f}" if train_acc_video is not None else f"{train_acc:.6f}"
+        t_acc_a = f"{train_acc_audio:.6f}" if train_acc_audio is not None else f"{train_acc:.6f}"
 
         row_data = [
             epoch,
@@ -115,6 +121,8 @@ class HistoryLogger:
             time_str,
             f"{train_loss:.6f}",
             f"{train_acc:.6f}",
+            t_acc_v,
+            t_acc_a,
             f"{train_mAP:.6f}",
             f"{val_loss:.6f}",
             f"{val_acc:.6f}",

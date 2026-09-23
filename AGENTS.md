@@ -155,7 +155,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
    - `best_model_acc.pth`, `best_video_backbone_acc.pth`, `best_audio_backbone_acc.pth`: Peak validation Accuracy candidate checkpoints.
 
 ### 4.2 Logging Files
-- `history.csv`: 36 columns recorded per epoch (runtime, learning rate, train metrics, val metrics, per-class AUC/AP, and flattened 4x4 confusion matrix).
+- `history.csv`: 38 columns recorded per epoch (runtime, learning rate, train metrics including video & audio backbone accuracies, val metrics, per-class AUC/AP, and flattened 4x4 confusion matrix).
 - `summary.csv`: Single-row consolidated metrics, latency, parameters, and GFLOPs.
 - `evaluation_detailed_report.txt` and `.json`: Comprehensive classification reports for Fusion, Video, and Audio branches.
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
