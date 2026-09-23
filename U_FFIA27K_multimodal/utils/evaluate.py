@@ -56,7 +56,7 @@ class MultimodalEvaluator(BaseEvaluator):
         output_dict = {}
         total_loss = 0.0
         total_samples = 0
-        pbar = tqdm(data_loader, desc="Running multimodal model evaluation...", disable=not sys.stdout.isatty())
+        pbar = tqdm(data_loader, desc="Running multimodal model evaluation...")
 
         for batch_data_dict in pbar:
             batch_video = self._move_data_to_device(batch_data_dict['video_form'])

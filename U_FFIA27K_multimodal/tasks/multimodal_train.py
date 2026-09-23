@@ -189,7 +189,7 @@ class MultimodalTrainer:
         train_preds_a = []
         train_targets = []
 
-        pbar = tqdm(self.train_loader, desc=f"Epoch {epoch:03d}/{self.config.epochs:03d} [Train]", disable=not sys.stdout.isatty())
+        pbar = tqdm(self.train_loader, desc=f"Epoch {epoch:03d}/{self.config.epochs:03d} [Train]")
         for batch_dict in pbar:
             video = batch_dict['video_form'].to(self.device)
             audio = batch_dict['audio_form'].to(self.device)

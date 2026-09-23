@@ -284,7 +284,7 @@ class FishMultimodalDataLoader:
                 }
                 iterator = concurrent.futures.as_completed(futures)
                 if has_tqdm:
-                    pbar = tqdm(total=len(futures), desc=f"Preloading {self.split} to RAM", disable=not sys.stdout.isatty())
+                    pbar = tqdm(total=len(futures), desc=f"Preloading {self.split} to RAM")
                     for future in iterator:
                         idx = futures[future]
                         try:
