@@ -28,7 +28,7 @@ This document defines the invariant architectural constraints, operational guide
    - 7-Channel Stem: Conv2d(7->48, k=4, s=4)           [Audio MLP Backbone]
    - 4 ConvNeXt Stages: [48, 96, 192, 384]             - FC1: Linear(2049 -> 512) + GELU + LN + Drop
    - Temporal Dynamics (Spatial + Motion + Burst)      - FC2: Linear(512 -> 224) + LN
-   Shape: f_video (B, 224) [~2.701M params]            Shape: f_audio (B, 224) [~1.166M params]
+   Shape: f_video (B, 224) [~2.702M params]            Shape: f_audio (B, 224) [~1.166M params]
              │                                                    │
              └─────────────────────────┬──────────────────────────┘
                                        ▼
@@ -50,13 +50,13 @@ This document defines the invariant architectural constraints, operational guide
 ```
 
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
-- **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
+- **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,702,416` (~`2.702M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Tournament Decision Head (Pairwise 3 Tie-Breakers + Borda)**: `219,435` (~`0.219M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800`
-- **Total Trainable Parameters**: `4,092,629` (~`4.093M`)
-- **Remaining Headroom**: `907,371` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `1.7085 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+- **Total Trainable Parameters**: `4,017,119` (~`4.017M` with all tie-breakers disabled; `4,093,733` with all 3 tie-breakers enabled)
+- **Remaining Headroom**: `982,881` parameters below the 5.0M budget limit.
+- **Inference Complexity**: `1.7084 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
 
@@ -69,13 +69,17 @@ This document defines the invariant architectural constraints, operational guide
   - Channels 3-4: Dense Optical Flow (u, v) via Farneback algorithm.
   - Channel 5: Instantaneous Velocity Magnitude |V| = sqrt(u^2 + v^2).
   - Channel 6: Fluid Vorticity omega = dv/dx - du/dy.
+- **ConvNeXt-Nano Video Backbone (`ConvNeXtNanoVideoBackbone`)**:
+  - 4 stages: [48, 96, 192, 384] with block depths (1, 1, 3, 1).
+  - LayerScale: Learnable channel-wise scale parameter $\gamma$ initialized to $10^{-6}$ for each of the 6 residual blocks.
+  - Stochastic Depth (`DropPath`): Linear schedule across depth sum(depths) = 6 blocks (p in [0.0, 0.02, 0.04, 0.06, 0.08, 0.10]), scaling by 1/(1-p) during training, identity pass-through during inference with small-batch gradient safeguard.
+  - Weight Initialization: Meta AI Truncated Normal $\mathcal{N}(0, 0.02)$, bias $= 0$.
 - **Consistent Video Transform (`ConsistentVideoTransform`)**:
   - Random Horizontal Flip: Decided once per clip (p=0.5), applied identically to all frames.
   - Random Rotation: Angle sampled once per clip (theta in [-15 deg, +15 deg]), applied identically to all frames.
   - Color Jitter: Brightness and contrast factors sampled once per clip ([0.85, 1.15]), applied identically to all frames.
   - Random Erasing / Cutout: Rectangular region sampled once per clip (scale [0.05, 0.15], ratio [0.5, 2.0], p=0.3), applied identically to all frames in training mode (producing zero temporal optical flow difference).
   - Bilinear Resize (224x224) and ImageNet normalization.
-- **Stochastic Depth (`DropPath`)**: Linear schedule across depth sum(depths) = 6 blocks (p in [0.0, 0.02, 0.04, 0.06, 0.08, 0.10]), scaling by 1/(1-p) during training, identity pass-through during inference with small-batch gradient safeguard.
 
 ### 2.2 Audio Pipeline
 - **Input**: Raw 1D acoustic waveform sampled at 256,000 Hz (2.0s = 512,000 samples).
