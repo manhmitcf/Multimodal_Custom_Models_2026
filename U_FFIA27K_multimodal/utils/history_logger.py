@@ -32,6 +32,8 @@ class HistoryLogger:
             'epoch_time_seconds',
             'train_loss',
             'train_accuracy',
+            'train_acc_video',
+            'train_acc_audio',
             'train_mAP',
             'val_loss',
             'val_accuracy',
@@ -78,7 +80,9 @@ class HistoryLogger:
         val_statistics: dict,
         lr: Optional[float] = None,
         epoch_time_seconds: Optional[float] = None,
-        is_best: bool = False
+        is_best: bool = False,
+        train_acc_video: float = 0.0,
+        train_acc_audio: float = 0.0
     ) -> None:
         val_acc = float(np.mean(val_statistics.get('accuracy', 0.0)))
         val_qwk = float(val_statistics.get('qwk', 0.0))
@@ -115,6 +119,8 @@ class HistoryLogger:
             time_str,
             f"{train_loss:.6f}",
             f"{train_acc:.6f}",
+            f"{train_acc_video:.6f}",
+            f"{train_acc_audio:.6f}",
             f"{train_mAP:.6f}",
             f"{val_loss:.6f}",
             f"{val_acc:.6f}",

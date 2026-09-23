@@ -84,6 +84,8 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         enable_b12=enable_b12,
         enable_b23=enable_b23,
         enable_b13=enable_b13,
+        audio_drop_path=getattr(config.model, "audio_drop_path", 0.1),
+        audio_dropout=getattr(config.model, "audio_dropout", 0.1),
     )
 
 
@@ -111,7 +113,7 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
         # 1. Parameter audit
         stats = count_parameters(model)
         logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Audio Backbone (ConvNeXt-1D Spectral 256k): {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
         logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
         logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
         logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")

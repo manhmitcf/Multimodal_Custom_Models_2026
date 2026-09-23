@@ -6,32 +6,29 @@ from typing import Dict, Optional
 from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone
-from .audio_backbone import AudioMLPBackbone
+from .audio_backbone import FrequencyConvNeXtAudioBackbone, AudioBackbone
 from .multimodal_fusion import MultimodalTournamentFusion
 
 
 class MultimodalBoundaryAwareNet(nn.Module):
     """
-    Multimodal Tournament Network (~4.09M Total Parameters).
+    Multimodal Tournament Network (~3.68M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Audio Tie-Breakers:
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy:
 
       1. Visual-Kinematic Stream (~2.70M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
-      2. Acoustic Time-Frequency Stream (~1.17M params):
-         High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
-         + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion (~0.22M params):
+      2. Acoustic Frequency-Domain Stream (~0.83M params, ~0.04 GFLOPs):
+         High-Resolution TKEO-STFT Audio Frontend (256 kHz, Dual-Channel 2049 linear bins)
+         + Frequency-Domain 1D ConvNeXt (Depthwise k=7, DropPath, LayerScale 1e-6).
+      3. Pairwise Tournament Fusion (~0.14M params without tie-breakers):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
-         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with 3 Configurable Audio STFT Tie-Breakers:
-             * B12: Weak vs Medium (with Audio STFT Tie-Breaker)
-             * B23: Medium vs Strong (with Audio STFT Tie-Breaker)
-             * B13: Weak vs Strong (with Audio STFT Tie-Breaker)
+         - Level 2: 3 Specialized Pairwise Subspace Expert Heads (B12, B23, B13).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: ~4.09M (Strictly < 5.0M parameter constraint).
+    Total Parameters: ~3.68M (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -43,10 +40,12 @@ class MultimodalBoundaryAwareNet(nn.Module):
         image_size: int = 224,
         num_frames: int = 2,
         in_chans: int = 7,
-        enable_b12: bool = True,
-        enable_b23: bool = True,
-        enable_b13: bool = True,
+        enable_b12: bool = False,
+        enable_b23: bool = False,
+        enable_b13: bool = False,
         tie_breakers: Optional[Dict[str, bool]] = None,
+        audio_drop_path: float = 0.1,
+        audio_dropout: float = 0.1,
         **kwargs
     ) -> None:
         super().__init__()
@@ -70,19 +69,21 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~3.87M)
+        # 2. Backbones (~3.53M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
             num_frames=num_frames
         )
-        self.audio_backbone = AudioMLPBackbone(
-            in_features=2049,
+        self.audio_backbone = FrequencyConvNeXtAudioBackbone(
+            in_channels=2,
             embed_dim=embed_dim,
-            num_tokens=num_frames
+            num_tokens=num_frames,
+            drop_path_rate=audio_drop_path,
+            dropout=audio_dropout
         )
 
-        # 3. Multimodal Tournament Fusion with 3 Configurable Tie-Breakers (~0.22M)
+        # 3. Multimodal Tournament Fusion (~0.14M params with tie-breakers disabled)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,

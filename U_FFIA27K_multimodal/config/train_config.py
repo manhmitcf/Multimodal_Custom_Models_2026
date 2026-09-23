@@ -31,7 +31,7 @@ class VideoFeaturesConfig(BaseModel):
 
 class AudioFeaturesConfig(BaseModel):
     """
-    High-Resolution TKEO-STFT Audio Frontend parameters (256 kHz, 2049 linear bins).
+    High-Resolution TKEO-STFT Audio Frontend parameters (256 kHz, Dual-Channel 2049 linear bins).
     """
     sample_rate: int = Field(default=256000, description="Audio sampling rate in Hz.")
     window_size: int = Field(default=4096, description="STFT window size in samples.")
@@ -42,27 +42,29 @@ class AudioFeaturesConfig(BaseModel):
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
     alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
     beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
-    use_spectral_aug: bool = Field(default=True, description="Enable 1D Spectral Augmentation (Cutout & Jitter) for STFT.")
-    cutout_width: int = Field(default=24, description="Width of contiguous frequency cutout mask in bins.")
+    use_spectral_aug: bool = Field(default=True, description="Enable Advanced 1D Spectral Augmentation for STFT.")
+    cutout_width: int = Field(default=20, description="Width of contiguous frequency cutout mask in bins.")
     cutout_prob: float = Field(default=0.5, description="Probability of applying frequency cutout per sample.")
-    noise_std: float = Field(default=0.02, description="Standard deviation of Gaussian spectral jitter noise.")
+    tilt_max: float = Field(default=0.05, description="Max slope for random spectral tilt augmentation.")
+    max_shift: int = Field(default=12, description="Max frequency bin shift for micro-shift augmentation.")
+    noise_std: float = Field(default=0.015, description="Standard deviation of Gaussian spectral jitter noise.")
 
 
 class TieBreakersConfig(BaseModel):
     """
     Configuration for Audio STFT Tie-Breaker heads on Level 2 pairwise matchups.
     """
-    enable_b12: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Weak vs Medium (B12).")
-    enable_b23: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Medium vs Strong (B23).")
-    enable_b13: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for Weak vs Strong (B13).")
+    enable_b12: bool = Field(default=False, description="Enable Audio STFT Tie-Breaker for Weak vs Medium (B12).")
+    enable_b23: bool = Field(default=False, description="Enable Audio STFT Tie-Breaker for Medium vs Strong (B23).")
+    enable_b13: bool = Field(default=False, description="Enable Audio STFT Tie-Breaker for Weak vs Strong (B13).")
 
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model (~4.09M parameters).
+    Configuration for Multimodal Tournament Model (~3.68M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.70M
-    Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.17M
-    Fusion: Pairwise Boundary Tournament Decision Head with 3 Audio Tie-Breakers ~0.22M
+    Audio: Frequency-Domain 1D ConvNeXt (~0.83M params, ~0.04 GFLOPs)
+    Fusion: Pairwise Boundary Tournament Decision Head (~0.14M)
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
@@ -70,6 +72,8 @@ class ModelConfig(BaseModel):
     )
     embed_dim: int = Field(default=224, description="Common multimodal embedding dimension.")
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
+    audio_drop_path: float = Field(default=0.1, ge=0.0, le=0.5, description="Stochastic Depth / DropPath rate for ConvNeXt-1D audio backbone.")
+    audio_dropout: float = Field(default=0.1, ge=0.0, le=0.5, description="Dropout rate at audio embedding output.")
     tie_breakers: TieBreakersConfig = Field(
         default_factory=TieBreakersConfig,
         description="Pairwise Audio STFT Tie-Breaker configurations."

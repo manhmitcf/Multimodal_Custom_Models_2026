@@ -17,66 +17,97 @@ from config.train_config import AudioFeaturesConfig
 logger = logging.getLogger(__name__)
 
 
-class Spectral1DAugmentation(nn.Module):
+class AdvancedSpectral1DAugmentation(nn.Module):
     """
-    1D Spectral Augmentation Module for High-Resolution TKEO-STFT vectors [B, 2049].
-    Encapsulates dedicated 1D augmentation techniques for spectral distributions:
-      1. 1D Frequency Cutout: Masks a narrow contiguous frequency band (cutout_width bins)
-         with the sample's minimum energy (noise floor) instead of 0.0 to prevent energy explosion.
-      2. Gaussian Spectral Jitter: Simulates hydrophone sensor thermal and quantization noise.
+    GPU-accelerated 1D Spectral Augmentation for High-Resolution STFT representations [B, C, F] or [B, F].
+    Implements 4 physics-grounded bioacoustic transformations:
+      1. Dual-Band Frequency Masking (SpecAugment 1D, Park et al., 2019):
+         Masks 2 non-overlapping narrow frequency bands with the sample's noise floor.
+      2. Spectral Tilt / Transmission Loss (Salamon & Bello, 2017; Thorpe's Equation):
+         Modulates the frequency slope to simulate hydrophone-to-fish distance variations.
+      3. Frequency Micro-Shift (Salamon & Bello, 2017):
+         Rolls frequency bins slightly (+/- max_shift bins) to simulate water temperature & fish size variance.
+      4. Additive Gaussian Spectral Jitter (Nanni et al., 2020):
+         Simulates hydrophone sensor thermal and ADC quantization noise.
     """
     def __init__(
         self,
-        cutout_width: int = 24,
+        cutout_width: int = 20,
         cutout_prob: float = 0.5,
-        noise_std: float = 0.02
+        tilt_max: float = 0.05,
+        max_shift: int = 12,
+        noise_std: float = 0.015
     ) -> None:
         super().__init__()
         self.cutout_width = int(cutout_width)
         self.cutout_prob = float(cutout_prob)
+        self.tilt_max = float(tilt_max)
+        self.max_shift = int(max_shift)
         self.noise_std = float(noise_std)
 
-    def forward(self, spec_vector: torch.Tensor) -> torch.Tensor:
+    def forward(self, spec: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            spec_vector: STFT spectral energy vector [B, 2049] or [2049].
+            spec: Spectral tensor [B, C, F] or [B, F].
         Returns:
-            Augmented spectral vector with the same shape.
+            Augmented spectral tensor with identical shape and dtype.
         """
         if not self.training:
-            return spec_vector
+            return spec
 
-        is_1d = (spec_vector.ndim == 1)
-        out = spec_vector.unsqueeze(0).clone() if is_1d else spec_vector.clone()
-        B, F = out.shape
+        is_2d = (spec.ndim == 2)
+        out = spec.unsqueeze(1).clone() if is_2d else spec.clone()
+        B, C, F = out.shape
 
-        # 1. 1D Frequency Cutout (Vectorized 2D mask on GPU, zero Python loop, zero device sync)
+        # 1. Spectral Tilt: w(f) = 1.0 + beta * (2f / F - 1.0)
+        if self.tilt_max > 0.0:
+            beta = (torch.rand(B, 1, 1, device=out.device) * 2.0 - 1.0) * self.tilt_max
+            freq_axis = torch.linspace(-1.0, 1.0, F, device=out.device).view(1, 1, F)
+            tilt_weights = 1.0 + beta * freq_axis
+            out = out * tilt_weights
+
+        # 2. Frequency Micro-Shift: roll slightly along frequency axis
+        if self.max_shift > 0:
+            shift = torch.randint(-self.max_shift, self.max_shift + 1, (1,)).item()
+            if shift != 0:
+                out = torch.roll(out, shifts=shift, dims=-1)
+                if shift > 0:
+                    out[:, :, :shift] = out[:, :, shift:shift + 1]
+                else:
+                    out[:, :, shift:] = out[:, :, shift - 1:shift]
+
+        # 3. Dual-Band Frequency Masking (2 independent narrow bands)
         if self.cutout_width > 0 and self.cutout_prob > 0.0 and F > self.cutout_width:
-            mask_decisions = (torch.rand(B, 1, device=out.device) < self.cutout_prob)
-            if mask_decisions.any():
-                start_indices = torch.randint(
-                    0, F - self.cutout_width, (B, 1), device=out.device
-                )
-                freq_indices = torch.arange(F, device=out.device).unsqueeze(0)  # [1, F]
-                cutout_mask = (freq_indices >= start_indices) & (freq_indices < start_indices + self.cutout_width) & mask_decisions
-                min_vals = out.min(dim=-1, keepdim=True)[0]
-                out = torch.where(cutout_mask, min_vals, out)
+            min_floor = out.amin(dim=-1, keepdim=True)
+            for _ in range(2):
+                mask_decision = (torch.rand(B, 1, 1, device=out.device) < self.cutout_prob)
+                if mask_decision.any():
+                    starts = torch.randint(0, F - self.cutout_width, (B, 1, 1), device=out.device)
+                    f_idx = torch.arange(F, device=out.device).view(1, 1, F)
+                    band_mask = (f_idx >= starts) & (f_idx < starts + self.cutout_width) & mask_decision
+                    out = torch.where(band_mask, min_floor, out)
 
-        # 2. Gaussian Spectral Jitter
+        # 4. Additive Gaussian Spectral Jitter
         if self.noise_std > 0.0:
-            noise = torch.randn_like(out) * self.noise_std
-            out = out + noise
+            out = out + torch.randn_like(out) * self.noise_std
 
-        if is_1d:
-            out = out.squeeze(0)
+        if is_2d:
+            out = out.squeeze(1)
         return out
+
+
+# Canonical Alias for backward compatibility
+Spectral1DAugmentation = AdvancedSpectral1DAugmentation
 
 
 class AudioFrontend(nn.Module):
     """
-    GPU-based High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 frequency bins).
+    GPU-based High-Resolution TKEO-STFT Audio Frontend (256 kHz, Dual-Channel Spectral Profile).
+    Extracts a 2-channel 2049-bin spectral representation [B, 2, 2049]:
+      - Channel 0: Stationary Power Spectral Density (Temporal Mean PSD)
+      - Channel 1: Transient Cavitation / Feeding Burst Contrast (Temporal Max - Mean PSD)
     Applies Teager-Kaiser Energy Operator (TKEO) Adaptive Pre-Emphasis, cuFFT RFFT,
-    Log Magnitude, and Temporal Mean Pooling to extract a 2049-dimensional spectral vector.
+    Log Magnitude, Dual-Channel Pooling, and Advanced 1D Spectral Augmentation.
     """
     def __init__(self, config: Optional[AudioFeaturesConfig] = None) -> None:
         super().__init__()
@@ -92,49 +123,69 @@ class AudioFrontend(nn.Module):
         self.alpha_max = float(getattr(self.config, 'alpha_max', 0.99))
         self.use_tkeo = bool(getattr(self.config, 'use_tkeo', True))
 
-        self.use_spectral_aug = bool(getattr(self.config, 'use_spectral_aug', False))
-        self.cutout_width = int(getattr(self.config, 'cutout_width', 24))
+        self.use_spectral_aug = bool(getattr(self.config, 'use_spectral_aug', True))
+        self.cutout_width = int(getattr(self.config, 'cutout_width', 20))
         self.cutout_prob = float(getattr(self.config, 'cutout_prob', 0.5))
-        self.noise_std = float(getattr(self.config, 'noise_std', 0.02))
+        self.tilt_max = float(getattr(self.config, 'tilt_max', 0.05))
+        self.max_shift = int(getattr(self.config, 'max_shift', 12))
+        self.noise_std = float(getattr(self.config, 'noise_std', 0.015))
 
         # Register Hann window buffer
         window = torch.hann_window(self.n_fft)
         self.register_buffer('window', window)
 
-        # Dedicated 1D Spectral Augmentation Module (defaults to disabled)
+        # Advanced 1D Spectral Augmentation Module
         if self.use_spectral_aug:
-            self.spectral_augmenter = Spectral1DAugmentation(
+            self.spectral_augmenter = AdvancedSpectral1DAugmentation(
                 cutout_width=self.cutout_width,
                 cutout_prob=self.cutout_prob,
+                tilt_max=self.tilt_max,
+                max_shift=self.max_shift,
                 noise_std=self.noise_std
             )
         else:
             self.spectral_augmenter = None
 
-        # Normalization layer over 2049 frequency bins
-        self.norm = nn.LayerNorm(self.stft_bins)
+        # Per-channel Layer Normalization over 2049 frequency bins
+        self.norm_mean = nn.LayerNorm(self.stft_bins)
+        self.norm_peak = nn.LayerNorm(self.stft_bins)
 
         logger.info("==================================================")
-        logger.info("Initialized TKEO-STFT Audio Frontend (256 kHz, Pure Spectral):")
+        logger.info("Initialized TKEO-STFT Audio Frontend (256 kHz, Dual-Channel 1D ConvNeXt Profile):")
         logger.info(f"  - Sample Rate:        {self.sample_rate} Hz (256 kHz)")
         logger.info(f"  - FFT Size (n_fft):   {self.n_fft}")
         logger.info(f"  - Hop Length:         {self.hop_length}")
-        logger.info(f"  - STFT Output Bins:   {self.stft_bins} linear bins")
+        logger.info(f"  - STFT Output Bins:   {self.stft_bins} linear bins (Dual-Channel: Mean + Peak Contrast)")
         logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max})")
         logger.info(f"  - Spectral 1D Aug:    {'ENABLED' if self.use_spectral_aug else 'DISABLED'}")
         if self.use_spectral_aug:
-            logger.info(f"    * 1D Cutout Band:   Width={self.cutout_width} bins, Prob={self.cutout_prob}")
+            logger.info(f"    * Dual-Band Mask:   Width={self.cutout_width} bins, Prob={self.cutout_prob}")
+            logger.info(f"    * Spectral Tilt:    Max Slope={self.tilt_max}")
+            logger.info(f"    * Micro-Shift:      Max Shift={self.max_shift} bins")
             logger.info(f"    * Gaussian Jitter:  Noise Std={self.noise_std}")
         logger.info("==================================================")
 
     def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            input_tensor: Raw 1D audio waveform [Batch, Num_Samples].
+            input_tensor: Raw 1D audio waveform [Batch, Num_Samples],
+                          precomputed [Batch, 2049], or [Batch, 2, 2049].
 
         Returns:
-            torch.Tensor: Normalized STFT spectral vector [Batch, 2049].
+            torch.Tensor: Normalized dual-channel STFT spectral profile [Batch, 2, 2049].
         """
+        # Handle precomputed spectral features
+        if input_tensor.ndim == 2 and input_tensor.size(-1) == self.stft_bins:
+            mean_norm = self.norm_mean(input_tensor)
+            spec_dual = torch.stack([mean_norm, torch.zeros_like(mean_norm)], dim=1)
+            if self.spectral_augmenter is not None:
+                spec_dual = self.spectral_augmenter(spec_dual)
+            return spec_dual
+        elif input_tensor.ndim == 3 and input_tensor.size(-1) == self.stft_bins:
+            if self.spectral_augmenter is not None:
+                input_tensor = self.spectral_augmenter(input_tensor)
+            return input_tensor
+
         if input_tensor.ndim == 1:
             input_tensor = input_tensor.unsqueeze(0)
 
@@ -172,14 +223,17 @@ class AudioFrontend(nn.Module):
         # 5. Log Magnitude: log(|X| + 1e-8)
         log_mag = torch.log(torch.abs(complex_spec) + 1e-8)
 
-        # 6. Mean over time axis -> [Batch, 2049]
-        spec_vector = log_mag.mean(dim=1)
+        # 6. Dual-Channel Energy Profile over time axis
+        mean_psd = log_mag.mean(dim=1)
+        peak_psd = log_mag.max(dim=1).values - mean_psd
 
-        # 7. 1D Spectral Augmentation for MLP (Cutout & Jitter) if enabled
+        # 7. Layer Normalization per channel
+        mean_norm = self.norm_mean(mean_psd)
+        peak_norm = self.norm_peak(peak_psd)
+        spec_dual = torch.stack([mean_norm, peak_norm], dim=1)  # [Batch, 2, 2049]
+
+        # 8. Advanced 1D Spectral Augmentation if enabled
         if self.spectral_augmenter is not None:
-            spec_vector = self.spectral_augmenter(spec_vector)
+            spec_dual = self.spectral_augmenter(spec_dual)
 
-        # 8. Layer Normalization
-        out = self.norm(spec_vector)
-
-        return out
+        return spec_dual

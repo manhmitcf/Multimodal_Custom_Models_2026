@@ -181,13 +181,15 @@ class MultimodalTrainer:
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")
 
-    def _train_epoch(self, epoch: int) -> Tuple[float, float, float, float]:
+    def _train_epoch(self, epoch: int) -> Tuple[float, float, float, float, float]:
         self.model.train()
         total_loss = 0.0
         train_preds = []
+        train_preds_v = []
+        train_preds_a = []
         train_targets = []
 
-        pbar = tqdm(self.train_loader, desc=f"Epoch {epoch:03d}/{self.config.epochs:03d} [Train]")
+        pbar = tqdm(self.train_loader, desc=f"Epoch {epoch:03d}/{self.config.epochs:03d} [Train]", disable=not sys.stdout.isatty())
         for batch_dict in pbar:
             video = batch_dict['video_form'].to(self.device)
             audio = batch_dict['audio_form'].to(self.device)
@@ -214,6 +216,10 @@ class MultimodalTrainer:
 
             logits = outputs['clipwise_output']
             train_preds.append(logits.detach().cpu().numpy())
+            if 'logits_video' in outputs and outputs['logits_video'] is not None:
+                train_preds_v.append(outputs['logits_video'].detach().cpu().numpy())
+            if 'logits_audio' in outputs and outputs['logits_audio'] is not None:
+                train_preds_a.append(outputs['logits_audio'].detach().cpu().numpy())
             train_targets.append(targets.detach().cpu().numpy())
 
             pbar.set_postfix({
@@ -229,11 +235,19 @@ class MultimodalTrainer:
         pred_acc_labels = np.argmax(train_preds, axis=1)
         train_acc = float(np.mean(target_acc_labels == pred_acc_labels))
 
-        rank_map = np.array([0, 3, 2, 1])
-        try:
-            train_mae = float(np.mean(np.abs(rank_map[pred_acc_labels] - rank_map[target_acc_labels])))
-        except Exception:
-            train_mae = 0.0
+        if len(train_preds_v) > 0:
+            train_preds_v = np.concatenate(train_preds_v, axis=0)
+            pred_v_labels = np.argmax(train_preds_v, axis=1)
+            train_acc_v = float(np.mean(target_acc_labels == pred_v_labels))
+        else:
+            train_acc_v = 0.0
+
+        if len(train_preds_a) > 0:
+            train_preds_a = np.concatenate(train_preds_a, axis=0)
+            pred_a_labels = np.argmax(train_preds_a, axis=1)
+            train_acc_a = float(np.mean(target_acc_labels == pred_a_labels))
+        else:
+            train_acc_a = 0.0
 
         try:
             from sklearn import metrics as sklearn_metrics
@@ -241,7 +255,7 @@ class MultimodalTrainer:
         except Exception:
             train_mAP = train_acc
 
-        return epoch_loss, train_acc, train_mAP, train_mae
+        return epoch_loss, train_acc, train_acc_v, train_acc_a, train_mAP
 
     def train(self) -> Dict[str, Any]:
         monitor_mode = str(getattr(self.config, "monitor", "val_acc")).strip().lower()
@@ -275,7 +289,7 @@ class MultimodalTrainer:
 
         for epoch in range(1, self.config.epochs + 1):
             epoch_start_time = time.perf_counter()
-            train_loss, train_acc, train_mAP, train_mae = self._train_epoch(epoch)
+            train_loss, train_acc, train_acc_v, train_acc_a, train_mAP = self._train_epoch(epoch)
             if not self.use_onecycle:
                 self.scheduler.step()
 
@@ -286,16 +300,16 @@ class MultimodalTrainer:
             val_acc = float(np.mean(val_stats['accuracy']))
             val_qwk = float(val_stats.get('qwk', 0.0))
             val_mAP = float(np.mean(val_stats['average_precision']))
-            val_mae = float(val_stats.get('ordinal_mae', 0.0))
             val_acc_v = float(val_stats.get('acc_video', 0.0))
             val_acc_a = float(val_stats.get('acc_audio', 0.0))
 
             lr_current = self.optimizer.param_groups[0]['lr']
             logger.info(
                 f"Epoch {epoch:03d} [TOURNAMENT E2E]: "
-                f"Train Loss = {train_loss:.5f} | Train Acc = {train_acc:.4f} | Train MAE = {train_mae:.4f} | LR = {lr_current:.2e} | "
+                f"Train Loss = {train_loss:.5f} | Train Acc Video = {train_acc_v:.4f} | Train Acc Audio = {train_acc_a:.4f} | "
+                f"Train Acc Fusion = {train_acc:.4f} | LR = {lr_current:.2e} | "
                 f"Val Loss = {val_loss:.5f} | Val Acc Video = {val_acc_v:.4f} | Val Acc Audio = {val_acc_a:.4f} | "
-                f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f} | Val MAE = {val_mae:.4f}"
+                f"Val Acc Fusion = {val_acc:.4f} | Val QWK = {val_qwk:.4f}"
             )
 
             # Determine if this is the best checkpoint for primary monitor
@@ -443,7 +457,9 @@ class MultimodalTrainer:
                 val_statistics=val_stats,
                 lr=lr_current,
                 epoch_time_seconds=epoch_time_seconds,
-                is_best=is_best
+                is_best=is_best,
+                train_acc_video=train_acc_v,
+                train_acc_audio=train_acc_a
             )
 
             # Early stopping check (only if enabled)
