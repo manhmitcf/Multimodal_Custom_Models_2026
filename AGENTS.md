@@ -80,6 +80,9 @@ This document defines the invariant architectural constraints, operational guide
   - Channels 3-4: Dense Optical Flow (u, v) via Farneback algorithm.
   - Channel 5: Instantaneous Velocity Magnitude |V| = sqrt(u^2 + v^2).
   - Channel 6: Fluid Vorticity omega = dv/dx - du/dy.
+- **ConvNeXt-Nano Video Backbone (`ConvNeXtNanoVideoBackbone`)**:
+  - 4 stages: [48, 96, 192, 384] with block depths (1, 1, 3, 1).
+  - Stochastic Depth (`DropPath`): Linear schedule [0.0 -> 0.1] across 6 residual blocks during training; identity pass-through during evaluation.
 - **Consistent Video Transform (`ConsistentVideoTransform`)**:
   - Random Horizontal Flip: Decided once per clip (p=0.5), applied identically to all frames.
   - Random Rotation: Angle sampled once per clip (theta in [-15 deg, +15 deg]), applied identically to all frames.

@@ -48,6 +48,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         num_frames: int = 2,
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
+        video_drop_path: float = 0.1,
         **kwargs
     ) -> None:
         super().__init__()
@@ -57,6 +58,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.image_size = image_size
         self.in_chans = in_chans
         self.tie_breakers = tie_breakers
+        self.video_drop_path = video_drop_path
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
@@ -66,7 +68,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
-            num_frames=num_frames
+            num_frames=num_frames,
+            drop_path_rate=video_drop_path
         )
         self.audio_backbone = AudioMLPBackbone(
             in_features=2049,

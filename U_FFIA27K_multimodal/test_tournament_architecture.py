@@ -7,6 +7,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import torch
+import torch.nn as nn
 from models.multimodal_sota_net import MultimodalBoundaryAwareNet
 from utils.losses import PairwiseTournamentLoss
 from utils.seed import seed_everything
@@ -354,6 +355,45 @@ def test_smor_routing_and_ste_states():
     print(f"  SMoR Composite Loss with Balancing & Sparsity: {loss.item():.4f}")
 
 
+def test_convnext_droppath_linear_schedule():
+    print("\n" + "=" * 65)
+    print("TEST 8: CONVNEXT-NANO DROPPATH LINEAR SCHEDULE VERIFICATION")
+    print("=" * 65)
+
+    model = MultimodalBoundaryAwareNet(num_frames=2, video_drop_path=0.1)
+
+    # 1. Inspect all 6 blocks across the 4 stages
+    expected_rates = [x.item() for x in torch.linspace(0, 0.1, 6)]
+    actual_rates = []
+    for stage_idx, stage in enumerate(model.video_backbone.stages):
+        for blk_idx, blk in enumerate(stage):
+            dp_prob = blk.drop_path.drop_prob if hasattr(blk.drop_path, "drop_prob") else 0.0
+            actual_rates.append(dp_prob)
+            print(f"  Stage {stage_idx + 1}, Block {blk_idx}: DropPath Rate = {dp_prob:.4f}")
+
+    assert len(actual_rates) == 6, f"Expected 6 blocks, got {len(actual_rates)}"
+    for act, exp in zip(actual_rates, expected_rates):
+        assert abs(act - exp) < 1e-5, f"Rate mismatch: got {act}, expected {exp}"
+    print(f"[PASSED] All 6 ConvNeXt blocks verified with linear DropPath schedule: {[round(r, 4) for r in actual_rates]}")
+
+    # 2. Verify identity in eval mode
+    model.eval()
+    dummy_x = torch.randn(2, 96, 28, 28)
+    blk_eval = model.video_backbone.stages[1][0]  # Stage 2 has drop_path > 0
+    assert not blk_eval.training
+    out_eval1 = blk_eval(dummy_x)
+    out_eval2 = blk_eval(dummy_x)
+    assert torch.allclose(out_eval1, out_eval2), "DropPath must be deterministic (identity) in eval mode!"
+    print("[PASSED] DropPath identity pass-through verified in eval mode!")
+
+    # 3. Verify drop_path=0.0 turns into nn.Identity
+    model_zero = MultimodalBoundaryAwareNet(num_frames=2, video_drop_path=0.0)
+    for stage in model_zero.video_backbone.stages:
+        for blk in stage:
+            assert isinstance(blk.drop_path, nn.Identity), "When video_drop_path=0.0, drop_path should be nn.Identity"
+    print("[PASSED] Zero drop path rate correctly instantiates nn.Identity!")
+
+
 if __name__ == "__main__":
     print("\n" + "=" * 65)
     print("RUNNING MANDATORY SMoR-NET ARCHITECTURE VERIFICATION TEST SUITE")
@@ -368,6 +408,7 @@ if __name__ == "__main__":
     test_tie_breakers_toggle_config()
     test_consistent_video_transform()
     test_smor_routing_and_ste_states()
+    test_convnext_droppath_linear_schedule()
 
     print("\n" + "=" * 65)
     print("ALL SMoR-NET TOURNAMENT TESTS PASSED SUCCESSFULLY! (100% READY)")
