@@ -61,13 +61,13 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     tb_cfg = getattr(config.model, "tie_breakers", None)
     if tb_cfg is not None:
-        enable_b12 = getattr(tb_cfg, "enable_b12", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b12", True)
-        enable_b23 = getattr(tb_cfg, "enable_b23", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b23", True)
-        enable_b13 = getattr(tb_cfg, "enable_b13", True) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b13", True)
+        enable_b12 = getattr(tb_cfg, "enable_b12", False) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b12", False)
+        enable_b23 = getattr(tb_cfg, "enable_b23", False) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b23", False)
+        enable_b13 = getattr(tb_cfg, "enable_b13", False) if not isinstance(tb_cfg, dict) else tb_cfg.get("enable_b13", False)
     else:
-        enable_b12 = True
-        enable_b23 = True
-        enable_b13 = True
+        enable_b12 = False
+        enable_b23 = False
+        enable_b13 = False
 
     logger.info(
         f"Audio STFT Tie-Breakers configuration: B12 (Weak vs Med)={enable_b12}, "

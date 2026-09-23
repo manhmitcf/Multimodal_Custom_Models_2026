@@ -9,17 +9,17 @@ logger = logging.getLogger(__name__)
 
 class PairwiseBoundaryTournamentHead(nn.Module):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Head (~131K params with 3 tie-breakers).
+    Hierarchical Pairwise Cross-Boundary Tournament Head (~65K params without tie-breakers, ~131K with 3 tie-breakers).
     
     Level 1: Feeding Activity Gating
       - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
       - p_feeding = sigmoid(w_act^T * f) in (0, 1)
       - p_none = 1 - p_feeding
 
-    Level 2: 3-Way Pairwise Cross-Boundary Tournament with Configurable Audio STFT Tie-Breakers
-      - B12: Weak <-> Medium    -> Base Head on f_joint + Optional Audio STFT Tie-Breaker Head
-      - B23: Medium <-> Strong  -> Base Head on f_joint + Optional Audio STFT Tie-Breaker Head
-      - B13: Weak <-> Strong    -> Base Head on f_joint + Optional Audio STFT Tie-Breaker Head
+    Level 2: 3-Way Pairwise Cross-Boundary Tournament (Tie-breakers disabled by default):
+      - B12: Weak <-> Medium    -> Base Head on f_joint + Optional Audio Tie-Breaker Head
+      - B23: Medium <-> Strong  -> Base Head on f_joint + Optional Audio Tie-Breaker Head
+      - B13: Weak <-> Strong    -> Base Head on f_joint + Optional Audio Tie-Breaker Head
 
     Tournament Scoring (Borda count):
       - V_Weak   = P(W > M) + P(W > S)
@@ -30,9 +30,9 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self,
         dim: int = 224,
         temperature: float = 2.0,
-        enable_b12: bool = True,
-        enable_b23: bool = True,
-        enable_b13: bool = True,
+        enable_b12: bool = False,
+        enable_b23: bool = False,
+        enable_b13: bool = False,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -225,18 +225,19 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~219K params).
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine
+    (~143K params without tie-breakers, ~219K with 3 tie-breakers).
     1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
     2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
-       with 3 Configurable Audio STFT Tie-Breakers on B12, B23, B13.
+       (Tie-breakers disabled by default, configurable via enable_b12, enable_b23, enable_b13).
     """
     def __init__(
         self,
         dim: int = 224,
         dropout: float = 0.1,
-        enable_b12: bool = True,
-        enable_b23: bool = True,
-        enable_b13: bool = True,
+        enable_b12: bool = False,
+        enable_b23: bool = False,
+        enable_b13: bool = False,
         **kwargs
     ) -> None:
         super().__init__()
