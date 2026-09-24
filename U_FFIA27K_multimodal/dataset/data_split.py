@@ -790,10 +790,12 @@ class FishDataSplitter(BaseDataSplitter):
 
         if self.evaluation_mode == "cross_validation":
             splits_dir = base_splits_dir / "cv" / f"fold_{int(self.fold_index):02d}"
+            if int(self.fold_index) == 0:
+                self._clear_existing_splits(base_splits_dir)
         else:
             splits_dir = base_splits_dir
+            self._clear_existing_splits(base_splits_dir)
 
-        self._clear_existing_splits(base_splits_dir)
 
         train_csv = splits_dir / 'train.csv'
         test_csv = splits_dir / 'test.csv'

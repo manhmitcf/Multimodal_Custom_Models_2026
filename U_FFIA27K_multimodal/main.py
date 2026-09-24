@@ -410,6 +410,8 @@ def run_training_session(
     dry_run: bool = False,
     device_str: Optional[str] = None,
     seed: Optional[int] = None,
+    evaluation_mode: Optional[str] = None,
+    fold_index: Optional[int] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -421,6 +423,10 @@ def run_training_session(
     if seed is not None:
         config.seed = seed
         config.dataset_splitter.seed = seed
+    if evaluation_mode is not None:
+        config.dataset_splitter.evaluation_mode = evaluation_mode
+    if fold_index is not None:
+        config.dataset_splitter.fold_index = fold_index
 
     # Lock deterministic master seed across PyTorch, CUDA, NumPy, Random
     active_seed = int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
@@ -454,7 +460,13 @@ def run_training_session(
         logger.info(f"Starting {num_folds}-Fold Cross-Validation for {model_name}...")
         base_dir = Path(model_cv_dir(config.ckpt_dir, model_name))
 
-        for fold_idx in range(num_folds):
+        target_folds = (
+            [int(config.dataset_splitter.fold_index)]
+            if config.dataset_splitter.fold_index is not None
+            else list(range(num_folds))
+        )
+
+        for fold_idx in target_folds:
             logger.info(f"===== RUNNING FOLD {fold_idx + 1}/{num_folds} =====")
             fold_seed = active_seed + fold_idx
             seed_everything(fold_seed)
@@ -478,7 +490,6 @@ def run_training_session(
             stats = count_parameters(model)
             logger.info(f"Fold {fold_idx} Model Parameters: {stats['total']:,} ({stats['total_million']:.3f} M)")
 
-
             trainer = MultimodalTrainer(
                 model=model,
                 train_loader=data_loader.get_data_loader(split='train'),
@@ -490,7 +501,8 @@ def run_training_session(
             )
             trainer.train()
 
-        generate_cv_summary_report(base_dir, num_folds)
+        if len(target_folds) == num_folds:
+            generate_cv_summary_report(base_dir, num_folds)
     else:
         del preflight_model
         if device.type == "cuda" and torch.cuda.is_available():
@@ -511,7 +523,6 @@ def run_training_session(
         )
 
         model = build_model(config, seed=active_seed).to(device)
-
 
         trainer = MultimodalTrainer(
             model=model,
@@ -537,6 +548,8 @@ def main() -> None:
     parser.add_argument("--device", type=str, default=None, help="Target compute device (cuda or cpu)")
     parser.add_argument("--dry-run", action="store_true", help="Run pre-flight check only without training")
     parser.add_argument("--seed", type=int, default=None, help="Master random seed for reproducibility (default: 42 from config)")
+    parser.add_argument("--evaluation-mode", type=str, choices=["holdout", "cross_validation"], default=None, help="Override evaluation mode (holdout or cross_validation)")
+    parser.add_argument("--fold-index", type=int, default=None, help="Specific CV fold index to run (0 to num_folds - 1)")
     args = parser.parse_args()
 
     run_training_session(
@@ -545,9 +558,12 @@ def main() -> None:
         dry_run=args.dry_run,
         device_str=args.device,
         seed=args.seed,
+        evaluation_mode=args.evaluation_mode,
+        fold_index=args.fold_index,
     )
 
 
 if __name__ == "__main__":
     main()
+
 
