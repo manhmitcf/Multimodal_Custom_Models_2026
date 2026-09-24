@@ -161,7 +161,6 @@ class AudioFrontend(nn.Module):
             alpha_raw = self.alpha_max * (1.0 - torch.exp(-ctrl))
             alpha_raw = torch.clamp(alpha_raw, min=0.1, max=self.alpha_max)
 
-            # Recursive temporal smoothing with beta (matching TKEO.py)
             if self.beta > 0.0 and frames.size(1) > 1:
                 B, T, _ = alpha_raw.shape
                 alpha = torch.empty_like(alpha_raw)
@@ -174,7 +173,6 @@ class AudioFrontend(nn.Module):
             else:
                 alpha = alpha_raw
 
-            # Adaptive high-pass filtering (n=0 preserved as frames[0], matching filtered_frames[0]=frames[0] in TKEO.py)
             frames_prev = torch.cat([torch.zeros_like(frames[:, :, :1]), frames[:, :, :-1]], dim=-1)
             frames = frames - alpha * frames_prev
 
