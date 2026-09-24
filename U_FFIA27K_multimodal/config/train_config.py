@@ -58,17 +58,54 @@ class DualTieBreakersConfig(BaseModel):
     def _normalize_keys(cls, data: Any) -> Any:
         if isinstance(data, dict):
             d = dict(data)
-            if "b12" in d and "enable_b12" not in d:
-                v = d.pop("b12")
-                d["enable_b12"] = v.get("enable", True) if isinstance(v, dict) else bool(v)
-            if "b23" in d and "enable_b23" not in d:
-                v = d.pop("b23")
-                d["enable_b23"] = v.get("enable", True) if isinstance(v, dict) else bool(v)
-            if "b13" in d and "enable_b13" not in d:
-                v = d.pop("b13")
-                d["enable_b13"] = v.get("enable", True) if isinstance(v, dict) else bool(v)
+            for key, flat in [("b12", "enable_b12"), ("b23", "enable_b23"), ("b13", "enable_b13")]:
+                # 1. Direct flat key
+                if flat in d:
+                    v = d[flat]
+                # 2. Short key
+                elif key in d:
+                    v = d.pop(key)
+                # 3. Split video/audio keys
+                else:
+                    v_vid = d.get(f"{flat}_video", d.get(f"{key}_video", None))
+                    v_aud = d.get(f"{flat}_audio", d.get(f"{key}_audio", None))
+                    if v_vid is not None or v_aud is not None:
+                        v = bool(v_vid or v_aud)
+                    else:
+                        continue
+
+                # Parse value into boolean
+                if isinstance(v, dict):
+                    if "enable" in v:
+                        res = bool(v["enable"])
+                    elif "enable_video" in v or "enable_audio" in v:
+                        res = bool(v.get("enable_video", False) or v.get("enable_audio", False))
+                    elif "video" in v or "audio" in v:
+                        res = bool(v.get("video", False) or v.get("audio", False))
+                    else:
+                        res = True
+                elif hasattr(v, "enable"):
+                    res = bool(v.enable)
+                elif hasattr(v, "enable_video") or hasattr(v, "enable_audio"):
+                    res = bool(getattr(v, "enable_video", False) or getattr(v, "enable_audio", False))
+                else:
+                    res = bool(v)
+
+                d[flat] = res
             return d
         return data
+
+    @property
+    def b12(self) -> bool:
+        return self.enable_b12
+
+    @property
+    def b23(self) -> bool:
+        return self.enable_b23
+
+    @property
+    def b13(self) -> bool:
+        return self.enable_b13
 
 
 # Backward-compatible alias

@@ -65,21 +65,29 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     tb_cfg = getattr(config.model, "tie_breakers", None)
     if tb_cfg is not None:
+        def _fmt(val):
+            if isinstance(val, dict):
+                if "enable" in val:
+                    return f"Dual={bool(val['enable'])}"
+                if "enable_video" in val or "enable_audio" in val:
+                    return f"Video={val.get('enable_video', False)}, Audio={val.get('enable_audio', False)}"
+                return f"{val}"
+            if hasattr(val, "enable"):
+                return f"Dual={bool(val.enable)}"
+            return f"Dual={bool(val)}"
+
         if hasattr(tb_cfg, "enable_b12"):
             b12_str = f"Dual={tb_cfg.enable_b12}"
             b23_str = f"Dual={tb_cfg.enable_b23}"
             b13_str = f"Dual={tb_cfg.enable_b13}"
         elif hasattr(tb_cfg, "b12"):
-            b12_str = f"Dual={getattr(tb_cfg.b12, 'enable', tb_cfg.b12)}"
-            b23_str = f"Dual={getattr(tb_cfg.b23, 'enable', tb_cfg.b23)}"
-            b13_str = f"Dual={getattr(tb_cfg.b13, 'enable', tb_cfg.b13)}"
+            b12_str = _fmt(tb_cfg.b12)
+            b23_str = _fmt(tb_cfg.b23)
+            b13_str = _fmt(tb_cfg.b13)
         elif isinstance(tb_cfg, dict):
-            b12_val = tb_cfg.get("enable_b12", tb_cfg.get("b12", True))
-            b23_val = tb_cfg.get("enable_b23", tb_cfg.get("b23", True))
-            b13_val = tb_cfg.get("enable_b13", tb_cfg.get("b13", True))
-            b12_str = f"{b12_val}"
-            b23_str = f"{b23_val}"
-            b13_str = f"{b13_val}"
+            b12_str = _fmt(tb_cfg.get("enable_b12", tb_cfg.get("b12", True)))
+            b23_str = _fmt(tb_cfg.get("enable_b23", tb_cfg.get("b23", True)))
+            b13_str = _fmt(tb_cfg.get("enable_b13", tb_cfg.get("b13", True)))
         else:
             b12_str = b23_str = b13_str = "Default"
     else:
