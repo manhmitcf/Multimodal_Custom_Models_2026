@@ -2,8 +2,8 @@ import sys
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from typing import Optional, Literal, Any
+from pydantic import BaseModel, Field, model_validator
 
 # Ensure project root is in sys.path
 project_root = str(Path(__file__).resolve().parent.parent)
@@ -163,25 +163,43 @@ class SplitterConfig(BaseModel):
     )
 
 
-class TrainConfig(BaseModel):
+class SystemConfig(BaseModel):
     """
-    Master configuration schema for multimodal model training.
+    Runtime system, caching, device workers, and storage configuration.
+    """
+    seed: int = Field(default=42, ge=0, description="Master random seed.")
+    cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
+    dataloader_workers: int = Field(default=8, description="Number of worker processes for DataLoader (Fixed to 8).")
+    prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
+    ckpt_dir: str = Field(default="checkpoint", description="Directory path to save checkpoints.")
+
+
+class TrainingConfig(BaseModel):
+    """
+    Optimization hyperparameters and scheduler configuration.
     """
     epochs: int = Field(default=400, gt=0, description="Total number of training epochs.")
     batch_size: int = Field(default=32, gt=0, description="Training batch size.")
     learning_rate: float = Field(default=1e-3, gt=0, description="Initial learning rate.")
     weight_decay: float = Field(default=0.05, ge=0, description="Weight decay factor for AdamW.")
-    ckpt_dir: str = Field(default="checkpoint", description="Directory path to save checkpoints.")
+    use_onecycle: bool = Field(default=True, description="Enable OneCycleLR scheduler.")
+
+
+class EvaluationConfig(BaseModel):
+    """
+    Validation evaluation, metric monitoring, and early stopping configuration.
+    """
     monitor: str = Field(default="val_acc", description="Metric to monitor for best checkpoint: 'val_acc' (or 'accuracy'), 'qwk', or 'both' (dual-track).")
     mode: Literal["min", "max"] = Field(default="max", description="Optimization direction for monitored metric.")
     early_stopping: bool = Field(default=False, description="Enable early stopping mechanism.")
     patience: int = Field(default=100, ge=1, description="Early stopping patience in epochs.")
     min_delta: float = Field(default=0.0, ge=0.0, description="Minimum change threshold in monitored metric.")
-    use_onecycle: bool = Field(default=True, description="Enable OneCycleLR scheduler.")
-    seed: int = Field(default=42, ge=0, description="Master random seed.")
-    cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
-    dataloader_workers: int = Field(default=8, description="Number of worker processes for DataLoader (Fixed to 8).")
-    prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
+
+
+class LossConfig(BaseModel):
+    """
+    Hierarchical Tournament Loss with SMoR Load Balancing and Sparsity penalty.
+    """
     loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament' or 'clip_ce'.")
     weight_act: float = Field(default=0.5, ge=0.0, description="Weight for Level-1 Activity Gate BCE loss.")
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
@@ -189,10 +207,192 @@ class TrainConfig(BaseModel):
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
     lambda_balance: float = Field(default=0.01, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
     lambda_sparse: float = Field(default=0.0001, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
+
+
+class TrainConfig(BaseModel):
+    """
+    Master configuration schema for multimodal model training, organized into logical clusters:
+    system, training, evaluation, loss, model, video_features, audio_features, dataset_splitter.
+    """
+    system: SystemConfig = Field(default_factory=SystemConfig, description="System runtime, device, and caching settings.")
+    training: TrainingConfig = Field(default_factory=TrainingConfig, description="Optimization and training hyperparameters.")
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig, description="Validation monitoring and early stopping settings.")
+    loss: LossConfig = Field(default_factory=LossConfig, description="Loss function and penalty weights.")
     model: ModelConfig = Field(default_factory=ModelConfig, description="Model architecture parameters.")
-    dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
     video_features: VideoFeaturesConfig = Field(default_factory=VideoFeaturesConfig, description="Video preprocessing configuration.")
     audio_features: AudioFeaturesConfig = Field(default_factory=AudioFeaturesConfig, description="Audio preprocessing configuration.")
+    dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reorganize_clusters(cls, data: Any) -> Any:
+        """
+        Accepts both clustered JSON dicts and flat legacy dicts, automatically routing
+        flat keys into their corresponding logical sub-config clusters.
+        """
+        if not isinstance(data, dict):
+            return data
+        d = dict(data)
+
+        # 1. System cluster
+        sys_keys = ["seed", "cache_mode", "dataloader_workers", "prefetch_factor", "ckpt_dir"]
+        sys_dict = dict(d.get("system", {})) if isinstance(d.get("system"), dict) else {}
+        for k in sys_keys:
+            if k in d:
+                sys_dict[k] = d.pop(k)
+        if sys_dict:
+            d["system"] = sys_dict
+
+        # 2. Training cluster
+        train_keys = ["epochs", "batch_size", "learning_rate", "weight_decay", "use_onecycle"]
+        train_dict = dict(d.get("training", {})) if isinstance(d.get("training"), dict) else {}
+        for k in train_keys:
+            if k in d:
+                train_dict[k] = d.pop(k)
+        if train_dict:
+            d["training"] = train_dict
+
+        # 3. Evaluation cluster
+        eval_keys = ["monitor", "mode", "early_stopping", "patience", "min_delta", "delta"]
+        eval_dict = dict(d.get("evaluation", {})) if isinstance(d.get("evaluation"), dict) else {}
+        for k in eval_keys:
+            if k in d:
+                v = d.pop(k)
+                if k == "delta":
+                    eval_dict.setdefault("min_delta", v)
+                else:
+                    eval_dict[k] = v
+        if eval_dict:
+            d["evaluation"] = eval_dict
+
+        # 4. Loss cluster
+        loss_keys = ["loss_type", "weight_act", "weight_pairwise", "weight_ce", "aux_loss_weight", "lambda_balance", "lambda_sparse"]
+        loss_dict = dict(d.get("loss", {})) if isinstance(d.get("loss"), dict) else {}
+        for k in loss_keys:
+            if k in d:
+                loss_dict[k] = d.pop(k)
+        if loss_dict:
+            d["loss"] = loss_dict
+
+        return d
+
+    # -------------------------------------------------------------------------
+    # Backward-compatible property getters & setters for seamless flat access
+    # -------------------------------------------------------------------------
+    @property
+    def seed(self) -> int: return self.system.seed
+    @seed.setter
+    def seed(self, val: int) -> None: self.system.seed = val
+
+    @property
+    def cache_mode(self) -> str: return self.system.cache_mode
+    @cache_mode.setter
+    def cache_mode(self, val: str) -> None: self.system.cache_mode = val
+
+    @property
+    def dataloader_workers(self) -> int: return self.system.dataloader_workers
+    @dataloader_workers.setter
+    def dataloader_workers(self, val: int) -> None: self.system.dataloader_workers = val
+
+    @property
+    def prefetch_factor(self) -> Optional[int]: return self.system.prefetch_factor
+    @prefetch_factor.setter
+    def prefetch_factor(self, val: Optional[int]) -> None: self.system.prefetch_factor = val
+
+    @property
+    def ckpt_dir(self) -> str: return self.system.ckpt_dir
+    @ckpt_dir.setter
+    def ckpt_dir(self, val: str) -> None: self.system.ckpt_dir = val
+
+    @property
+    def epochs(self) -> int: return self.training.epochs
+    @epochs.setter
+    def epochs(self, val: int) -> None: self.training.epochs = val
+
+    @property
+    def batch_size(self) -> int: return self.training.batch_size
+    @batch_size.setter
+    def batch_size(self, val: int) -> None: self.training.batch_size = val
+
+    @property
+    def learning_rate(self) -> float: return self.training.learning_rate
+    @learning_rate.setter
+    def learning_rate(self, val: float) -> None: self.training.learning_rate = val
+
+    @property
+    def weight_decay(self) -> float: return self.training.weight_decay
+    @weight_decay.setter
+    def weight_decay(self, val: float) -> None: self.training.weight_decay = val
+
+    @property
+    def use_onecycle(self) -> bool: return self.training.use_onecycle
+    @use_onecycle.setter
+    def use_onecycle(self, val: bool) -> None: self.training.use_onecycle = val
+
+    @property
+    def monitor(self) -> str: return self.evaluation.monitor
+    @monitor.setter
+    def monitor(self, val: str) -> None: self.evaluation.monitor = val
+
+    @property
+    def mode(self) -> Literal["min", "max"]: return self.evaluation.mode
+    @mode.setter
+    def mode(self, val: Literal["min", "max"]) -> None: self.evaluation.mode = val
+
+    @property
+    def early_stopping(self) -> bool: return self.evaluation.early_stopping
+    @early_stopping.setter
+    def early_stopping(self, val: bool) -> None: self.evaluation.early_stopping = val
+
+    @property
+    def patience(self) -> int: return self.evaluation.patience
+    @patience.setter
+    def patience(self, val: int) -> None: self.evaluation.patience = val
+
+    @property
+    def min_delta(self) -> float: return self.evaluation.min_delta
+    @min_delta.setter
+    def min_delta(self, val: float) -> None: self.evaluation.min_delta = val
+
+    @property
+    def delta(self) -> float: return self.evaluation.min_delta
+    @delta.setter
+    def delta(self, val: float) -> None: self.evaluation.min_delta = val
+
+    @property
+    def loss_type(self) -> str: return self.loss.loss_type
+    @loss_type.setter
+    def loss_type(self, val: str) -> None: self.loss.loss_type = val
+
+    @property
+    def weight_act(self) -> float: return self.loss.weight_act
+    @weight_act.setter
+    def weight_act(self, val: float) -> None: self.loss.weight_act = val
+
+    @property
+    def weight_pairwise(self) -> float: return self.loss.weight_pairwise
+    @weight_pairwise.setter
+    def weight_pairwise(self, val: float) -> None: self.loss.weight_pairwise = val
+
+    @property
+    def weight_ce(self) -> float: return self.loss.weight_ce
+    @weight_ce.setter
+    def weight_ce(self, val: float) -> None: self.loss.weight_ce = val
+
+    @property
+    def aux_loss_weight(self) -> float: return self.loss.aux_loss_weight
+    @aux_loss_weight.setter
+    def aux_loss_weight(self, val: float) -> None: self.loss.aux_loss_weight = val
+
+    @property
+    def lambda_balance(self) -> float: return self.loss.lambda_balance
+    @lambda_balance.setter
+    def lambda_balance(self, val: float) -> None: self.loss.lambda_balance = val
+
+    @property
+    def lambda_sparse(self) -> float: return self.loss.lambda_sparse
+    @lambda_sparse.setter
+    def lambda_sparse(self, val: float) -> None: self.loss.lambda_sparse = val
 
     @property
     def num_frames(self) -> int:

@@ -1,26 +1,34 @@
 {
-  "seed": 42,
-  "epochs": 400,
-  "batch_size": 32,
-  "learning_rate": 0.001,
-  "weight_decay": 0.05,
-  "monitor": "val_acc",
-  "mode": "max",
-  "early_stopping": false,
-  "patience": 100,
-  "min_delta": 0.0,
-  "use_onecycle": true,
-  "cache_mode": "ram",
-  "dataloader_workers": 8,
-  "prefetch_factor": 2,
-  "ckpt_dir": "checkpoint",
-  "loss_type": "pairwise_tournament",
-  "weight_act": 0.5,
-  "weight_pairwise": 0.5,
-  "weight_ce": 1.0,
-  "aux_loss_weight": 0.3,
-  "lambda_balance": 0.01,
-  "lambda_sparse": 0.0001,
+  "system": {
+    "seed": 42,
+    "cache_mode": "ram",
+    "dataloader_workers": 8,
+    "prefetch_factor": 2,
+    "ckpt_dir": "checkpoint"
+  },
+  "training": {
+    "epochs": 400,
+    "batch_size": 32,
+    "learning_rate": 0.001,
+    "weight_decay": 0.05,
+    "use_onecycle": true
+  },
+  "evaluation": {
+    "monitor": "val_acc",
+    "mode": "max",
+    "early_stopping": false,
+    "patience": 100,
+    "min_delta": 0.0
+  },
+  "loss": {
+    "loss_type": "pairwise_tournament",
+    "weight_act": 0.5,
+    "weight_pairwise": 0.5,
+    "weight_ce": 1.0,
+    "aux_loss_weight": 0.3,
+    "lambda_balance": 0.01,
+    "lambda_sparse": 0.0001
+  },
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
