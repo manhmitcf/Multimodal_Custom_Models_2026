@@ -190,19 +190,13 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         x = self.proj(x)  # [B * T, embed_dim]
         return x
 
-    def forward(
-        self, frames_7ch: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, frames_7ch: torch.Tensor) -> torch.Tensor:
         """
         Args:
             frames_7ch: [B, T, 7, H, W] tensor (T=2)
 
         Returns:
             f_video: Joint spatiotemporal video embedding [B, embed_dim]
-            f_spatial: Pure spatial visual appearance feature [B, embed_dim]
-            f_motion: Motion dynamics feature between frames [B, embed_dim]
-            f_burst_v: Peak-to-Average dynamic contrast [B, embed_dim]
-            tokens_video: Sequence of frame tokens [B, T, embed_dim]
         """
         B, T, C, H, W = frames_7ch.shape
 
@@ -230,7 +224,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         # 4. Joint Spatiotemporal Video Embedding
         f_video = self.norm_video(f_spatial + f_motion + f_burst_v)  # [B, embed_dim]
 
-        return f_video, f_spatial, f_motion, f_burst_v, tokens_video
+        return f_video
 
 
 # Canonical VideoBackbone alias

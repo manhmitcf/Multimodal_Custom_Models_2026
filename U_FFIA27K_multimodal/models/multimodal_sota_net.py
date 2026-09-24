@@ -109,10 +109,9 @@ class MultimodalBoundaryAwareNet(nn.Module):
         """
         # Step 1: Preprocessing & Frontend Extraction
         if video_input.ndim == 5 and video_input.size(2) == 3:
-            frames_7ch, kinematics_summary = self.motion_kinematics(video_input)
+            frames_7ch, _ = self.motion_kinematics(video_input)
         else:
             frames_7ch = video_input
-            kinematics_summary = torch.zeros(video_input.size(0), 4, device=video_input.device, dtype=video_input.dtype)
 
         if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
             stft_feat = self.audio_frontend(audio_input)
@@ -120,8 +119,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
             stft_feat = audio_input
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
-        f_video, f_spatial, f_motion, f_burst_v, tokens_video = self.video_backbone(frames_7ch)
-        f_audio, f_frequency, f_rhythm, f_burst_a, tokens_audio = self.audio_backbone(stft_feat)
+        f_video = self.video_backbone(frames_7ch)
+        f_audio = self.audio_backbone(stft_feat)
 
         # Auxiliary Unimodal Logits & Probabilities (for standalone evaluation & Phase 1 warmup)
         logits_video = self.aux_head_video(f_video)
@@ -198,16 +197,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "prob_13_v": fusion_outputs.get("prob_13_v"),
             "m_13_a_hard": fusion_outputs.get("m_13_a_hard"),
             "m_13_v_hard": fusion_outputs.get("m_13_v_hard"),
-            # Feature diagnostics
-            "kinematics_summary": kinematics_summary,
-            "f_spatial": f_spatial,
-            "f_motion": f_motion,
-            "f_burst_v": f_burst_v,
-            "tokens_video": tokens_video,
-            "f_frequency": f_frequency,
-            "f_rhythm": f_rhythm,
-            "f_burst_a": f_burst_a,
-            "tokens_audio": tokens_audio,
         }
         return outputs
 
