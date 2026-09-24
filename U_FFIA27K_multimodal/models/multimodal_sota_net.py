@@ -170,24 +170,6 @@ class MultimodalSOTANet(nn.Module):
             "p_m_over_s": fusion_outputs.get("p_m_over_s"),
             "p_w_over_s": fusion_outputs.get("p_w_over_s"),
             "v_voting": fusion_outputs.get("v_voting"),
-            # SMoR Routing gates, probabilities & discrete states
-            "m_12_a": fusion_outputs.get("m_12_a"),
-            "m_12_v": fusion_outputs.get("m_12_v"),
-            "prob_12_a": fusion_outputs.get("prob_12_a"),
-            "prob_12_v": fusion_outputs.get("prob_12_v"),
-            "m_12_a_hard": fusion_outputs.get("m_12_a_hard"),
-            "m_12_v_hard": fusion_outputs.get("m_12_v_hard"),
-            "m_23_a": fusion_outputs.get("m_23_a"),
-            "m_23_v": fusion_outputs.get("m_23_v"),
-            "prob_23_a": fusion_outputs.get("prob_23_a"),
-            "prob_23_v": fusion_outputs.get("prob_23_v"),
-            "m_23_a_hard": fusion_outputs.get("m_23_a_hard"),
-            "m_23_v_hard": fusion_outputs.get("m_23_v_hard"),
-            "m_13_a": fusion_outputs.get("m_13_a"),
-            "m_13_v": fusion_outputs.get("m_13_v"),
-            "prob_13_a": fusion_outputs.get("prob_13_a"),
-            "prob_13_v": fusion_outputs.get("prob_13_v"),
-            "m_13_a_hard": fusion_outputs.get("m_13_a_hard"),
         }
         # Filter out None values to maintain clean output dictionary
         return {k: v for k, v in outputs.items() if v is not None}

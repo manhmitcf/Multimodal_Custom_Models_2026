@@ -68,7 +68,7 @@ def _safe_torch_save(obj: Any, target_path: str) -> bool:
 class MultimodalTrainer:
     """
     Unified Trainer class for Multimodal Fish Feeding Intensity Classification.
-    Supports Pairwise Tournament Loss with SMoR dynamic routing, OneCycleLR, and dual-track evaluation.
+    Supports Pairwise Tournament Loss, OneCycleLR, and dual-track evaluation.
     """
     def __init__(
         self,
@@ -97,11 +97,8 @@ class MultimodalTrainer:
                 weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
                 weight_ce=getattr(self.config, "weight_ce", 1.0),
                 aux_loss_weight=getattr(self.config, "aux_loss_weight", 0.3),
-                lambda_balance=getattr(self.config, "lambda_balance", 0.01),
-                lambda_sparse=getattr(self.config, "lambda_sparse", 0.0001),
-                use_sparse_moe_routing=getattr(self.config, "use_sparse_moe_routing", True),
             ).to(self.device)
-            logger.info("Configured PairwiseTournamentLoss with SMoR (Activity Gate + 3 Boundaries + MoE Balancing & Sparsity).")
+            logger.info("Configured PairwiseTournamentLoss (Activity Gate + 3 Boundaries).")
         else:
             self.loss_fn = ClipCELoss()
             logger.info("Configured standard ClipCELoss.")

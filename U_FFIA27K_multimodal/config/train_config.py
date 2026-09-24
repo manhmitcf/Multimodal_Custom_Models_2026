@@ -189,15 +189,15 @@ class EvaluationConfig(BaseModel):
 
 class LossConfig(BaseModel):
     """
-    Hierarchical Tournament Loss with SMoR Load Balancing and Sparsity penalty.
+    Hierarchical Tournament Loss for Level 1 Activity Gate + Level 2 Pairwise Boundaries.
     """
     loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament' or 'clip_ce'.")
     weight_act: float = Field(default=0.5, ge=0.0, description="Weight for Level-1 Activity Gate BCE loss.")
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
-    lambda_balance: float = Field(default=0.01, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
-    lambda_sparse: float = Field(default=0.0001, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
+    lambda_balance: float = Field(default=0.0, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
+    lambda_sparse: float = Field(default=0.0, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
 
 
 class TrainConfig(BaseModel):
@@ -417,21 +417,6 @@ class TrainConfig(BaseModel):
     def in_chans(self, val: int) -> None:
         self.video_features.num_channels = val
 
-    @property
-    def use_sparse_moe_routing(self) -> bool:
-        return self.model.use_sparse_moe_routing
-
-    @use_sparse_moe_routing.setter
-    def use_sparse_moe_routing(self, val: bool) -> None:
-        self.model.use_sparse_moe_routing = val
-
-    @property
-    def router_hidden_dim(self) -> int:
-        return self.model.router_hidden_dim
-
-    @router_hidden_dim.setter
-    def router_hidden_dim(self, val: int) -> None:
-        self.model.router_hidden_dim = val
 
     @classmethod
     def from_json(cls, path: str = "config/train_config.json") -> "TrainConfig":

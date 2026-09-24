@@ -1,5 +1,5 @@
 """
 U_FFIA27K Multimodal Framework:
-SOTA Fish Feeding Intensity Assessment via ConvNeXt-Nano 7-ch + TKEO-STFT-MLP 2049 + Sparse Mixture-of-Referees (SMoR) Tournament Fusion (~4.26M Params).
+SOTA Fish Feeding Intensity Assessment via ConvNeXt-Nano 7-ch + TKEO-STFT-MLP 2049 + 3 Audio STFT Tie-Breakers Tournament Fusion (~4.09M Params).
 """
 __version__ = "2.0.0"
