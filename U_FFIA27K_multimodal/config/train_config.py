@@ -171,7 +171,7 @@ class TrainConfig(BaseModel):
     batch_size: int = Field(default=32, gt=0, description="Training batch size.")
     learning_rate: float = Field(default=1e-3, gt=0, description="Initial learning rate.")
     weight_decay: float = Field(default=0.05, ge=0, description="Weight decay factor for AdamW.")
-    ckpt_dir: str = Field(default="checkpoint/", description="Directory path to save checkpoints.")
+    ckpt_dir: str = Field(default="checkpoint", description="Directory path to save checkpoints.")
     monitor: str = Field(default="val_acc", description="Metric to monitor for best checkpoint: 'val_acc' (or 'accuracy'), 'qwk', or 'both' (dual-track).")
     mode: Literal["min", "max"] = Field(default="max", description="Optimization direction for monitored metric.")
     early_stopping: bool = Field(default=False, description="Enable early stopping mechanism.")
@@ -182,14 +182,11 @@ class TrainConfig(BaseModel):
     cache_mode: str = Field(default="ram", description="Caching mode: 'ram', 'disk', or 'none'.")
     dataloader_workers: int = Field(default=8, description="Number of worker processes for DataLoader (Fixed to 8).")
     prefetch_factor: Optional[int] = Field(default=2, description="Number of batches loaded in advance.")
-    save_best_only: bool = Field(default=True, description="Save only the best checkpoint.")
     loss_type: str = Field(default="pairwise_tournament", description="Loss function: 'pairwise_tournament' or 'clip_ce'.")
     weight_act: float = Field(default=0.5, ge=0.0, description="Weight for Level-1 Activity Gate BCE loss.")
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
-    use_sparse_moe_routing: bool = Field(default=True, description="Enable Sparse Mixture-of-Referees (SMoR) dynamic routing.")
-    router_hidden_dim: int = Field(default=32, gt=0, description="Hidden dimension for Sparse Referee Routers.")
     lambda_balance: float = Field(default=0.01, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
     lambda_sparse: float = Field(default=0.0001, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
     model: ModelConfig = Field(default_factory=ModelConfig, description="Model architecture parameters.")
@@ -229,17 +226,33 @@ class TrainConfig(BaseModel):
     def in_chans(self, val: int) -> None:
         self.video_features.num_channels = val
 
+    @property
+    def use_sparse_moe_routing(self) -> bool:
+        return self.model.use_sparse_moe_routing
+
+    @use_sparse_moe_routing.setter
+    def use_sparse_moe_routing(self, val: bool) -> None:
+        self.model.use_sparse_moe_routing = val
+
+    @property
+    def router_hidden_dim(self) -> int:
+        return self.model.router_hidden_dim
+
+    @router_hidden_dim.setter
+    def router_hidden_dim(self, val: int) -> None:
+        self.model.router_hidden_dim = val
+
     @classmethod
     def from_json(cls, path: str = "config/train_config.json") -> "TrainConfig":
         config_path = Path(path)
         if not config_path.is_file():
-            pkg_path = Path(__file__).resolve().parent / path
-            if pkg_path.is_file():
-                config_path = pkg_path
+            pkg_fallback = Path(__file__).resolve().parent / Path(path).name
+            if pkg_fallback.is_file():
+                config_path = pkg_fallback
             else:
-                pkg_fallback = Path(__file__).resolve().parent / "train_config.json"
-                if pkg_fallback.is_file():
-                    config_path = pkg_fallback
+                root_fallback = Path(__file__).resolve().parent.parent / path
+                if root_fallback.is_file():
+                    config_path = root_fallback
         logger.info(f"Loading multimodal training configuration from JSON: '{config_path}'")
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)

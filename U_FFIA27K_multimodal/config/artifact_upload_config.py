@@ -44,13 +44,13 @@ class ArtifactUploadConfig(BaseModel):
         from pathlib import Path
         config_path = Path(path)
         if not config_path.is_file():
-            pkg_path = Path(__file__).resolve().parent / path
-            if pkg_path.is_file():
-                config_path = pkg_path
+            pkg_fallback = Path(__file__).resolve().parent / Path(path).name
+            if pkg_fallback.is_file():
+                config_path = pkg_fallback
             else:
-                pkg_fallback = Path(__file__).resolve().parent / "artifact_upload_config.json"
-                if pkg_fallback.is_file():
-                    config_path = pkg_fallback
+                root_fallback = Path(__file__).resolve().parent.parent / path
+                if root_fallback.is_file():
+                    config_path = root_fallback
         logger.info(f"Loading artifact upload configuration from JSON: '{config_path}'")
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
