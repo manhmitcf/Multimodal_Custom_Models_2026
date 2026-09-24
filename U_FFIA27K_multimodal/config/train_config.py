@@ -70,6 +70,21 @@ class DualTieBreakersConfig(BaseModel):
         description="Referees (Audio & Video) for Weak vs Strong (B13)."
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_matchups(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            d = dict(data)
+            for key, flat in [("b12", "enable_b12"), ("b23", "enable_b23"), ("b13", "enable_b13")]:
+                if key not in d and flat in d:
+                    d[key] = d.pop(flat)
+                if key in d:
+                    v = d[key]
+                    if isinstance(v, bool):
+                        d[key] = {"enable_audio": v, "enable_video": v}
+            return d
+        return data
+
 
 class ModelConfig(BaseModel):
     """

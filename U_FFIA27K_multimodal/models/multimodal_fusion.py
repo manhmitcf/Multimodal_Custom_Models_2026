@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 
 
 class SparseRefereeRouter(nn.Module):
@@ -77,6 +77,73 @@ def _make_subspace_head(dim: int, hidden_dim: int = 112) -> nn.Sequential:
     )
 
 
+def _parse_smor_tie_breakers(
+    tie_breakers: Any,
+    enable_b12_audio: bool = True,
+    enable_b12_video: bool = True,
+    enable_b23_audio: bool = True,
+    enable_b23_video: bool = True,
+    enable_b13_audio: bool = True,
+    enable_b13_video: bool = True,
+) -> Tuple[bool, bool, bool, bool, bool, bool]:
+    """
+    Robustly parses SMoR tie_breakers configuration from Pydantic models (v1/v2),
+    nested dictionaries, flat dictionaries, or object attributes.
+    """
+    if tie_breakers is not None:
+        if hasattr(tie_breakers, "model_dump"):
+            d = tie_breakers.model_dump()
+        elif hasattr(tie_breakers, "dict"):
+            d = tie_breakers.dict()
+        elif isinstance(tie_breakers, dict):
+            d = dict(tie_breakers)
+        else:
+            d = {}
+
+        if d:
+            def _extract_pair(matchup_key, flat_key, def_a, def_v):
+                val = d.get(matchup_key, d.get(flat_key, None))
+                if val is None:
+                    a = d.get(f"{flat_key}_audio", d.get(f"{matchup_key}_audio", def_a))
+                    v = d.get(f"{flat_key}_video", d.get(f"{matchup_key}_video", def_v))
+                    return bool(a), bool(v)
+                if isinstance(val, dict):
+                    a = val.get("enable_audio", val.get("audio", def_a))
+                    v = val.get("enable_video", val.get("video", def_v))
+                    return bool(a), bool(v)
+                return bool(val), bool(val)
+
+            enable_b12_audio, enable_b12_video = _extract_pair("b12", "enable_b12", enable_b12_audio, enable_b12_video)
+            enable_b23_audio, enable_b23_video = _extract_pair("b23", "enable_b23", enable_b23_audio, enable_b23_video)
+            enable_b13_audio, enable_b13_video = _extract_pair("b13", "enable_b13", enable_b13_audio, enable_b13_video)
+        else:
+            def _extract_obj_pair(matchup_attr, flat_attr, def_a, def_v):
+                val = getattr(tie_breakers, matchup_attr, getattr(tie_breakers, flat_attr, None))
+                if val is None:
+                    a = getattr(tie_breakers, f"{flat_attr}_audio", getattr(tie_breakers, f"{matchup_attr}_audio", def_a))
+                    v = getattr(tie_breakers, f"{flat_attr}_video", getattr(tie_breakers, f"{matchup_attr}_video", def_v))
+                    return bool(a), bool(v)
+                if hasattr(val, "enable_audio") or hasattr(val, "enable_video"):
+                    a = getattr(val, "enable_audio", def_a)
+                    v = getattr(val, "enable_video", def_v)
+                    return bool(a), bool(v)
+                if isinstance(val, dict):
+                    a = val.get("enable_audio", val.get("audio", def_a))
+                    v = val.get("enable_video", val.get("video", def_v))
+                    return bool(a), bool(v)
+                return bool(val), bool(val)
+
+            enable_b12_audio, enable_b12_video = _extract_obj_pair("b12", "enable_b12", enable_b12_audio, enable_b12_video)
+            enable_b23_audio, enable_b23_video = _extract_obj_pair("b23", "enable_b23", enable_b23_audio, enable_b23_video)
+            enable_b13_audio, enable_b13_video = _extract_obj_pair("b13", "enable_b13", enable_b13_audio, enable_b13_video)
+
+    return (
+        bool(enable_b12_audio), bool(enable_b12_video),
+        bool(enable_b23_audio), bool(enable_b23_video),
+        bool(enable_b13_audio), bool(enable_b13_video),
+    )
+
+
 class PairwiseBoundaryTournamentHead(nn.Module):
     """
     Hierarchical Pairwise Cross-Boundary Tournament Head with Sparse Mixture-of-Referees (SMoR, ~331K params).
@@ -119,33 +186,17 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.dim = dim
         self.temperature = temperature
 
-        # Parse tie_breakers if provided as dict or config object
-        if tie_breakers is not None:
-            if hasattr(tie_breakers, "b12"):
-                enable_b12_audio = getattr(tie_breakers.b12, "enable_audio", True)
-                enable_b12_video = getattr(tie_breakers.b12, "enable_video", True)
-                enable_b23_audio = getattr(tie_breakers.b23, "enable_audio", True)
-                enable_b23_video = getattr(tie_breakers.b23, "enable_video", True)
-                enable_b13_audio = getattr(tie_breakers.b13, "enable_audio", True)
-                enable_b13_video = getattr(tie_breakers.b13, "enable_video", True)
-            elif isinstance(tie_breakers, dict):
-                b12_cfg = tie_breakers.get("b12", {})
-                b23_cfg = tie_breakers.get("b23", {})
-                b13_cfg = tie_breakers.get("b13", {})
-                if isinstance(b12_cfg, dict):
-                    enable_b12_audio = b12_cfg.get("enable_audio", True)
-                    enable_b12_video = b12_cfg.get("enable_video", True)
-                    enable_b23_audio = b23_cfg.get("enable_audio", True)
-                    enable_b23_video = b23_cfg.get("enable_video", True)
-                    enable_b13_audio = b13_cfg.get("enable_audio", True)
-                    enable_b13_video = b13_cfg.get("enable_video", True)
-
-        self.enable_b12_a = bool(enable_b12_audio)
-        self.enable_b12_v = bool(enable_b12_video)
-        self.enable_b23_a = bool(enable_b23_audio)
-        self.enable_b23_v = bool(enable_b23_video)
-        self.enable_b13_a = bool(enable_b13_audio)
-        self.enable_b13_v = bool(enable_b13_video)
+        # Parse tie_breakers robustly
+        (
+            self.enable_b12_a, self.enable_b12_v,
+            self.enable_b23_a, self.enable_b23_v,
+            self.enable_b13_a, self.enable_b13_v
+        ) = _parse_smor_tie_breakers(
+            tie_breakers,
+            enable_b12_audio, enable_b12_video,
+            enable_b23_audio, enable_b23_video,
+            enable_b13_audio, enable_b13_video
+        )
 
         # Level 1: Feeding Activity Gate (None vs Feeding)
         self.activity_head = nn.Sequential(
@@ -449,6 +500,16 @@ class MultimodalTournamentFusion(nn.Module):
     ) -> None:
         super().__init__()
         self.dim = dim
+        (
+            self.enable_b12_a, self.enable_b12_v,
+            self.enable_b23_a, self.enable_b23_v,
+            self.enable_b13_a, self.enable_b13_v
+        ) = _parse_smor_tie_breakers(
+            tie_breakers,
+            enable_b12_audio, enable_b12_video,
+            enable_b23_audio, enable_b23_video,
+            enable_b13_audio, enable_b13_video
+        )
 
         # 1. Gated Reliability Fusion
         self.gate = nn.Sequential(
@@ -469,12 +530,12 @@ class MultimodalTournamentFusion(nn.Module):
         self.tournament_head = PairwiseBoundaryTournamentHead(
             dim=dim,
             temperature=2.0,
-            enable_b12_audio=enable_b12_audio,
-            enable_b12_video=enable_b12_video,
-            enable_b23_audio=enable_b23_audio,
-            enable_b23_video=enable_b23_video,
-            enable_b13_audio=enable_b13_audio,
-            enable_b13_video=enable_b13_video,
+            enable_b12_audio=self.enable_b12_a,
+            enable_b12_video=self.enable_b12_v,
+            enable_b23_audio=self.enable_b23_a,
+            enable_b23_video=self.enable_b23_v,
+            enable_b13_audio=self.enable_b13_a,
+            enable_b13_video=self.enable_b13_v,
             tie_breakers=tie_breakers,
             use_sparse_moe_routing=use_sparse_moe_routing,
             router_hidden_dim=router_hidden_dim,

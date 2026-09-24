@@ -65,14 +65,21 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     tb_cfg = getattr(config.model, "tie_breakers", None)
     if tb_cfg is not None:
+        def _fmt(val):
+            if hasattr(val, "enable_audio") or hasattr(val, "enable_video"):
+                return f"Audio={getattr(val, 'enable_audio', True)}, Video={getattr(val, 'enable_video', True)}"
+            if isinstance(val, dict):
+                return f"Audio={val.get('enable_audio', True)}, Video={val.get('enable_video', True)}"
+            return f"Audio={bool(val)}, Video={bool(val)}"
+
         if hasattr(tb_cfg, "b12"):
-            b12_str = f"Audio={tb_cfg.b12.enable_audio}, Video={tb_cfg.b12.enable_video}"
-            b23_str = f"Audio={tb_cfg.b23.enable_audio}, Video={tb_cfg.b23.enable_video}"
-            b13_str = f"Audio={tb_cfg.b13.enable_audio}, Video={tb_cfg.b13.enable_video}"
+            b12_str = _fmt(tb_cfg.b12)
+            b23_str = _fmt(tb_cfg.b23)
+            b13_str = _fmt(tb_cfg.b13)
         elif isinstance(tb_cfg, dict):
-            b12_str = f"Audio={tb_cfg.get('b12', {}).get('enable_audio', True)}, Video={tb_cfg.get('b12', {}).get('enable_video', True)}"
-            b23_str = f"Audio={tb_cfg.get('b23', {}).get('enable_audio', True)}, Video={tb_cfg.get('b23', {}).get('enable_video', True)}"
-            b13_str = f"Audio={tb_cfg.get('b13', {}).get('enable_audio', True)}, Video={tb_cfg.get('b13', {}).get('enable_video', True)}"
+            b12_str = _fmt(tb_cfg.get("b12", tb_cfg.get("enable_b12", True)))
+            b23_str = _fmt(tb_cfg.get("b23", tb_cfg.get("enable_b23", True)))
+            b13_str = _fmt(tb_cfg.get("b13", tb_cfg.get("enable_b13", True)))
         else:
             b12_str = b23_str = b13_str = "Default"
     else:
