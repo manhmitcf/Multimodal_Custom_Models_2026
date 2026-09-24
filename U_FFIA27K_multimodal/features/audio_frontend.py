@@ -90,6 +90,7 @@ class AudioFrontend(nn.Module):
         self.hop_length = self.config.hop_size
         self.stft_bins = self.n_fft // 2 + 1  # 2049 for n_fft=4096
         self.alpha_max = float(getattr(self.config, 'alpha_max', 0.99))
+        self.beta = float(getattr(self.config, 'beta', 0.8))
         self.use_tkeo = bool(getattr(self.config, 'use_tkeo', True))
 
         self.use_spectral_aug = bool(getattr(self.config, 'use_spectral_aug', False))
@@ -120,7 +121,7 @@ class AudioFrontend(nn.Module):
         logger.info(f"  - FFT Size (n_fft):   {self.n_fft}")
         logger.info(f"  - Hop Length:         {self.hop_length}")
         logger.info(f"  - STFT Output Bins:   {self.stft_bins} linear bins")
-        logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max})")
+        logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max}, beta={self.beta})")
         logger.info(f"  - Spectral 1D Aug:    {'ENABLED' if self.use_spectral_aug else 'DISABLED'}")
         if self.use_spectral_aug:
             logger.info(f"    * 1D Cutout Band:   Width={self.cutout_width} bins, Prob={self.cutout_prob}")
