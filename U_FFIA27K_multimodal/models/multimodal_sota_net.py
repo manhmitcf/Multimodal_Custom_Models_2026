@@ -11,10 +11,10 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalSOTANet(nn.Module):
     """
-    Hierarchical Multimodal Tournament Network with Sparse Mixture-of-Referees (SMoR-Net, ~4.26M Total Parameters).
+    Hierarchical Multimodal Tournament Network with 3 Audio STFT Tie-Breakers (~4.09M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Sparse Mixture-of-Referees
-    (SMoR: Audio STFT + Video Kinematics + Dynamic STE Routers) for all pairwise matchups (B12, B23, B13):
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Audio STFT
+    Tie-Breakers (B12, B23, B13):
 
       1. Visual-Kinematic Stream (~2.702M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
@@ -22,19 +22,15 @@ class MultimodalSOTANet(nn.Module):
       2. Acoustic Time-Frequency Stream (~1.166M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion with Sparse Mixture-of-Referees (~0.382M params):
+      3. Pairwise Tournament Fusion with 3 Audio STFT Tie-Breakers (~0.219M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
-         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with Sparse Mixture-of-Referees (SMoR):
-             * B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B12)
-             * B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23)
-             * B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13)
-         - Sparse Referee Routers with Straight-Through Estimator (STE) supporting 4 discrete states:
-           (1,1), (1,0), (0,1), (0,0).
-         - Dynamic Referee Intervention: logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V).
+         - Level 2: 3 Specialized Pairwise Subspace Expert Heads on f_joint
+             with 3 Configurable Audio STFT Referees on f_audio (B12, B23, B13).
+         - Dynamic Tie-Breaker Intervention: logit = logit_base + gamma * u_tie * logit_audio.
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,256,657 (~4.257M) (Strictly < 5.0M parameter constraint, remaining headroom: 743,343).
+    Total Parameters: 4,093,733 (~4.094M) with all 3 tie-breakers enabled (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -79,7 +75,7 @@ class MultimodalSOTANet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Multimodal Tournament Fusion with Sparse Mixture-of-Referees (~0.382M)
+        # 3. Multimodal Tournament Fusion with 3 Audio STFT Tie-Breakers (~0.219M)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,
@@ -150,6 +146,7 @@ class MultimodalSOTANet(nn.Module):
             "logit_12_a": fusion_outputs.get("logit_12_a"),
             "logit_12_v": fusion_outputs.get("logit_12_v"),
             "u_tie_12": fusion_outputs.get("u_tie_12"),
+            "gamma_12": fusion_outputs.get("gamma_12", fusion_outputs.get("gamma_12_a")),
             "gamma_12_a": fusion_outputs.get("gamma_12_a"),
             "gamma_12_v": fusion_outputs.get("gamma_12_v"),
             "logit_23": fusion_outputs.get("logit_23"),
@@ -157,6 +154,7 @@ class MultimodalSOTANet(nn.Module):
             "logit_23_a": fusion_outputs.get("logit_23_a"),
             "logit_23_v": fusion_outputs.get("logit_23_v"),
             "u_tie_23": fusion_outputs.get("u_tie_23"),
+            "gamma_23": fusion_outputs.get("gamma_23", fusion_outputs.get("gamma_23_a")),
             "gamma_23_a": fusion_outputs.get("gamma_23_a"),
             "gamma_23_v": fusion_outputs.get("gamma_23_v"),
             "logit_13": fusion_outputs.get("logit_13"),
@@ -164,6 +162,7 @@ class MultimodalSOTANet(nn.Module):
             "logit_13_a": fusion_outputs.get("logit_13_a"),
             "logit_13_v": fusion_outputs.get("logit_13_v"),
             "u_tie_13": fusion_outputs.get("u_tie_13"),
+            "gamma_13": fusion_outputs.get("gamma_13", fusion_outputs.get("gamma_13_a")),
             "gamma_13_a": fusion_outputs.get("gamma_13_a"),
             "gamma_13_v": fusion_outputs.get("gamma_13_v"),
             # Tournament pairwise winning probabilities & Borda voting scores
@@ -189,6 +188,6 @@ class MultimodalSOTANet(nn.Module):
             "prob_13_a": fusion_outputs.get("prob_13_a"),
             "prob_13_v": fusion_outputs.get("prob_13_v"),
             "m_13_a_hard": fusion_outputs.get("m_13_a_hard"),
-            "m_13_v_hard": fusion_outputs.get("m_13_v_hard"),
         }
-        return outputs
+        # Filter out None values to maintain clean output dictionary
+        return {k: v for k, v in outputs.items() if v is not None}

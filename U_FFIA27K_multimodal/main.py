@@ -65,28 +65,31 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     tb_cfg = getattr(config.model, "tie_breakers", None)
     if tb_cfg is not None:
-        if hasattr(tb_cfg, "b12"):
-            b12_str = f"Audio={tb_cfg.b12.enable_audio}, Video={tb_cfg.b12.enable_video}"
-            b23_str = f"Audio={tb_cfg.b23.enable_audio}, Video={tb_cfg.b23.enable_video}"
-            b13_str = f"Audio={tb_cfg.b13.enable_audio}, Video={tb_cfg.b13.enable_video}"
+        if hasattr(tb_cfg, "enable_b12"):
+            b12_str = f"Audio={tb_cfg.enable_b12}"
+            b23_str = f"Audio={tb_cfg.enable_b23}"
+            b13_str = f"Audio={tb_cfg.enable_b13}"
+        elif hasattr(tb_cfg, "b12"):
+            b12_str = f"Audio={getattr(tb_cfg.b12, 'enable_audio', tb_cfg.b12)}"
+            b23_str = f"Audio={getattr(tb_cfg.b23, 'enable_audio', tb_cfg.b23)}"
+            b13_str = f"Audio={getattr(tb_cfg.b13, 'enable_audio', tb_cfg.b13)}"
         elif isinstance(tb_cfg, dict):
-            b12_str = f"Audio={tb_cfg.get('b12', {}).get('enable_audio', True)}, Video={tb_cfg.get('b12', {}).get('enable_video', True)}"
-            b23_str = f"Audio={tb_cfg.get('b23', {}).get('enable_audio', True)}, Video={tb_cfg.get('b23', {}).get('enable_video', True)}"
-            b13_str = f"Audio={tb_cfg.get('b13', {}).get('enable_audio', True)}, Video={tb_cfg.get('b13', {}).get('enable_video', True)}"
+            b12_val = tb_cfg.get("enable_b12", tb_cfg.get("b12", True))
+            b23_val = tb_cfg.get("enable_b23", tb_cfg.get("b23", True))
+            b13_val = tb_cfg.get("enable_b13", tb_cfg.get("b13", True))
+            b12_str = f"{b12_val}"
+            b23_str = f"{b23_val}"
+            b13_str = f"{b13_val}"
         else:
             b12_str = b23_str = b13_str = "Default"
     else:
         b12_str = b23_str = b13_str = "All True"
 
-    use_sparse_moe_routing = getattr(config.model, "use_sparse_moe_routing", getattr(config, "use_sparse_moe_routing", True))
-    router_hidden_dim = getattr(config.model, "router_hidden_dim", getattr(config, "router_hidden_dim", 32))
-
     logger.info(
-        f"Sparse Mixture-of-Referees (SMoR) configuration: "
+        f"Audio Tie-Breakers configuration: "
         f"B12 (Weak vs Med)=[{b12_str}], "
         f"B23 (Med vs Strong)=[{b23_str}], "
-        f"B13 (Weak vs Strong)=[{b13_str}] | "
-        f"SMoR Routing={use_sparse_moe_routing} (Hidden Dim={router_hidden_dim})"
+        f"B13 (Weak vs Strong)=[{b13_str}]"
     )
 
     return model_cls(
@@ -99,8 +102,6 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         tie_breakers=tb_cfg,
         video_drop_path=getattr(config.model, "video_drop_path", 0.1),
         layer_scale_init_value=getattr(config.model, "layer_scale_init_value", 1e-6),
-        use_sparse_moe_routing=use_sparse_moe_routing,
-        router_hidden_dim=router_hidden_dim,
     )
 
 
