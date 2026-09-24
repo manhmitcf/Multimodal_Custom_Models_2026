@@ -15,7 +15,7 @@ from utils.seed import seed_everything
 
 def test_parameter_budget():
     print("\n" + "=" * 65)
-    print("TEST 1: SMoR-NET TOURNAMENT PARAMETER BUDGET (< 5.0M)")
+    print("TEST 1: VIDEO TIE-BREAKERS TOURNAMENT PARAMETER BUDGET (< 5.0M)")
     print("=" * 65)
 
     model = MultimodalSOTANet(num_frames=2)
@@ -27,7 +27,7 @@ def test_parameter_budget():
     print(f"Total Model Parameters:               {total_params:,}")
     print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
     print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
-    print(f"  - Pairwise SMoR Fusion:               {f_params:,}")
+    print(f"  - Pairwise Video Tournament Fusion:   {f_params:,}")
 
     strict_limit = 5000000
     assert total_params < strict_limit, f"FAILED: Exceeded budget {total_params} >= {strict_limit}"
@@ -37,7 +37,7 @@ def test_parameter_budget():
 
 def test_tournament_forward_and_pairwise():
     print("\n" + "=" * 65)
-    print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & SPARSE MIXTURE-OF-REFEREES")
+    print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & 3 VIDEO TIE-BREAKERS")
     print("=" * 65)
 
     model = MultimodalSOTANet(num_frames=2)
@@ -55,7 +55,7 @@ def test_tournament_forward_and_pairwise():
     print(f"Level 1 Feeding Activity Probabilities: {p_feeding.tolist()}")
     assert (p_feeding >= 0.0).all() and (p_feeding <= 1.0).all(), "p_feeding out of [0, 1] range"
 
-    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13 and Referees
+    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13 and Video Referees
     p_w_over_m = out["p_w_over_m"]
     p_m_over_s = out["p_m_over_s"]
     p_w_over_s = out["p_w_over_s"]
@@ -78,10 +78,10 @@ def test_tournament_forward_and_pairwise():
     assert (u_tie_23 > 0.0).all() and (u_tie_23 <= 1.0).all()
     assert (u_tie_13 > 0.0).all() and (u_tie_13 <= 1.0).all()
 
-    # Check that both audio and video referee logits are present
-    assert "logit_12_a" in out and "logit_12_v" in out
-    assert "logit_23_a" in out and "logit_23_v" in out
-    assert "logit_13_a" in out and "logit_13_v" in out
+    # Check that video referee logits and gammas are present
+    assert "logit_12_v" in out and "gamma_12" in out
+    assert "logit_23_v" in out and "gamma_23" in out
+    assert "logit_13_v" in out and "gamma_13" in out
 
     # 3. Check Tournament Voting scores
     v_voting = out["v_voting"]
@@ -107,12 +107,12 @@ def test_tournament_forward_and_pairwise():
     assert intensity.shape == (B, 1)
     assert (intensity >= 0.0).all() and (intensity <= 3.0).all(), "Intensity must be in [0, 3]"
 
-    print("[PASSED] SMoR Tournament 2-level forward pass verified!")
+    print("[PASSED] Tournament 2-level forward pass with 3 Video Tie-Breakers verified!")
 
 
 def test_gradient_flow_through_loss():
     print("\n" + "=" * 65)
-    print("TEST 3: 100% GRADIENT FLOW THROUGH SMoR LOSS")
+    print("TEST 3: 100% GRADIENT FLOW THROUGH TOURNAMENT LOSS")
     print("=" * 65)
 
     model = MultimodalSOTANet(num_frames=2)
@@ -144,7 +144,7 @@ def test_gradient_flow_through_loss():
         assert False, f"Gradient flow broken for {len(missing_grad_params)} parameters!"
 
     print(f"[PASSED] 100% Gradient flow verified: {param_count}/{param_count} parameters with healthy gradients!")
-    print(f"  SMoR Composite Loss: {loss.item():.4f}")
+    print(f"  Composite Loss: {loss.item():.4f}")
 
 
 def test_end_to_end_from_scratch():
@@ -179,80 +179,60 @@ def test_end_to_end_from_scratch():
     print(f"[PASSED] End-to-End Single Phase: All {len(list(model.parameters()))} param tensors updated simultaneously!")
 
 
-def test_tie_breakers_toggle_config():
+def test_all_8_video_tie_breaker_combinations():
     print("\n" + "=" * 65)
-    print("TEST 5: CONFIGURABLE REFEREES TOGGLE (ABLATION VERIFICATION)")
+    print("TEST 5: ALL 8 VIDEO TIE-BREAKER COMBINATIONS (ABLATION MATRIX)")
     print("=" * 65)
 
     B = 2
     v_input = torch.randn(B, 2, 3, 224, 224)
     a_input = torch.randn(B, 512000)
+    targets = {"target": torch.tensor([1, 2])}
+    criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
 
-    # Case A: Pure Baseline (All tie-breakers disabled)
-    tb_baseline = {
-        "b12": {"enable_audio": False, "enable_video": False},
-        "b23": {"enable_audio": False, "enable_video": False},
-        "b13": {"enable_audio": False, "enable_video": False}
-    }
-    model_baseline = MultimodalSOTANet(tie_breakers=tb_baseline)
-    th_base = model_baseline.fusion.tournament_head
-    assert th_base.head_b12_a is None and th_base.head_b12_v is None
-    assert th_base.head_b23_a is None and th_base.head_b23_v is None
-    assert th_base.head_b13_a is None and th_base.head_b13_v is None
-    out_b = model_baseline(v_input, a_input)
-    assert out_b["probabilities"].shape == (B, 4)
-    p_params_b = sum(p.numel() for p in model_baseline.parameters())
-    print(f"  Case A (Pure Baseline - All Referees Off): {p_params_b:,} params - verified clean!")
+    combinations = [
+        (False, False, False, "Pure Baseline (No Tie-Breakers)"),
+        (True,  False, False, "Video Tie-Breaker B12 Only"),
+        (False, True,  False, "Video Tie-Breaker B23 Only"),
+        (False, False, True,  "Video Tie-Breaker B13 Only"),
+        (True,  True,  False, "Video Tie-Breakers B12 + B23"),
+        (True,  False, True,  "Video Tie-Breakers B12 + B13"),
+        (False, True,  True,  "Video Tie-Breakers B23 + B13"),
+        (True,  True,  True,  "All 3 Video Tie-Breakers (B12 + B23 + B13)"),
+    ]
 
-    # Case B: All Audio Referees Only (Triple Audio)
-    tb_audio_only = {
-        "b12": {"enable_audio": True, "enable_video": False},
-        "b23": {"enable_audio": True, "enable_video": False},
-        "b13": {"enable_audio": True, "enable_video": False}
-    }
-    model_audio = MultimodalSOTANet(tie_breakers=tb_audio_only)
-    th_aud = model_audio.fusion.tournament_head
-    assert th_aud.head_b12_a is not None and th_aud.head_b12_v is None
-    assert th_aud.head_b23_a is not None and th_aud.head_b23_v is None
-    assert th_aud.head_b13_a is not None and th_aud.head_b13_v is None
-    out_a = model_audio(v_input, a_input)
-    assert out_a["probabilities"].shape == (B, 4)
-    p_params_a = sum(p.numel() for p in model_audio.parameters())
-    print(f"  Case B (Triple Audio Referees Only):      {p_params_a:,} params - verified clean!")
+    for idx, (b12, b23, b13, desc) in enumerate(combinations, 1):
+        tb_config = {"enable_b12": b12, "enable_b23": b23, "enable_b13": b13}
+        model = MultimodalSOTANet(num_frames=2, tie_breakers=tb_config)
+        th = model.fusion.tournament_head
 
-    # Case C: All Video Referees Only (Triple Video)
-    tb_video_only = {
-        "b12": {"enable_audio": False, "enable_video": True},
-        "b23": {"enable_audio": False, "enable_video": True},
-        "b13": {"enable_audio": False, "enable_video": True}
-    }
-    model_video = MultimodalSOTANet(tie_breakers=tb_video_only)
-    th_vid = model_video.fusion.tournament_head
-    assert th_vid.head_b12_a is None and th_vid.head_b12_v is not None
-    assert th_vid.head_b23_a is None and th_vid.head_b23_v is not None
-    assert th_vid.head_b13_a is None and th_vid.head_b13_v is not None
-    out_v = model_video(v_input, a_input)
-    assert out_v["probabilities"].shape == (B, 4)
-    p_params_v = sum(p.numel() for p in model_video.parameters())
-    print(f"  Case C (Triple Video Referees Only):      {p_params_v:,} params - verified clean!")
+        # Check sub-modules existence
+        if b12:
+            assert th.head_b12_v is not None and th.gamma_12 is not None
+        else:
+            assert th.head_b12_v is None and th.gamma_12 is None
 
-    # Case D: Both Referees (Audio + Video enabled on all 3 matchups)
-    tb_full_dual = {
-        "b12": {"enable_audio": True, "enable_video": True},
-        "b23": {"enable_audio": True, "enable_video": True},
-        "b13": {"enable_audio": True, "enable_video": True}
-    }
-    model_dual = MultimodalSOTANet(tie_breakers=tb_full_dual)
-    th_dual = model_dual.fusion.tournament_head
-    assert th_dual.head_b12_a is not None and th_dual.head_b12_v is not None
-    assert th_dual.head_b23_a is not None and th_dual.head_b23_v is not None
-    assert th_dual.head_b13_a is not None and th_dual.head_b13_v is not None
-    out_d = model_dual(v_input, a_input)
-    assert out_d["probabilities"].shape == (B, 4)
-    p_params_d = sum(p.numel() for p in model_dual.parameters())
-    print(f"  Case D (Both Referees - Audio + Video): {p_params_d:,} params - verified clean!")
+        if b23:
+            assert th.head_b23_v is not None and th.gamma_23 is not None
+        else:
+            assert th.head_b23_v is None and th.gamma_23 is None
 
-    print("[PASSED] Configurable referee toggle verified across all ablation states!")
+        if b13:
+            assert th.head_b13_v is not None and th.gamma_13 is not None
+        else:
+            assert th.head_b13_v is None and th.gamma_13 is None
+
+        # Test forward & backward
+        model.train()
+        outputs = model(v_input, a_input)
+        loss = criterion(outputs, targets)
+        loss.backward()
+
+        param_count = sum(p.numel() for p in model.parameters())
+        assert param_count < 5000000
+        print(f"  Comb {idx}/8: [B12={b12}, B23={b23}, B13={b13}] -> {param_count:,} params | {desc} -> PASSED")
+
+    print("[PASSED] All 8 Video Tie-Breaker ablation combinations verified successfully!")
 
 
 def test_consistent_video_transform():
@@ -288,72 +268,9 @@ def test_consistent_video_transform():
     print("[PASSED] Val mode preserves clean full frames without erasing!")
 
 
-def test_smor_routing_and_ste_states():
-    print("\n" + "=" * 65)
-    print("TEST 7: SPARSE MIXTURE-OF-REFEREES (SMoR) ROUTING & STE STATES")
-    print("=" * 65)
-
-    model = MultimodalSOTANet(num_frames=2, use_sparse_moe_routing=True)
-    model.train()
-
-    B = 8
-    v_input = torch.randn(B, 2, 3, 224, 224)
-    a_input = torch.randn(B, 512000)
-
-    out = model(v_input, a_input)
-
-    # 1. Verify router output keys
-    for tag in ["12", "23", "13"]:
-        assert f"m_{tag}_a" in out, f"Missing m_{tag}_a"
-        assert f"m_{tag}_v" in out, f"Missing m_{tag}_v"
-        assert f"prob_{tag}_a" in out, f"Missing prob_{tag}_a"
-        assert f"prob_{tag}_v" in out, f"Missing prob_{tag}_v"
-
-        m_a = out[f"m_{tag}_a"]
-        m_v = out[f"m_{tag}_v"]
-        p_a = out[f"prob_{tag}_a"]
-        p_v = out[f"prob_{tag}_v"]
-
-        # 2. In forward pass, STE outputs must be strictly binary {0.0, 1.0}
-        assert torch.all((m_a == 0.0) | (m_a == 1.0)), f"m_{tag}_a must be binary {0, 1}"
-        assert torch.all((m_v == 0.0) | (m_v == 1.0)), f"m_{tag}_v must be binary {0, 1}"
-        assert torch.all((p_a >= 0.0) & (p_a <= 1.0)), f"prob_{tag}_a must be in [0, 1]"
-        assert torch.all((p_v >= 0.0) & (p_v <= 1.0)), f"prob_{tag}_v must be in [0, 1]"
-
-        print(f"  Matchup B{tag} Router Decisions: m_Audio={m_a.tolist()}, m_Video={m_v.tolist()}")
-
-    # 3. Test loss with MoE balancing and sparsity
-    targets = {"target": torch.tensor([0, 1, 2, 3, 1, 2, 3, 0])}
-    criterion = PairwiseTournamentLoss(
-        weight_act=0.5,
-        weight_pairwise=0.5,
-        weight_ce=1.0,
-        aux_loss_weight=0.3,
-        lambda_balance=0.01,
-        lambda_sparse=0.0001,
-        use_sparse_moe_routing=True
-    )
-    loss = criterion(out, targets)
-    loss.backward()
-
-    # 4. Verify all router parameters receive active gradients through STE & balance loss
-    router_params = [
-        model.fusion.tournament_head.router_b12,
-        model.fusion.tournament_head.router_b23,
-        model.fusion.tournament_head.router_b13
-    ]
-    for idx, router in enumerate(router_params):
-        for name, p in router.named_parameters():
-            assert p.grad is not None, f"Router {idx} param {name} missing gradient!"
-            assert not torch.isnan(p.grad).any(), f"Router {idx} param {name} has NaN gradient!"
-
-    print(f"[PASSED] SMoR Straight-Through Estimator and 4-state dynamic routing verified!")
-    print(f"  SMoR Composite Loss with Balancing & Sparsity: {loss.item():.4f}")
-
-
 def test_convnext_layerscale_and_droppath():
     print("\n" + "=" * 65)
-    print("TEST 8: CONVNEXT-NANO LAYERSCALE & DROPPATH VERIFICATION")
+    print("TEST 7: CONVNEXT-NANO LAYERSCALE & DROPPATH VERIFICATION")
     print("=" * 65)
 
     model = MultimodalSOTANet(num_frames=2, video_drop_path=0.1, layer_scale_init_value=1e-6)
@@ -386,7 +303,7 @@ def test_convnext_layerscale_and_droppath():
     # 2. Verify identity in eval mode
     model.eval()
     dummy_x = torch.randn(2, 96, 28, 28)
-    blk_eval = model.video_backbone.stages[1][0]  # Stage 2 has drop_path > 0
+    blk_eval = model.video_backbone.stages[1][0]
     assert not blk_eval.training
     out_eval1 = blk_eval(dummy_x)
     out_eval2 = blk_eval(dummy_x)
@@ -403,7 +320,7 @@ def test_convnext_layerscale_and_droppath():
 
 if __name__ == "__main__":
     print("\n" + "=" * 65)
-    print("RUNNING MANDATORY SMoR-NET ARCHITECTURE VERIFICATION TEST SUITE")
+    print("RUNNING MANDATORY VIDEO TIE-BREAKERS ARCHITECTURE VERIFICATION TEST SUITE")
     print("=" * 65)
 
     seed_everything(42)
@@ -412,11 +329,10 @@ if __name__ == "__main__":
     test_tournament_forward_and_pairwise()
     test_gradient_flow_through_loss()
     test_end_to_end_from_scratch()
-    test_tie_breakers_toggle_config()
+    test_all_8_video_tie_breaker_combinations()
     test_consistent_video_transform()
-    test_smor_routing_and_ste_states()
     test_convnext_layerscale_and_droppath()
 
     print("\n" + "=" * 65)
-    print("ALL SMoR-NET TOURNAMENT TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("ALL VIDEO TIE-BREAKERS TESTS PASSED SUCCESSFULLY! (100% READY)")
     print("=" * 65 + "\n")

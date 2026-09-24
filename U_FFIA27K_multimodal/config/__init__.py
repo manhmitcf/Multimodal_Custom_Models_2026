@@ -2,8 +2,7 @@ from .train_config import (
     VALID_CACHE_MODES,
     VideoFeaturesConfig,
     AudioFeaturesConfig,
-    MatchupTieBreakersConfig,
-    DualTieBreakersConfig,
+    VideoTieBreakersConfig,
     SystemConfig,
     TrainingConfig,
     EvaluationConfig,
@@ -18,8 +17,7 @@ __all__ = [
     "VALID_CACHE_MODES",
     "VideoFeaturesConfig",
     "AudioFeaturesConfig",
-    "MatchupTieBreakersConfig",
-    "DualTieBreakersConfig",
+    "VideoTieBreakersConfig",
     "SystemConfig",
     "TrainingConfig",
     "EvaluationConfig",
@@ -29,4 +27,3 @@ __all__ = [
     "TrainConfig",
     "ArtifactUploadConfig",
 ]
-

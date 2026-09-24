@@ -11,10 +11,10 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalSOTANet(nn.Module):
     """
-    Hierarchical Multimodal Tournament Network with Sparse Mixture-of-Referees (SMoR-Net, ~4.26M Total Parameters).
+    Hierarchical Multimodal Tournament Network with 3 Video Kinematics Tie-Breakers (~4.09M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Sparse Mixture-of-Referees
-    (SMoR: Audio STFT + Video Kinematics + Dynamic STE Routers) for all pairwise matchups (B12, B23, B13):
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Video Kinematics
+    Tie-Breakers (B12, B23, B13):
 
       1. Visual-Kinematic Stream (~2.702M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
@@ -22,19 +22,15 @@ class MultimodalSOTANet(nn.Module):
       2. Acoustic Time-Frequency Stream (~1.166M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion with Sparse Mixture-of-Referees (~0.382M params):
+      3. Pairwise Tournament Fusion with 3 Video Kinematics Tie-Breakers (~0.219M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
-         - Level 2: 3 Specialized Pairwise Subspace Expert Heads with Sparse Mixture-of-Referees (SMoR):
-             * B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B12)
-             * B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23)
-             * B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13)
-         - Sparse Referee Routers with Straight-Through Estimator (STE) supporting 4 discrete states:
-           (1,1), (1,0), (0,1), (0,0).
-         - Dynamic Referee Intervention: logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V).
+         - Level 2: 3 Specialized Pairwise Subspace Expert Heads on f_joint
+             with 3 Configurable Video Kinematics Referees on f_video (B12, B23, B13).
+         - Dynamic Tie-Breaker Intervention: logit = logit_base + gamma * u_tie * logit_video.
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,256,657 (~4.257M) (Strictly < 5.0M parameter constraint, remaining headroom: 743,343).
+    Total Parameters: 4,093,733 (~4.094M) with all 3 tie-breakers enabled (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -79,7 +75,7 @@ class MultimodalSOTANet(nn.Module):
             num_tokens=num_frames
         )
 
-        # 3. Multimodal Tournament Fusion with Sparse Mixture-of-Referees (~0.382M)
+        # 3. Multimodal Tournament Fusion with 3 Video Kinematics Tie-Breakers (~0.219M)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,
@@ -98,24 +94,20 @@ class MultimodalSOTANet(nn.Module):
         audio_input: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
-        Args:
-            video_input: Raw RGB frames [B, T, 3, H, W] or precomputed 7-ch tensor [B, T, 7, H, W]
-            audio_input: Raw audio waveforms [B, num_samples] or precomputed STFT feature vector [B, 2049]
-
-        Returns:
-            Dictionary containing clipwise_output (logits), probabilities, uncertainties,
-            modality weights, pairwise logits & probabilities, and continuous intensity scores.
+        Hierarchical End-to-End Forward Pass:
+          Raw Inputs:
+            - video_input: [B, 2, 3, 224, 224] (RGB multi-frame clip)
+            - audio_input: [B, 512000] (2.0s @ 256 kHz raw 1D acoustic waveform)
+          Returns:
+            - Full prediction dictionary containing tournament voting probabilities,
+              calibrated logits, pairwise boundaries, uncertainty, and unimodal logits.
         """
-        # Step 1: Preprocessing & Frontend Extraction
-        if video_input.ndim == 5 and video_input.size(2) == 3:
-            frames_7ch, _ = self.motion_kinematics(video_input)
-        else:
-            frames_7ch = video_input
+        # Step 1: Frontends
+        # Video: 3ch RGB -> 7ch Spatiotemporal Fluid Kinematics
+        frames_7ch, _ = self.motion_kinematics(video_input)  # [B, 2, 7, 224, 224]
 
-        if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
-            stft_feat = self.audio_frontend(audio_input)
-        else:
-            stft_feat = audio_input
+        # Audio: Raw 1D waveform -> TKEO-STFT Log Magnitude Spectrogram
+        stft_feat = self.audio_frontend(audio_input)         # [B, 2049]
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
         f_video = self.video_backbone(frames_7ch)
@@ -125,7 +117,7 @@ class MultimodalSOTANet(nn.Module):
         logits_video = self.aux_head_video(f_video)
         logits_audio = self.aux_head_audio(f_audio)
 
-        # Step 3: Gated Multimodal Tournament Fusion
+        # Step 3: Gated Multimodal Tournament Fusion with 3 Video Tie-Breakers
         fusion_outputs = self.fusion(
             f_video=f_video,
             f_audio=f_audio
@@ -134,6 +126,7 @@ class MultimodalSOTANet(nn.Module):
         # Step 4: Assemble Comprehensive Output
         outputs = {
             "clipwise_output": fusion_outputs["clipwise_output"],
+            "logits": fusion_outputs.get("logits", fusion_outputs["clipwise_output"]),
             "probabilities": fusion_outputs["probabilities"],
             "logits_video": logits_video,
             "logits_audio": logits_audio,
@@ -147,48 +140,27 @@ class MultimodalSOTANet(nn.Module):
             "p_feeding": fusion_outputs.get("p_feeding"),
             "logit_12": fusion_outputs.get("logit_12"),
             "logit_12_base": fusion_outputs.get("logit_12_base"),
-            "logit_12_a": fusion_outputs.get("logit_12_a"),
             "logit_12_v": fusion_outputs.get("logit_12_v"),
             "u_tie_12": fusion_outputs.get("u_tie_12"),
-            "gamma_12_a": fusion_outputs.get("gamma_12_a"),
+            "gamma_12": fusion_outputs.get("gamma_12", fusion_outputs.get("gamma_12_v")),
             "gamma_12_v": fusion_outputs.get("gamma_12_v"),
             "logit_23": fusion_outputs.get("logit_23"),
             "logit_23_base": fusion_outputs.get("logit_23_base"),
-            "logit_23_a": fusion_outputs.get("logit_23_a"),
             "logit_23_v": fusion_outputs.get("logit_23_v"),
             "u_tie_23": fusion_outputs.get("u_tie_23"),
-            "gamma_23_a": fusion_outputs.get("gamma_23_a"),
+            "gamma_23": fusion_outputs.get("gamma_23", fusion_outputs.get("gamma_23_v")),
             "gamma_23_v": fusion_outputs.get("gamma_23_v"),
             "logit_13": fusion_outputs.get("logit_13"),
             "logit_13_base": fusion_outputs.get("logit_13_base"),
-            "logit_13_a": fusion_outputs.get("logit_13_a"),
             "logit_13_v": fusion_outputs.get("logit_13_v"),
             "u_tie_13": fusion_outputs.get("u_tie_13"),
-            "gamma_13_a": fusion_outputs.get("gamma_13_a"),
+            "gamma_13": fusion_outputs.get("gamma_13", fusion_outputs.get("gamma_13_v")),
             "gamma_13_v": fusion_outputs.get("gamma_13_v"),
             # Tournament pairwise winning probabilities & Borda voting scores
             "p_w_over_m": fusion_outputs.get("p_w_over_m"),
             "p_m_over_s": fusion_outputs.get("p_m_over_s"),
             "p_w_over_s": fusion_outputs.get("p_w_over_s"),
             "v_voting": fusion_outputs.get("v_voting"),
-            # SMoR Routing gates, probabilities & discrete states
-            "m_12_a": fusion_outputs.get("m_12_a"),
-            "m_12_v": fusion_outputs.get("m_12_v"),
-            "prob_12_a": fusion_outputs.get("prob_12_a"),
-            "prob_12_v": fusion_outputs.get("prob_12_v"),
-            "m_12_a_hard": fusion_outputs.get("m_12_a_hard"),
-            "m_12_v_hard": fusion_outputs.get("m_12_v_hard"),
-            "m_23_a": fusion_outputs.get("m_23_a"),
-            "m_23_v": fusion_outputs.get("m_23_v"),
-            "prob_23_a": fusion_outputs.get("prob_23_a"),
-            "prob_23_v": fusion_outputs.get("prob_23_v"),
-            "m_23_a_hard": fusion_outputs.get("m_23_a_hard"),
-            "m_23_v_hard": fusion_outputs.get("m_23_v_hard"),
-            "m_13_a": fusion_outputs.get("m_13_a"),
-            "m_13_v": fusion_outputs.get("m_13_v"),
-            "prob_13_a": fusion_outputs.get("prob_13_a"),
-            "prob_13_v": fusion_outputs.get("prob_13_v"),
-            "m_13_a_hard": fusion_outputs.get("m_13_a_hard"),
-            "m_13_v_hard": fusion_outputs.get("m_13_v_hard"),
         }
-        return outputs
+        # Filter out None values to maintain clean output dictionary
+        return {k: v for k, v in outputs.items() if v is not None}

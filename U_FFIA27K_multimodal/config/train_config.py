@@ -45,39 +45,39 @@ class AudioFeaturesConfig(BaseModel):
     noise_std: float = Field(default=0.02, description="Standard deviation of Gaussian spectral jitter noise.")
 
 
-class MatchupTieBreakersConfig(BaseModel):
+class VideoTieBreakersConfig(BaseModel):
     """
-    Configuration for Cross-Modal Referees (Audio STFT & Video Kinematics) on a single pairwise matchup.
+    Configuration for 3 Video Kinematics Tie-Breakers on Level 2 pairwise matchups (B12, B23, B13).
     """
-    enable_audio: bool = Field(default=True, description="Enable Audio STFT Tie-Breaker for this matchup.")
-    enable_video: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for this matchup.")
+    enable_b12: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for Weak vs Medium (B12).")
+    enable_b23: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for Medium vs Strong (B23).")
+    enable_b13: bool = Field(default=True, description="Enable Video Kinematics Tie-Breaker for Weak vs Strong (B13).")
 
-
-class DualTieBreakersConfig(BaseModel):
-    """
-    Configuration for Cross-Modal Referee heads on Level 2 pairwise matchups (B12, B23, B13).
-    """
-    b12: MatchupTieBreakersConfig = Field(
-        default_factory=MatchupTieBreakersConfig,
-        description="Referees (Audio & Video) for Weak vs Medium (B12)."
-    )
-    b23: MatchupTieBreakersConfig = Field(
-        default_factory=MatchupTieBreakersConfig,
-        description="Referees (Audio & Video) for Medium vs Strong (B23)."
-    )
-    b13: MatchupTieBreakersConfig = Field(
-        default_factory=MatchupTieBreakersConfig,
-        description="Referees (Audio & Video) for Weak vs Strong (B13)."
-    )
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            d = dict(data)
+            if "b12" in d and "enable_b12" not in d:
+                v = d.pop("b12")
+                d["enable_b12"] = v.get("enable_video", v.get("enable", True)) if isinstance(v, dict) else bool(v)
+            if "b23" in d and "enable_b23" not in d:
+                v = d.pop("b23")
+                d["enable_b23"] = v.get("enable_video", v.get("enable", True)) if isinstance(v, dict) else bool(v)
+            if "b13" in d and "enable_b13" not in d:
+                v = d.pop("b13")
+                d["enable_b13"] = v.get("enable_video", v.get("enable", True)) if isinstance(v, dict) else bool(v)
+            return d
+        return data
 
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model with Sparse Mixture-of-Referees (SMoR-Net, ~4.26M parameters).
+    Configuration for Multimodal Tournament Model with 3 Video Kinematics Tie-Breakers (~4.09M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.702M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.166M
     Audio Frontend: TKEO-STFT LayerNorm ~0.004M
-    Fusion: Pairwise Boundary Tournament Decision Head with SMoR Dynamic Routing ~0.382M
+    Fusion: Pairwise Boundary Tournament Decision Head with 3 Video Referees ~0.219M
     Auxiliary Heads: Video + Audio Aux Heads ~0.002M
     """
     backbone: str = Field(
@@ -97,18 +97,9 @@ class ModelConfig(BaseModel):
         ge=0.0,
         description="Initial value for LayerScale in ConvNeXt-Nano video backbone residual blocks."
     )
-    tie_breakers: DualTieBreakersConfig = Field(
-        default_factory=DualTieBreakersConfig,
-        description="Pairwise Cross-Modal Referee configurations for B12, B23, B13."
-    )
-    use_sparse_moe_routing: bool = Field(
-        default=True,
-        description="Enable Sparse Mixture-of-Referees (SMoR) dynamic routing."
-    )
-    router_hidden_dim: int = Field(
-        default=32,
-        gt=0,
-        description="Hidden dimension for Sparse Referee Routers."
+    tie_breakers: VideoTieBreakersConfig = Field(
+        default_factory=VideoTieBreakersConfig,
+        description="Pairwise Video Kinematics Referee configurations for B12, B23, B13."
     )
 
 
@@ -205,8 +196,8 @@ class LossConfig(BaseModel):
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
-    lambda_balance: float = Field(default=0.01, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
-    lambda_sparse: float = Field(default=0.0001, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
+    lambda_balance: float = Field(default=0.0, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
+    lambda_sparse: float = Field(default=0.0, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
 
 
 class TrainConfig(BaseModel):

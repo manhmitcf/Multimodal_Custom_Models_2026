@@ -44,9 +44,9 @@ class PairwiseTournamentLoss(BaseLoss):
         weight_pairwise: float = 0.5,
         weight_ce: float = 1.0,
         aux_loss_weight: float = 0.3,
-        lambda_balance: float = 0.01,
-        lambda_sparse: float = 0.0001,
-        use_sparse_moe_routing: bool = True,
+        lambda_balance: float = 0.0,
+        lambda_sparse: float = 0.0,
+        use_sparse_moe_routing: bool = False,
         only_backbones: bool = False,
         **kwargs
     ) -> None:
@@ -147,7 +147,7 @@ class PairwiseTournamentLoss(BaseLoss):
                 m_a_h_key = f"m_{tag}_a_hard"
                 m_v_h_key = f"m_{tag}_v_hard"
 
-                if prob_a_key in output_dict and prob_v_key in output_dict:
+                if output_dict.get(prob_a_key) is not None and output_dict.get(prob_v_key) is not None:
                     p_a = output_dict[prob_a_key][route_mask]
                     p_v = output_dict[prob_v_key][route_mask]
                     m_a_h = output_dict[m_a_h_key][route_mask] if m_a_h_key in output_dict else (p_a >= 0.5).float()

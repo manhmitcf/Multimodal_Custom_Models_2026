@@ -25,9 +25,7 @@
     "weight_act": 0.5,
     "weight_pairwise": 0.5,
     "weight_ce": 1.0,
-    "aux_loss_weight": 0.3,
-    "lambda_balance": 0.01,
-    "lambda_sparse": 0.0001
+    "aux_loss_weight": 0.3
   },
   "model": {
     "backbone": "MultimodalSOTANet",
@@ -35,8 +33,11 @@
     "embed_dim": 224,
     "video_drop_path": 0.1,
     "layer_scale_init_value": 1e-6,
-    "use_sparse_moe_routing": true,
-    "router_hidden_dim": 32
+    "tie_breakers": {
+      "enable_b12": true,
+      "enable_b23": true,
+      "enable_b13": true
+    }
   },
   "video_features": {
     "image_size": 224,
