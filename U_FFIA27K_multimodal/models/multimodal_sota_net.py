@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Dict, Optional, Any
 
 from features.motion_kinematics import FishMotionKinematics7Ch
@@ -122,11 +121,9 @@ class MultimodalBoundaryAwareNet(nn.Module):
         f_video = self.video_backbone(frames_7ch)
         f_audio = self.audio_backbone(stft_feat)
 
-        # Auxiliary Unimodal Logits & Probabilities (for standalone evaluation & Phase 1 warmup)
+        # Auxiliary Unimodal Logits (for standalone evaluation & Phase 1 warmup)
         logits_video = self.aux_head_video(f_video)
         logits_audio = self.aux_head_audio(f_audio)
-        prob_video = F.softmax(logits_video, dim=-1)
-        prob_audio = F.softmax(logits_audio, dim=-1)
 
         # Step 3: Gated Multimodal Tournament Fusion
         fusion_outputs = self.fusion(
@@ -140,8 +137,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "probabilities": fusion_outputs["probabilities"],
             "logits_video": logits_video,
             "logits_audio": logits_audio,
-            "prob_video": prob_video,
-            "prob_audio": prob_audio,
             "uncertainty": fusion_outputs.get("uncertainty"),
             "modality_weights": fusion_outputs.get("modality_weights"),
             "expected_intensity": fusion_outputs.get("expected_intensity"),

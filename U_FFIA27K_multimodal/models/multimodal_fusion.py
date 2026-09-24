@@ -3,9 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Optional, Any
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 class SparseRefereeRouter(nn.Module):
@@ -41,9 +38,7 @@ class SparseRefereeRouter(nn.Module):
     def forward(
         self,
         f_video: torch.Tensor,
-        f_audio: torch.Tensor,
-        u_tie: Optional[torch.Tensor] = None,
-        f_joint: Optional[torch.Tensor] = None
+        f_audio: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         delta_f = torch.abs(f_video - f_audio)
         prod_f = f_video * f_audio
@@ -69,7 +64,6 @@ class SparseRefereeRouter(nn.Module):
             "prob_video": p_video,
             "m_audio_hard": m_audio_hard,
             "m_video_hard": m_video_hard,
-            "router_logits": logits
         }
 
 
@@ -240,7 +234,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         ref_effect_12 = torch.zeros_like(logit_12_base)
 
         if self.use_sparse_moe_routing and self.router_b12 is not None and f_audio is not None and f_video is not None:
-            r12 = self.router_b12(f_video=f_video, f_audio=f_audio, u_tie=u_tie_12, f_joint=f)
+            r12 = self.router_b12(f_video=f_video, f_audio=f_audio)
             m_12_a, m_12_v = r12["m_audio"], r12["m_video"]
             prob_12_a, prob_12_v = r12["prob_audio"], r12["prob_video"]
             m_12_a_h, m_12_v_h = r12["m_audio_hard"], r12["m_video_hard"]
@@ -272,7 +266,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         ref_effect_23 = torch.zeros_like(logit_23_base)
 
         if self.use_sparse_moe_routing and self.router_b23 is not None and f_audio is not None and f_video is not None:
-            r23 = self.router_b23(f_video=f_video, f_audio=f_audio, u_tie=u_tie_23, f_joint=f)
+            r23 = self.router_b23(f_video=f_video, f_audio=f_audio)
             m_23_a, m_23_v = r23["m_audio"], r23["m_video"]
             prob_23_a, prob_23_v = r23["prob_audio"], r23["prob_video"]
             m_23_a_h, m_23_v_h = r23["m_audio_hard"], r23["m_video_hard"]
@@ -304,7 +298,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         ref_effect_13 = torch.zeros_like(logit_13_base)
 
         if self.use_sparse_moe_routing and self.router_b13 is not None and f_audio is not None and f_video is not None:
-            r13 = self.router_b13(f_video=f_video, f_audio=f_audio, u_tie=u_tie_13, f_joint=f)
+            r13 = self.router_b13(f_video=f_video, f_audio=f_audio)
             m_13_a, m_13_v = r13["m_audio"], r13["m_video"]
             prob_13_a, prob_13_v = r13["prob_audio"], r13["prob_video"]
             m_13_a_h, m_13_v_h = r13["m_audio_hard"], r13["m_video_hard"]
@@ -490,8 +484,7 @@ class MultimodalTournamentFusion(nn.Module):
     def forward(
         self,
         f_video: torch.Tensor,
-        f_audio: torch.Tensor,
-        **kwargs
+        f_audio: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         # Step 1: Cross-modal adaptive reliability gating
         combined = torch.cat([f_video, f_audio], dim=-1)  # [B, dim * 2]
