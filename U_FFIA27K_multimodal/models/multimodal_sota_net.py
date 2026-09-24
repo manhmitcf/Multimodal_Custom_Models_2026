@@ -17,7 +17,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
     (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Sparse Mixture-of-Referees
     (SMoR: Audio STFT + Video Kinematics + Dynamic STE Routers) for all pairwise matchups (B12, B23, B13):
 
-      1. Visual-Kinematic Stream (~2.701M params):
+      1. Visual-Kinematic Stream (~2.702M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
       2. Acoustic Time-Frequency Stream (~1.166M params):
@@ -101,7 +101,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         """
         Args:
             video_input: Raw RGB frames [B, T, 3, H, W] or precomputed 7-ch tensor [B, T, 7, H, W]
-            audio_input: Raw audio waveforms [B, num_samples] or precomputed Log-Mel Spectrogram [B, 1, Ta, 128]
+            audio_input: Raw audio waveforms [B, num_samples] or precomputed STFT feature vector [B, 2049]
 
         Returns:
             Dictionary containing clipwise_output (logits), probabilities, uncertainties,

@@ -2,7 +2,7 @@ from .early_stopping import EarlyStopping
 from .evaluate import BaseEvaluator, MultimodalEvaluator
 from .history_logger import HistoryLogger
 from .inference_timer import InferenceTimer
-from .losses import BaseLoss, ClipCELoss, PairwiseTournamentLoss
+from .losses import BaseLoss, ClipCELoss, PairwiseTournamentLoss, SMoRPairwiseTournamentLoss
 from .profile_model import count_parameters, measure_flops, measure_latency
 from .seed import seed_everything
 
@@ -15,6 +15,7 @@ __all__ = [
     "BaseLoss",
     "ClipCELoss",
     "PairwiseTournamentLoss",
+    "SMoRPairwiseTournamentLoss",
     "count_parameters",
     "measure_flops",
     "measure_latency",

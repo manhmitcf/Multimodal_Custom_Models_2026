@@ -355,8 +355,6 @@ def test_smor_routing_and_ste_states():
     print(f"  SMoR Composite Loss with Balancing & Sparsity: {loss.item():.4f}")
 
 
-def test_convnext_droppath_linear_schedule():
-    print("\n" + "=" * 65)
 def test_convnext_layerscale_and_droppath():
     print("\n" + "=" * 65)
     print("TEST 8: CONVNEXT-NANO LAYERSCALE & DROPPATH VERIFICATION")

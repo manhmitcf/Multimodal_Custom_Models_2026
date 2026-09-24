@@ -434,7 +434,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine with SMoR (~339K params).
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine with SMoR (~382K params).
     1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
     2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
        with Sparse Mixture-of-Referees (Audio STFT + Video Kinematics + Dynamic STE Routers) on B12, B23, B13.
