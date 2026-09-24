@@ -1,7 +1,7 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: ablation/video_tie_breakers | Multimodal Tournament Network with 3 Video Kinematics Tie-Breakers (~4.09M Params)
+# Branch: ablation/dual_tie_breakers | Multimodal Tournament Network with Dual (Video + Audio) Tie-Breakers (~4.17M Params)
 
-This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `ablation/video_tie_breakers`.
+This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `ablation/dual_tie_breakers`.
 
 ---
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-    HIERARCHICAL 2-LEVEL TOURNAMENT WITH 3 VIDEO TIE-BREAKERS (~4.09M PARAMS)
+     HIERARCHICAL 2-LEVEL TOURNAMENT WITH DUAL TIE-BREAKERS (~4.17M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -40,15 +40,15 @@ This document defines the invariant architectural constraints, operational guide
                                        ▼
                      [MULTIMODAL TOURNAMENT FUSION ENGINE]
                      - Level 1: Feeding Activity Gate Head (None vs Active Feeding)
-                     - Level 2: 3 Specialized Pairwise Subspace Heads with Video Referees:
-                         * B12: Weak vs Medium (Base Joint + Video Kinematics Referee)
-                         * B23: Medium vs Strong (Base Joint + Video Kinematics Referee)
-                         * B13: Weak vs Strong (Base Joint + Video Kinematics Referee)
-                      - Dynamic Referee Intervention Formula:
+                     - Level 2: 3 Specialized Pairwise Subspace Heads with Dual Referees:
+                         * B12: Weak vs Medium (Base Joint + Video Referee + Audio Referee)
+                         * B23: Medium vs Strong (Base Joint + Video Referee + Audio Referee)
+                         * B13: Weak vs Strong (Base Joint + Video Referee + Audio Referee)
+                      - Dynamic Dual-Referee Intervention Formula:
                           u_tie = exp(-|logit_base| / 2.0)
-                          logit = logit_base + gamma * u_tie * logit_video
+                          logit = logit_base + u_tie * (gamma_v * logit_video + gamma_a * logit_audio)
                       - Tournament Borda Voting -> Final Calibrated Probabilities
-                      [~0.219M params | FLOPs: ~1.71 GFLOPs]
+                      [~0.296M params | FLOPs: ~1.71 GFLOPs]
                                         │
                                         ▼
                       [4 Feeding Intensity Predictions]
@@ -59,10 +59,10 @@ This document defines the invariant architectural constraints, operational guide
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,702,416` (~`2.702M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
-- **Tournament Decision Head (Pairwise Base + 3 Video Referees + Borda)**: `219,435` (~`0.219M`)
+- **Tournament Decision Head (Pairwise Base + 6 Dual Referees + Borda)**: `296,049` (~`0.296M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,093,733` (~`4.094M`) with all 3 video tie-breakers enabled.
-- **Remaining Headroom**: `906,267` parameters below the 5.0M budget limit.
+- **Total Trainable Parameters**: `4,170,347` (~`4.170M`) with all 3 dual tie-breakers enabled.
+- **Remaining Headroom**: `829,653` parameters below the 5.0M budget limit.
 - **Inference Complexity**: `~1.71 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
@@ -103,14 +103,14 @@ This document defines the invariant architectural constraints, operational guide
 - **Fused & Joint Projection**: f_fused = LayerNorm(g * f_V + (1-g) * f_A), f_joint = ProjJoint(f_fused).
 - **2-Level Tournament Decision Hierarchy**:
   - **Level 1**: Activity Gate Head classifies P(Feeding) vs P(None).
-  - **Level 2**: 3 specialized pairwise subspace heads with 3 Configurable Video Kinematics Tie-Breakers:
-    - B12: Weak vs Medium (Base Joint on $f_{\text{joint}}$ + Video Kinematics Referee on $f_{\text{video}}$).
-    - B23: Medium vs Strong (Base Joint on $f_{\text{joint}}$ + Video Kinematics Referee on $f_{\text{video}}$).
-    - B13: Weak vs Strong (Base Joint on $f_{\text{joint}}$ + Video Kinematics Referee on $f_{\text{video}}$).
-  - **Dynamic Referee Intervention Formulation**:
+  - **Level 2**: 3 specialized pairwise subspace heads with 3 Configurable Dual Tie-Breakers:
+    - B12: Weak vs Medium (Base Joint on $f_{\text{joint}}$ + Video Referee on $f_{\text{video}}$ + Audio Referee on $f_{\text{audio}}$).
+    - B23: Medium vs Strong (Base Joint on $f_{\text{joint}}$ + Video Referee on $f_{\text{video}}$ + Audio Referee on $f_{\text{audio}}$).
+    - B13: Weak vs Strong (Base Joint on $f_{\text{joint}}$ + Video Referee on $f_{\text{video}}$ + Audio Referee on $f_{\text{audio}}$).
+  - **Dynamic Dual-Referee Intervention Formulation**:
     $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}| / 2.0)$$
-    $$\text{logit} = \text{logit}_{\text{base}} + \gamma \cdot u_{\text{tie}} \cdot \text{logit}_{\text{video}}$$
-    where $\gamma$ is a learnable scalar initialized to $1.0$.
+    $$\text{logit} = \text{logit}_{\text{base}} + u_{\text{tie}} \cdot (\gamma_v \cdot \text{logit}_{\text{video}} + \gamma_a \cdot \text{logit}_{\text{audio}})$$
+    where $\gamma_v, \gamma_a$ are learnable scalars initialized to $1.0$.
   - **Borda Voting**: Derives calibrated multi-class distribution from tournament matchup scores:
     $$V_c = \sum_{k \neq c} P(c > k)$$
     with exact algebraic invariant $V_{\text{Weak}} + V_{\text{Medium}} + V_{\text{Strong}} = 3.0$.
@@ -153,7 +153,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_ablation_video_tie_breakers`.
+- Remote dataset repository: `manhmitcf/Results_ablation_dual_tie_breakers`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
@@ -163,7 +163,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 
 ## 5. Mandatory Verification Checklist
 
-Before proposing or committing any code changes on branch `ablation/video_tie_breakers`, agents **MUST** execute and pass:
+Before proposing or committing any code changes on branch `ablation/dual_tie_breakers`, agents **MUST** execute and pass:
 
 ```bash
 cd U_FFIA27K_multimodal
@@ -171,9 +171,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,093,733 with 3 tie-breakers).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,170,347 with 3 dual tie-breakers).
 - [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: ~1.71 GFLOPs).
-- [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients.
-- [x] **Ablation 8 Combinations**: Full support for toggling B12, B23, B13 Video Referees ($2^3 = 8$ combinations).
+- [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients (164/164 tensors).
+- [x] **Ablation 8 Combinations**: Full support for toggling B12, B23, B13 Dual Referees ($2^3 = 8$ combinations).
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
 - [x] **Clean Exit**: Dry-run completes with exit code 0 on both CPU and CUDA.

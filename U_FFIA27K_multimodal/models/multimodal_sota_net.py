@@ -11,10 +11,9 @@ from .multimodal_fusion import MultimodalTournamentFusion
 
 class MultimodalSOTANet(nn.Module):
     """
-    Hierarchical Multimodal Tournament Network with 3 Video Kinematics Tie-Breakers (~4.09M Total Parameters).
+    Hierarchical Multimodal Tournament Network with Dual (Video + Audio) Tie-Breakers (~4.17M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Video Kinematics
-    Tie-Breakers (B12, B23, B13):
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Dual Tie-Breakers (B12, B23, B13):
 
       1. Visual-Kinematic Stream (~2.702M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
@@ -22,15 +21,15 @@ class MultimodalSOTANet(nn.Module):
       2. Acoustic Time-Frequency Stream (~1.166M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
          + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion with 3 Video Kinematics Tie-Breakers (~0.219M params):
+      3. Pairwise Tournament Fusion with Dual Tie-Breakers (~0.295M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
          - Level 2: 3 Specialized Pairwise Subspace Expert Heads on f_joint
-             with 3 Configurable Video Kinematics Referees on f_video (B12, B23, B13).
-         - Dynamic Tie-Breaker Intervention: logit = logit_base + gamma * u_tie * logit_video.
+             with Dual Referees (Video + Audio) on f_video and f_audio (B12, B23, B13).
+         - Dynamic Dual-Referee Intervention: logit = logit_base + u_tie * (gamma_v * logit_v + gamma_a * logit_a).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,093,733 (~4.094M) with all 3 tie-breakers enabled (Strictly < 5.0M parameter constraint).
+    Total Parameters: 4,170,347 (~4.170M) with all 3 dual tie-breakers enabled (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -50,32 +49,29 @@ class MultimodalSOTANet(nn.Module):
         super().__init__()
         self.classes_num = classes_num
         self.embed_dim = embed_dim
-        self.num_frames = num_frames
-        self.image_size = image_size
-        self.in_chans = in_chans
-        self.tie_breakers = tie_breakers
-        self.video_drop_path = video_drop_path
-        self.layer_scale_init_value = layer_scale_init_value
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~3.87M)
+        # 2. Backbones (~3.868M params combined)
+        # Visual: ConvNeXt-Nano 7-channel video backbone (~2.702M params)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
-            embed_dim=embed_dim,
             in_chans=in_chans,
-            num_frames=num_frames,
-            drop_path_rate=video_drop_path,
-            layer_scale_init_value=layer_scale_init_value,
-        )
-        self.audio_backbone = AudioMLPBackbone(
-            in_features=2049,
             embed_dim=embed_dim,
-            num_tokens=num_frames
+            drop_path_rate=video_drop_path,
+            layer_scale_init_value=layer_scale_init_value
         )
 
-        # 3. Multimodal Tournament Fusion with 3 Video Kinematics Tie-Breakers (~0.219M)
+        # Acoustic: 2-layer MLP projection over 2049 TKEO-STFT bins (~1.166M params)
+        self.audio_backbone = AudioMLPBackbone(
+            in_features=2049,
+            hidden_dim=512,
+            embed_dim=embed_dim,
+            dropout=0.1
+        )
+
+        # 3. Tournament Fusion with Dual (Video + Audio) Tie-Breakers
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,
@@ -117,7 +113,7 @@ class MultimodalSOTANet(nn.Module):
         logits_video = self.aux_head_video(f_video)
         logits_audio = self.aux_head_audio(f_audio)
 
-        # Step 3: Gated Multimodal Tournament Fusion with 3 Video Tie-Breakers
+        # Step 3: Gated Multimodal Tournament Fusion with Dual Tie-Breakers
         fusion_outputs = self.fusion(
             f_video=f_video,
             f_audio=f_audio
@@ -141,21 +137,24 @@ class MultimodalSOTANet(nn.Module):
             "logit_12": fusion_outputs.get("logit_12"),
             "logit_12_base": fusion_outputs.get("logit_12_base"),
             "logit_12_v": fusion_outputs.get("logit_12_v"),
+            "logit_12_a": fusion_outputs.get("logit_12_a"),
             "u_tie_12": fusion_outputs.get("u_tie_12"),
-            "gamma_12": fusion_outputs.get("gamma_12"),
             "gamma_12_v": fusion_outputs.get("gamma_12_v"),
+            "gamma_12_a": fusion_outputs.get("gamma_12_a"),
             "logit_23": fusion_outputs.get("logit_23"),
             "logit_23_base": fusion_outputs.get("logit_23_base"),
             "logit_23_v": fusion_outputs.get("logit_23_v"),
+            "logit_23_a": fusion_outputs.get("logit_23_a"),
             "u_tie_23": fusion_outputs.get("u_tie_23"),
-            "gamma_23": fusion_outputs.get("gamma_23"),
             "gamma_23_v": fusion_outputs.get("gamma_23_v"),
+            "gamma_23_a": fusion_outputs.get("gamma_23_a"),
             "logit_13": fusion_outputs.get("logit_13"),
             "logit_13_base": fusion_outputs.get("logit_13_base"),
             "logit_13_v": fusion_outputs.get("logit_13_v"),
+            "logit_13_a": fusion_outputs.get("logit_13_a"),
             "u_tie_13": fusion_outputs.get("u_tie_13"),
-            "gamma_13": fusion_outputs.get("gamma_13"),
             "gamma_13_v": fusion_outputs.get("gamma_13_v"),
+            "gamma_13_a": fusion_outputs.get("gamma_13_a"),
             # Tournament pairwise winning probabilities & Borda voting scores
             "p_w_over_m": fusion_outputs.get("p_w_over_m"),
             "p_m_over_s": fusion_outputs.get("p_m_over_s"),

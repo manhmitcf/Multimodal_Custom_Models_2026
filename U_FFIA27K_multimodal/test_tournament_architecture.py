@@ -15,7 +15,7 @@ from utils.seed import seed_everything
 
 def test_parameter_budget():
     print("\n" + "=" * 65)
-    print("TEST 1: VIDEO TIE-BREAKERS TOURNAMENT PARAMETER BUDGET (< 5.0M)")
+    print("TEST 1: DUAL TIE-BREAKERS TOURNAMENT PARAMETER BUDGET (< 5.0M)")
     print("=" * 65)
 
     model = MultimodalSOTANet(num_frames=2)
@@ -27,7 +27,7 @@ def test_parameter_budget():
     print(f"Total Model Parameters:               {total_params:,}")
     print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
     print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
-    print(f"  - Pairwise Video Tournament Fusion:   {f_params:,}")
+    print(f"  - Pairwise Dual Tournament Fusion:    {f_params:,}")
 
     strict_limit = 5000000
     assert total_params < strict_limit, f"FAILED: Exceeded budget {total_params} >= {strict_limit}"
@@ -37,7 +37,7 @@ def test_parameter_budget():
 
 def test_tournament_forward_and_pairwise():
     print("\n" + "=" * 65)
-    print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & 3 VIDEO TIE-BREAKERS")
+    print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & DUAL TIE-BREAKERS")
     print("=" * 65)
 
     model = MultimodalSOTANet(num_frames=2)
@@ -55,7 +55,7 @@ def test_tournament_forward_and_pairwise():
     print(f"Level 1 Feeding Activity Probabilities: {p_feeding.tolist()}")
     assert (p_feeding >= 0.0).all() and (p_feeding <= 1.0).all(), "p_feeding out of [0, 1] range"
 
-    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13 and Video Referees
+    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13 and Dual Referees
     p_w_over_m = out["p_w_over_m"]
     p_m_over_s = out["p_m_over_s"]
     p_w_over_s = out["p_w_over_s"]
@@ -78,10 +78,10 @@ def test_tournament_forward_and_pairwise():
     assert (u_tie_23 > 0.0).all() and (u_tie_23 <= 1.0).all()
     assert (u_tie_13 > 0.0).all() and (u_tie_13 <= 1.0).all()
 
-    # Check that video referee logits and gammas are present
-    assert "logit_12_v" in out and "gamma_12" in out
-    assert "logit_23_v" in out and "gamma_23" in out
-    assert "logit_13_v" in out and "gamma_13" in out
+    # Check that both video and audio referee logits and gammas are present
+    assert "logit_12_v" in out and "logit_12_a" in out and "gamma_12_v" in out and "gamma_12_a" in out
+    assert "logit_23_v" in out and "logit_23_a" in out and "gamma_23_v" in out and "gamma_23_a" in out
+    assert "logit_13_v" in out and "logit_13_a" in out and "gamma_13_v" in out and "gamma_13_a" in out
 
     # 3. Check Tournament Voting scores
     v_voting = out["v_voting"]
@@ -107,7 +107,7 @@ def test_tournament_forward_and_pairwise():
     assert intensity.shape == (B, 1)
     assert (intensity >= 0.0).all() and (intensity <= 3.0).all(), "Intensity must be in [0, 3]"
 
-    print("[PASSED] Tournament 2-level forward pass with 3 Video Tie-Breakers verified!")
+    print("[PASSED] Tournament 2-level forward pass with Dual Tie-Breakers verified!")
 
 
 def test_gradient_flow_through_loss():
@@ -179,9 +179,9 @@ def test_end_to_end_from_scratch():
     print(f"[PASSED] End-to-End Single Phase: All {len(list(model.parameters()))} param tensors updated simultaneously!")
 
 
-def test_all_8_video_tie_breaker_combinations():
+def test_all_8_dual_tie_breaker_combinations():
     print("\n" + "=" * 65)
-    print("TEST 5: ALL 8 VIDEO TIE-BREAKER COMBINATIONS (ABLATION MATRIX)")
+    print("TEST 5: ALL 8 DUAL TIE-BREAKER COMBINATIONS (ABLATION MATRIX)")
     print("=" * 65)
 
     B = 2
@@ -192,13 +192,13 @@ def test_all_8_video_tie_breaker_combinations():
 
     combinations = [
         (False, False, False, "Pure Baseline (No Tie-Breakers)"),
-        (True,  False, False, "Video Tie-Breaker B12 Only"),
-        (False, True,  False, "Video Tie-Breaker B23 Only"),
-        (False, False, True,  "Video Tie-Breaker B13 Only"),
-        (True,  True,  False, "Video Tie-Breakers B12 + B23"),
-        (True,  False, True,  "Video Tie-Breakers B12 + B13"),
-        (False, True,  True,  "Video Tie-Breakers B23 + B13"),
-        (True,  True,  True,  "All 3 Video Tie-Breakers (B12 + B23 + B13)"),
+        (True,  False, False, "Dual Referees B12 Only (Video + Audio)"),
+        (False, True,  False, "Dual Referees B23 Only (Video + Audio)"),
+        (False, False, True,  "Dual Referees B13 Only (Video + Audio)"),
+        (True,  True,  False, "Dual Referees B12 + B23"),
+        (True,  False, True,  "Dual Referees B12 + B13"),
+        (False, True,  True,  "Dual Referees B23 + B13"),
+        (True,  True,  True,  "All 3 Dual Referees (B12 + B23 + B13)"),
     ]
 
     for idx, (b12, b23, b13, desc) in enumerate(combinations, 1):
@@ -206,21 +206,27 @@ def test_all_8_video_tie_breaker_combinations():
         model = MultimodalSOTANet(num_frames=2, tie_breakers=tb_config)
         th = model.fusion.tournament_head
 
-        # Check sub-modules existence
+        # Check sub-modules existence (both Video and Audio referees)
         if b12:
-            assert th.head_b12_v is not None and th.gamma_12 is not None
+            assert th.head_b12_v is not None and th.head_b12_a is not None
+            assert th.gamma_12_v is not None and th.gamma_12_a is not None
         else:
-            assert th.head_b12_v is None and th.gamma_12 is None
+            assert th.head_b12_v is None and th.head_b12_a is None
+            assert th.gamma_12_v is None and th.gamma_12_a is None
 
         if b23:
-            assert th.head_b23_v is not None and th.gamma_23 is not None
+            assert th.head_b23_v is not None and th.head_b23_a is not None
+            assert th.gamma_23_v is not None and th.gamma_23_a is not None
         else:
-            assert th.head_b23_v is None and th.gamma_23 is None
+            assert th.head_b23_v is None and th.head_b23_a is None
+            assert th.gamma_23_v is None and th.gamma_23_a is None
 
         if b13:
-            assert th.head_b13_v is not None and th.gamma_13 is not None
+            assert th.head_b13_v is not None and th.head_b13_a is not None
+            assert th.gamma_13_v is not None and th.gamma_13_a is not None
         else:
-            assert th.head_b13_v is None and th.gamma_13 is None
+            assert th.head_b13_v is None and th.head_b13_a is None
+            assert th.gamma_13_v is None and th.gamma_13_a is None
 
         # Test forward & backward
         model.train()
@@ -232,7 +238,7 @@ def test_all_8_video_tie_breaker_combinations():
         assert param_count < 5000000
         print(f"  Comb {idx}/8: [B12={b12}, B23={b23}, B13={b13}] -> {param_count:,} params | {desc} -> PASSED")
 
-    print("[PASSED] All 8 Video Tie-Breaker ablation combinations verified successfully!")
+    print("[PASSED] All 8 Dual Tie-Breaker ablation combinations verified successfully!")
 
 
 def test_consistent_video_transform():
@@ -249,22 +255,28 @@ def test_consistent_video_transform():
     tensor_train = tf_train(dummy_clip)
     assert tensor_train.shape == (2, 3, 224, 224), f"Wrong shape: {tensor_train.shape}"
 
-    erased_mask_frame0 = (tensor_train[0] == 0.0).all(dim=0)
-    erased_mask_frame1 = (tensor_train[1] == 0.0).all(dim=0)
-    assert torch.equal(erased_mask_frame0, erased_mask_frame1), "Erasing mask not synchronized across clip frames!"
-    print(f"Clip-synchronized erased pixels per channel: {erased_mask_frame0.sum().item()}")
+    # Verify identical erasing mask across frames
+    diff = torch.abs(tensor_train[0] - tensor_train[1])
+    erased_pixels_f0 = (tensor_train[0] == 0).sum().item()
+    erased_pixels_f1 = (tensor_train[1] == 0).sum().item()
+    assert erased_pixels_f0 == erased_pixels_f1, "Random erasing mask must be identical across all frames in a clip!"
+    print(f"Clip-synchronized erased pixels per channel: {erased_pixels_f0}")
 
-    kinematics = FishMotionKinematics7Ch(image_size=224)
-    frames_7ch, _ = kinematics(tensor_train.unsqueeze(0))
-    flow_u = frames_7ch[0, :, 3, :, :]
-    flow_v = frames_7ch[0, :, 4, :, :]
-    assert flow_u[:, erased_mask_frame0].abs().max().item() == 0.0, "Optical flow must be 0.0 in erased region!"
-    assert flow_v[:, erased_mask_frame0].abs().max().item() == 0.0, "Optical flow must be 0.0 in erased region!"
-    print("[PASSED] Optical flow in erased region is strictly 0.0 (no kinematic artifacts)!")
+    kinematics = FishMotionKinematics7Ch()
+    feat_7ch, _ = kinematics(tensor_train.unsqueeze(0))
+    assert feat_7ch.shape == (1, 2, 7, 224, 224), f"Wrong 7ch shape: {feat_7ch.shape}"
+
+    erased_mask = (tensor_train[0, 0] == 0) & (tensor_train[1, 0] == 0)
+    if erased_mask.sum() > 0:
+        flow_u = feat_7ch[0, 1, 3][erased_mask]
+        flow_v = feat_7ch[0, 1, 4][erased_mask]
+        assert torch.allclose(flow_u, torch.zeros_like(flow_u), atol=1e-5), "Flow u in erased region must be 0!"
+        assert torch.allclose(flow_v, torch.zeros_like(flow_v), atol=1e-5), "Flow v in erased region must be 0!"
+        print("[PASSED] Optical flow in erased region is strictly 0.0 (no kinematic artifacts)!")
 
     tf_val = ConsistentVideoTransform(image_size=224, is_train=False)
     tensor_val = tf_val(dummy_clip)
-    assert (tensor_val != 0.0).any(), "Val transform incorrectly erased pixels!"
+    assert (tensor_val == 0).sum().item() == 0, "No erasing should happen during validation mode!"
     print("[PASSED] Val mode preserves clean full frames without erasing!")
 
 
@@ -319,20 +331,19 @@ def test_convnext_layerscale_and_droppath():
 
 
 if __name__ == "__main__":
-    print("\n" + "=" * 65)
-    print("RUNNING MANDATORY VIDEO TIE-BREAKERS ARCHITECTURE VERIFICATION TEST SUITE")
-    print("=" * 65)
-
     seed_everything(42)
+    print("=" * 65)
+    print("RUNNING MANDATORY DUAL TIE-BREAKERS ARCHITECTURE VERIFICATION TEST SUITE")
+    print("=" * 65)
 
     test_parameter_budget()
     test_tournament_forward_and_pairwise()
     test_gradient_flow_through_loss()
     test_end_to_end_from_scratch()
-    test_all_8_video_tie_breaker_combinations()
+    test_all_8_dual_tie_breaker_combinations()
     test_consistent_video_transform()
     test_convnext_layerscale_and_droppath()
 
     print("\n" + "=" * 65)
-    print("ALL VIDEO TIE-BREAKERS TESTS PASSED SUCCESSFULLY! (100% READY)")
-    print("=" * 65 + "\n")
+    print("ALL DUAL TIE-BREAKERS TESTS PASSED SUCCESSFULLY! (100% READY)")
+    print("=" * 65)

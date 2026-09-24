@@ -16,22 +16,23 @@ def _make_subspace_head(dim: int, hidden_dim: int = 112) -> nn.Sequential:
 
 class PairwiseBoundaryTournamentHead(nn.Module):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Head with 3 Configurable Video Kinematics Tie-Breakers (~168K params).
+    Hierarchical Pairwise Cross-Boundary Tournament Head with Dual (Video + Audio) Tie-Breakers (~244K params).
 
     Level 1: Feeding Activity Gating
       - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
       - p_feeding = sigmoid(w_act^T * f) in (0, 1)
       - p_none = 1 - p_feeding
 
-    Level 2: 3-Way Pairwise Cross-Boundary Tournament with 3 Video Kinematics Tie-Breakers
-      - B12: Weak <-> Medium    -> Base Head on f_joint + Video Kinematics Referee on f_video
-      - B23: Medium <-> Strong  -> Base Head on f_joint + Video Kinematics Referee on f_video
-      - B13: Weak <-> Strong    -> Base Head on f_joint + Video Kinematics Referee on f_video
+    Level 2: 3-Way Pairwise Cross-Boundary Tournament with Dual (Video + Audio) Tie-Breakers
+      - B12: Weak <-> Medium    -> Base Head on f_joint + Dual Referees (Video + Audio)
+      - B23: Medium <-> Strong  -> Base Head on f_joint + Dual Referees (Video + Audio)
+      - B13: Weak <-> Strong    -> Base Head on f_joint + Dual Referees (Video + Audio)
 
-    Dynamic Tie-Breaker Intervention:
-      logit = logit_base + gamma * u_tie * logit_video
-      where u_tie = exp(-|logit_base| / 2.0) represents referee indecisiveness,
-      and gamma is a learnable scalar initialized to 1.0.
+    Dynamic Dual-Referee Intervention:
+      u_tie = exp(-|logit_base| / 2.0)
+      logit = logit_base + u_tie * (gamma_v * logit_video + gamma_a * logit_audio)
+      where u_tie represents referee indecisiveness,
+      and gamma_v, gamma_a are learnable scalars initialized to 1.0.
 
     Tournament Scoring (Borda count):
       - V_Weak   = P(W > M) + P(W > S)
@@ -60,18 +61,18 @@ class PairwiseBoundaryTournamentHead(nn.Module):
                 enable_b23 = tie_breakers.get("enable_b23", tie_breakers.get("b23", enable_b23))
                 enable_b13 = tie_breakers.get("enable_b13", tie_breakers.get("b13", enable_b13))
                 if isinstance(enable_b12, dict):
-                    enable_b12 = enable_b12.get("enable_video", enable_b12.get("enable", True))
+                    enable_b12 = enable_b12.get("enable", True)
                 if isinstance(enable_b23, dict):
-                    enable_b23 = enable_b23.get("enable_video", enable_b23.get("enable", True))
+                    enable_b23 = enable_b23.get("enable", True)
                 if isinstance(enable_b13, dict):
-                    enable_b13 = enable_b13.get("enable_video", enable_b13.get("enable", True))
+                    enable_b13 = enable_b13.get("enable", True)
             elif hasattr(tie_breakers, "b12"):
                 b12_val = getattr(tie_breakers, "b12")
                 b23_val = getattr(tie_breakers, "b23")
                 b13_val = getattr(tie_breakers, "b13")
-                enable_b12 = getattr(b12_val, "enable_video", getattr(b12_val, "enable", b12_val)) if not isinstance(b12_val, bool) else b12_val
-                enable_b23 = getattr(b23_val, "enable_video", getattr(b23_val, "enable", b23_val)) if not isinstance(b23_val, bool) else b23_val
-                enable_b13 = getattr(b13_val, "enable_video", getattr(b13_val, "enable", b13_val)) if not isinstance(b13_val, bool) else b13_val
+                enable_b12 = getattr(b12_val, "enable", b12_val) if not isinstance(b12_val, bool) else b12_val
+                enable_b23 = getattr(b23_val, "enable", b23_val) if not isinstance(b23_val, bool) else b23_val
+                enable_b13 = getattr(b13_val, "enable", b13_val) if not isinstance(b13_val, bool) else b13_val
 
         self.enable_b12 = bool(enable_b12)
         self.enable_b23 = bool(enable_b23)
@@ -84,38 +85,51 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             nn.Linear(64, 1)
         )
 
-        # Level 2: 3 Specialized Pairwise Subspace Heads + Video Tie-Breakers
+        # Level 2: 3 Specialized Pairwise Subspace Heads + Dual (Video + Audio) Tie-Breakers
         # B12: Weak vs Medium
         self.head_b12 = _make_subspace_head(dim, 112)
         if self.enable_b12:
             self.head_b12_v = _make_subspace_head(dim, 112)
-            self.gamma_12 = nn.Parameter(torch.tensor(1.0))
+            self.head_b12_a = _make_subspace_head(dim, 112)
+            self.gamma_12_v = nn.Parameter(torch.tensor(1.0))
+            self.gamma_12_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b12_v = None
-            self.gamma_12 = None
+            self.head_b12_a = None
+            self.gamma_12_v = None
+            self.gamma_12_a = None
 
         # B23: Medium vs Strong
         self.head_b23 = _make_subspace_head(dim, 112)
         if self.enable_b23:
             self.head_b23_v = _make_subspace_head(dim, 112)
-            self.gamma_23 = nn.Parameter(torch.tensor(1.0))
+            self.head_b23_a = _make_subspace_head(dim, 112)
+            self.gamma_23_v = nn.Parameter(torch.tensor(1.0))
+            self.gamma_23_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b23_v = None
-            self.gamma_23 = None
+            self.head_b23_a = None
+            self.gamma_23_v = None
+            self.gamma_23_a = None
 
         # B13: Weak vs Strong
         self.head_b13 = _make_subspace_head(dim, 112)
         if self.enable_b13:
             self.head_b13_v = _make_subspace_head(dim, 112)
-            self.gamma_13 = nn.Parameter(torch.tensor(1.0))
+            self.head_b13_a = _make_subspace_head(dim, 112)
+            self.gamma_13_v = nn.Parameter(torch.tensor(1.0))
+            self.gamma_13_a = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b13_v = None
-            self.gamma_13 = None
+            self.head_b13_a = None
+            self.gamma_13_v = None
+            self.gamma_13_a = None
 
     def forward(
         self,
         f: torch.Tensor,
         f_video: Optional[torch.Tensor] = None,
+        f_audio: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
         # 1. Level 1: Feeding Activity Gate
@@ -124,37 +138,70 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         p_none = torch.clamp(1.0 - p_feeding, min=1e-6)     # [B]
 
         # 2. Level 2: 3 Pairwise Cross-Boundary Logits & Probabilities
-        # B12 Base proposal on f_joint + Video Kinematics Tie-Breaker
+        # B12 Base proposal on f_joint + Dual Tie-Breakers (Video + Audio)
         logit_12_base = self.head_b12(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Medium)
-        if self.enable_b12 and self.head_b12_v is not None and f_video is not None:
-            logit_12_v = self.head_b12_v(f_video).squeeze(-1)
+        if self.enable_b12 and (self.head_b12_v is not None or self.head_b12_a is not None):
             u_tie_12 = torch.exp(-torch.abs(logit_12_base) / 2.0)
-            logit_12 = logit_12_base + self.gamma_12 * u_tie_12 * logit_12_v
+            ref_effect_12 = torch.zeros_like(logit_12_base)
+            if self.head_b12_v is not None and f_video is not None:
+                logit_12_v = self.head_b12_v(f_video).squeeze(-1)
+                ref_effect_12 = ref_effect_12 + self.gamma_12_v * logit_12_v
+            else:
+                logit_12_v = logit_12_base
+            if self.head_b12_a is not None and f_audio is not None:
+                logit_12_a = self.head_b12_a(f_audio).squeeze(-1)
+                ref_effect_12 = ref_effect_12 + self.gamma_12_a * logit_12_a
+            else:
+                logit_12_a = logit_12_base
+            logit_12 = logit_12_base + u_tie_12 * ref_effect_12
         else:
             logit_12 = logit_12_base
             logit_12_v = logit_12_base
+            logit_12_a = logit_12_base
             u_tie_12 = torch.zeros_like(logit_12_base)
 
-        # B23 Base proposal on f_joint + Video Kinematics Tie-Breaker
+        # B23 Base proposal on f_joint + Dual Tie-Breakers (Video + Audio)
         logit_23_base = self.head_b23(f).squeeze(-1)        # [B] (Positive -> Medium, Negative -> Strong)
-        if self.enable_b23 and self.head_b23_v is not None and f_video is not None:
-            logit_23_v = self.head_b23_v(f_video).squeeze(-1)
+        if self.enable_b23 and (self.head_b23_v is not None or self.head_b23_a is not None):
             u_tie_23 = torch.exp(-torch.abs(logit_23_base) / 2.0)
-            logit_23 = logit_23_base + self.gamma_23 * u_tie_23 * logit_23_v
+            ref_effect_23 = torch.zeros_like(logit_23_base)
+            if self.head_b23_v is not None and f_video is not None:
+                logit_23_v = self.head_b23_v(f_video).squeeze(-1)
+                ref_effect_23 = ref_effect_23 + self.gamma_23_v * logit_23_v
+            else:
+                logit_23_v = logit_23_base
+            if self.head_b23_a is not None and f_audio is not None:
+                logit_23_a = self.head_b23_a(f_audio).squeeze(-1)
+                ref_effect_23 = ref_effect_23 + self.gamma_23_a * logit_23_a
+            else:
+                logit_23_a = logit_23_base
+            logit_23 = logit_23_base + u_tie_23 * ref_effect_23
         else:
             logit_23 = logit_23_base
             logit_23_v = logit_23_base
+            logit_23_a = logit_23_base
             u_tie_23 = torch.zeros_like(logit_23_base)
 
-        # B13 Base proposal on f_joint + Video Kinematics Tie-Breaker
+        # B13 Base proposal on f_joint + Dual Tie-Breakers (Video + Audio)
         logit_13_base = self.head_b13(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Strong)
-        if self.enable_b13 and self.head_b13_v is not None and f_video is not None:
-            logit_13_v = self.head_b13_v(f_video).squeeze(-1)
+        if self.enable_b13 and (self.head_b13_v is not None or self.head_b13_a is not None):
             u_tie_13 = torch.exp(-torch.abs(logit_13_base) / 2.0)
-            logit_13 = logit_13_base + self.gamma_13 * u_tie_13 * logit_13_v
+            ref_effect_13 = torch.zeros_like(logit_13_base)
+            if self.head_b13_v is not None and f_video is not None:
+                logit_13_v = self.head_b13_v(f_video).squeeze(-1)
+                ref_effect_13 = ref_effect_13 + self.gamma_13_v * logit_13_v
+            else:
+                logit_13_v = logit_13_base
+            if self.head_b13_a is not None and f_audio is not None:
+                logit_13_a = self.head_b13_a(f_audio).squeeze(-1)
+                ref_effect_13 = ref_effect_13 + self.gamma_13_a * logit_13_a
+            else:
+                logit_13_a = logit_13_base
+            logit_13 = logit_13_base + u_tie_13 * ref_effect_13
         else:
             logit_13 = logit_13_base
             logit_13_v = logit_13_base
+            logit_13_a = logit_13_base
             u_tie_13 = torch.zeros_like(logit_13_base)
 
         # Head-to-head pairwise winning probabilities
@@ -215,21 +262,24 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             "logit_12": logit_12,
             "logit_12_base": logit_12_base,
             "logit_12_v": logit_12_v,
+            "logit_12_a": logit_12_a,
             "u_tie_12": u_tie_12,
-            "gamma_12": self.gamma_12,
-            "gamma_12_v": self.gamma_12,
+            "gamma_12_v": self.gamma_12_v,
+            "gamma_12_a": self.gamma_12_a,
             "logit_23": logit_23,
             "logit_23_base": logit_23_base,
             "logit_23_v": logit_23_v,
+            "logit_23_a": logit_23_a,
             "u_tie_23": u_tie_23,
-            "gamma_23": self.gamma_23,
-            "gamma_23_v": self.gamma_23,
+            "gamma_23_v": self.gamma_23_v,
+            "gamma_23_a": self.gamma_23_a,
             "logit_13": logit_13,
             "logit_13_base": logit_13_base,
             "logit_13_v": logit_13_v,
+            "logit_13_a": logit_13_a,
             "u_tie_13": u_tie_13,
-            "gamma_13": self.gamma_13,
-            "gamma_13_v": self.gamma_13,
+            "gamma_13_v": self.gamma_13_v,
+            "gamma_13_a": self.gamma_13_a,
             # Pairwise matchup winning probabilities & Borda voting scores
             "p_w_over_m": p_w_over_m,
             "p_m_over_s": p_m_over_s,
@@ -240,10 +290,10 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~219K params).
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~295K params).
     1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
     2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
-       with 3 Configurable Video Kinematics Tie-Breakers on B12, B23, B13.
+       with Dual (Video + Audio) Tie-Breakers on B12, B23, B13.
     """
     def __init__(
         self,
@@ -276,7 +326,7 @@ class MultimodalTournamentFusion(nn.Module):
             nn.LayerNorm(dim)
         )
 
-        # 3. Pairwise Boundary Tournament Decision Head with 3 Video Tie-Breakers
+        # 3. Pairwise Boundary Tournament Decision Head with Dual (Video + Audio) Tie-Breakers
         self.tournament_head = PairwiseBoundaryTournamentHead(
             dim=dim,
             temperature=2.0,
@@ -299,8 +349,8 @@ class MultimodalTournamentFusion(nn.Module):
         f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)
         f_joint = self.proj_joint(f_fused)
 
-        # Step 2: Pairwise Boundary Tournament with 3 Configurable Video Kinematics Tie-Breakers
-        out = self.tournament_head(f_joint, f_video=f_video)
+        # Step 2: Pairwise Boundary Tournament with Dual Video & Audio Tie-Breakers
+        out = self.tournament_head(f_joint, f_video=f_video, f_audio=f_audio)
 
         # Step 3: Package metrics
         out["f_fused"] = f_fused
