@@ -357,24 +357,37 @@ def test_smor_routing_and_ste_states():
 
 def test_convnext_droppath_linear_schedule():
     print("\n" + "=" * 65)
-    print("TEST 8: CONVNEXT-NANO DROPPATH LINEAR SCHEDULE VERIFICATION")
+def test_convnext_layerscale_and_droppath():
+    print("\n" + "=" * 65)
+    print("TEST 8: CONVNEXT-NANO LAYERSCALE & DROPPATH VERIFICATION")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2, video_drop_path=0.1)
+    model = MultimodalBoundaryAwareNet(num_frames=2, video_drop_path=0.1, layer_scale_init_value=1e-6)
 
-    # 1. Inspect all 6 blocks across the 4 stages
+    # 1. Inspect all 6 blocks across the 4 stages for LayerScale & DropPath
     expected_rates = [x.item() for x in torch.linspace(0, 0.1, 6)]
     actual_rates = []
+    block_dims = [48, 96, 192, 192, 192, 384]
+    blk_idx_total = 0
     for stage_idx, stage in enumerate(model.video_backbone.stages):
         for blk_idx, blk in enumerate(stage):
+            # Check DropPath
             dp_prob = blk.drop_path.drop_prob if hasattr(blk.drop_path, "drop_prob") else 0.0
             actual_rates.append(dp_prob)
-            print(f"  Stage {stage_idx + 1}, Block {blk_idx}: DropPath Rate = {dp_prob:.4f}")
+
+            # Check LayerScale gamma
+            assert blk.gamma is not None, f"Block {blk_idx_total} missing LayerScale gamma!"
+            assert blk.gamma.requires_grad, f"Block {blk_idx_total} LayerScale gamma must be trainable!"
+            assert blk.gamma.shape == (block_dims[blk_idx_total],), f"Wrong gamma shape at block {blk_idx_total}"
+            assert torch.allclose(blk.gamma, torch.full_like(blk.gamma, 1e-6)), "LayerScale gamma must initialize to 1e-6"
+
+            print(f"  Stage {stage_idx + 1}, Block {blk_idx}: DropPath = {dp_prob:.4f} | LayerScale Dim = {blk.gamma.numel()} (gamma=1e-6)")
+            blk_idx_total += 1
 
     assert len(actual_rates) == 6, f"Expected 6 blocks, got {len(actual_rates)}"
     for act, exp in zip(actual_rates, expected_rates):
         assert abs(act - exp) < 1e-5, f"Rate mismatch: got {act}, expected {exp}"
-    print(f"[PASSED] All 6 ConvNeXt blocks verified with linear DropPath schedule: {[round(r, 4) for r in actual_rates]}")
+    print(f"[PASSED] All 6 ConvNeXt blocks verified with LayerScale (1e-6) and DropPath schedule: {[round(r, 4) for r in actual_rates]}")
 
     # 2. Verify identity in eval mode
     model.eval()
@@ -408,7 +421,7 @@ if __name__ == "__main__":
     test_tie_breakers_toggle_config()
     test_consistent_video_transform()
     test_smor_routing_and_ste_states()
-    test_convnext_droppath_linear_schedule()
+    test_convnext_layerscale_and_droppath()
 
     print("\n" + "=" * 65)
     print("ALL SMoR-NET TOURNAMENT TESTS PASSED SUCCESSFULLY! (100% READY)")
