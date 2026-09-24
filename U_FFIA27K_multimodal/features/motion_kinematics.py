@@ -118,7 +118,3 @@ class FishMotionKinematics7Ch(nn.Module):
 
         kinematics_summary = torch.cat([v_mean, omega_max, v_max, convergence_flux], dim=-1)  # [B, 4]
         return frames_7ch, kinematics_summary
-
-
-# Backward compatibility alias
-FishMotionKinematics = FishMotionKinematics7Ch

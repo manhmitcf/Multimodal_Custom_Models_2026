@@ -225,7 +225,3 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         f_video = self.norm_video(f_spatial + f_motion + f_burst_v)  # [B, embed_dim]
 
         return f_video
-
-
-# Canonical VideoBackbone alias
-VideoBackbone = ConvNeXtNanoVideoBackbone

@@ -179,7 +179,3 @@ class PairwiseTournamentLoss(BaseLoss):
         )
 
         return total_loss
-
-
-# Alias for explicit MoE naming
-SMoRPairwiseTournamentLoss = PairwiseTournamentLoss

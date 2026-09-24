@@ -64,7 +64,3 @@ class AudioMLPBackbone(nn.Module):
         h = self.dropout(self.act(self.ln1(self.fc1(x))))
         f_audio = self.ln2(self.fc2(h))
         return f_audio
-
-
-# Canonical AudioBackbone alias
-AudioBackbone = AudioMLPBackbone

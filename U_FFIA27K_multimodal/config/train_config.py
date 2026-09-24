@@ -257,6 +257,3 @@ class TrainConfig(BaseModel):
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls(**data)
-
-
-MultimodalTrainConfig = TrainConfig

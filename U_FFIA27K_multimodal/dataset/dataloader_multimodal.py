@@ -18,7 +18,7 @@ from config import (
     SplitterConfig,
 )
 from dataset.data_split import FishDataSplitter
-from transforms.video_transform import VideoTransform
+from transforms.video_transform import ConsistentVideoTransform
 
 logging.basicConfig(
     level=logging.INFO,
@@ -197,7 +197,7 @@ class FishMultimodalDataLoader:
             else:
                 raise ValueError(f"Invalid split value '{self.split}'.")
 
-            transforms = VideoTransform.get_transforms(image_size=parent.image_size)
+            transforms = ConsistentVideoTransform.get_transforms(image_size=parent.image_size)
             self.transform = transforms[self.split]
             self.ram_cache = None
 

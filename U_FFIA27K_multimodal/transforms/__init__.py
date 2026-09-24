@@ -1,3 +1,3 @@
-from .video_transform import VideoTransform, ConsistentVideoTransform, ImageToPIL
+from .video_transform import ConsistentVideoTransform, ImageToPIL
 
-__all__ = ["VideoTransform", "ConsistentVideoTransform", "ImageToPIL"]
+__all__ = ["ConsistentVideoTransform", "ImageToPIL"]

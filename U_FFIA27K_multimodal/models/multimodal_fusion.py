@@ -380,7 +380,6 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             "logits": logits_raw,
             "probabilities": p_raw,
             "expected_intensity": expected_intensity,
-            "intensity_score": expected_intensity,
             # Pairwise logits & probabilities for specialized loss calculation
             "logit_act": logit_act,
             "p_feeding": p_feeding,

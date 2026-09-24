@@ -137,7 +137,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
         # Step 4: Assemble Comprehensive Output
         outputs = {
             "clipwise_output": fusion_outputs["logits"],
-            "logits": fusion_outputs["logits"],
             "probabilities": fusion_outputs["probabilities"],
             "logits_video": logits_video,
             "logits_audio": logits_audio,
@@ -145,7 +144,6 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "prob_audio": prob_audio,
             "uncertainty": fusion_outputs.get("uncertainty"),
             "modality_weights": fusion_outputs.get("modality_weights"),
-            "intensity_score": fusion_outputs.get("intensity_score"),
             "expected_intensity": fusion_outputs.get("expected_intensity"),
             "gate": fusion_outputs.get("gate"),
             "f_fused": fusion_outputs.get("f_fused"),

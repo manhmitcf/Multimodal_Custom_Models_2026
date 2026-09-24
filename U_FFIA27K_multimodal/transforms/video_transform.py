@@ -170,7 +170,3 @@ class ConsistentVideoTransform:
             "val": cls(image_size=image_size, is_train=False),
             "test": cls(image_size=image_size, is_train=False),
         }
-
-
-# Canonical alias for 100% backward compatibility
-VideoTransform = ConsistentVideoTransform

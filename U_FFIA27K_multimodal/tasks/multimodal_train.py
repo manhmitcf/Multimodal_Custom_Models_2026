@@ -17,7 +17,7 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 
-from config import MultimodalTrainConfig
+from config import TrainConfig
 from utils import (
     EarlyStopping,
     HistoryLogger,
@@ -72,7 +72,7 @@ class MultimodalTrainer:
         train_loader: Any,
         val_loader: Any,
         test_loader: Any,
-        config: MultimodalTrainConfig,
+        config: TrainConfig,
         device: torch.device,
         optimizer: Optional[optim.Optimizer] = None,
         train_config_path: str = 'config/train_config.json'
