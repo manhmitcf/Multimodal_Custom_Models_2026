@@ -126,7 +126,7 @@ class PairwiseTournamentLoss(BaseLoss):
         loss_pairwise = 0.4 * loss_12 + 0.4 * loss_23 + 0.2 * loss_13
 
         # 3. Level 3: Multi-class Cross Entropy on Final Logits
-        logits = output_dict.get("clipwise_output", output_dict.get("logits"))
+        logits = output_dict.get("clipwise_output")
         if logits is not None:
             loss_ce = F.cross_entropy(logits, y_raw)
         else:
