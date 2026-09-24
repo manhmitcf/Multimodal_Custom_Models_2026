@@ -370,7 +370,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         ).unsqueeze(-1)
 
         return {
-            "logits": logits_raw,
+            "clipwise_output": logits_raw,
             "probabilities": p_raw,
             "expected_intensity": expected_intensity,
             # Pairwise logits & probabilities for specialized loss calculation
