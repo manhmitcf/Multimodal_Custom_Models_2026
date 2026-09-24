@@ -166,9 +166,6 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
                 weight_pairwise=getattr(config, "weight_pairwise", 0.5),
                 weight_ce=getattr(config, "weight_ce", 1.0),
                 aux_loss_weight=getattr(config, "aux_loss_weight", 0.3),
-                lambda_balance=getattr(config, "lambda_balance", 0.01),
-                lambda_sparse=getattr(config, "lambda_sparse", 0.0001),
-                use_sparse_moe_routing=getattr(config, "use_sparse_moe_routing", True),
             ).to(device)
             loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
         else:
