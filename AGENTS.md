@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/sparse_mixture_of_referees | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.26M Params)
+# Branch: final/main | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.26M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -163,7 +163,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_main_architecture_sparse_mixture_of_referees`.
+- Remote dataset repository: `manhmitcf/Results_final_main`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
@@ -173,7 +173,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 
 ## 5. Mandatory Verification Checklist
 
-Before proposing or committing any code changes on branch `main_architecture/sparse_mixture_of_referees`, agents **MUST** execute and pass:
+Before proposing or committing any code changes on branch `final/main`, agents **MUST** execute and pass:
 
 ```bash
 cd U_FFIA27K_multimodal
