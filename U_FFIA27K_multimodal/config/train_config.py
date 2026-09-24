@@ -58,17 +58,53 @@ class AudioTieBreakersConfig(BaseModel):
     def _normalize_keys(cls, data: Any) -> Any:
         if isinstance(data, dict):
             d = dict(data)
-            if "b12" in d and "enable_b12" not in d:
-                v = d.pop("b12")
-                d["enable_b12"] = v.get("enable_audio", v.get("enable", True)) if isinstance(v, dict) else bool(v)
-            if "b23" in d and "enable_b23" not in d:
-                v = d.pop("b23")
-                d["enable_b23"] = v.get("enable_audio", v.get("enable", True)) if isinstance(v, dict) else bool(v)
-            if "b13" in d and "enable_b13" not in d:
-                v = d.pop("b13")
-                d["enable_b13"] = v.get("enable_audio", v.get("enable", True)) if isinstance(v, dict) else bool(v)
+            for key, flat in [("b12", "enable_b12"), ("b23", "enable_b23"), ("b13", "enable_b13")]:
+                # 1. Direct flat key
+                if flat in d:
+                    v = d[flat]
+                # 2. Short key
+                elif key in d:
+                    v = d.pop(key)
+                # 3. Split audio keys
+                else:
+                    v_aud = d.get(f"{flat}_audio", d.get(f"{key}_audio", None))
+                    if v_aud is not None:
+                        v = v_aud
+                    else:
+                        continue
+
+                # Parse value into boolean
+                if isinstance(v, dict):
+                    if "enable_audio" in v:
+                        res = bool(v["enable_audio"])
+                    elif "enable" in v:
+                        res = bool(v["enable"])
+                    elif "audio" in v:
+                        res = bool(v["audio"])
+                    else:
+                        res = True
+                elif hasattr(v, "enable_audio"):
+                    res = bool(v.enable_audio)
+                elif hasattr(v, "enable"):
+                    res = bool(v.enable)
+                else:
+                    res = bool(v)
+
+                d[flat] = res
             return d
         return data
+
+    @property
+    def b12(self) -> bool:
+        return self.enable_b12
+
+    @property
+    def b23(self) -> bool:
+        return self.enable_b23
+
+    @property
+    def b13(self) -> bool:
+        return self.enable_b13
 
 
 class ModelConfig(BaseModel):

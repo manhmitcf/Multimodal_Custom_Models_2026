@@ -22,7 +22,7 @@ def _parse_tie_breakers(
 ) -> Tuple[bool, bool, bool]:
     """
     Robustly parses tie_breakers configuration from Pydantic models (v1/v2),
-    dictionaries, or objects with attributes.
+    dictionaries, or objects with attributes for audio tie-breakers ablation.
     """
     if tie_breakers is not None:
         if hasattr(tie_breakers, "model_dump"):
@@ -34,40 +34,49 @@ def _parse_tie_breakers(
         else:
             d = {}
 
+        def _extract(v, default):
+            if isinstance(v, dict):
+                if "enable_audio" in v:
+                    return bool(v["enable_audio"])
+                if "enable" in v:
+                    return bool(v["enable"])
+                if "audio" in v:
+                    return bool(v["audio"])
+                return default
+            if hasattr(v, "enable_audio"):
+                return bool(getattr(v, "enable_audio"))
+            if hasattr(v, "enable"):
+                return bool(getattr(v, "enable"))
+            return bool(v)
+
         if d:
-            b12_val = d.get("enable_b12", d.get("b12", enable_b12))
-            b23_val = d.get("enable_b23", d.get("b23", enable_b23))
-            b13_val = d.get("enable_b13", d.get("b13", enable_b13))
+            def _get_val(k_flat, k_short, def_v):
+                if k_flat in d:
+                    return _extract(d[k_flat], def_v)
+                if k_short in d:
+                    return _extract(d[k_short], def_v)
+                v_aud = d.get(f"{k_flat}_audio", d.get(f"{k_short}_audio", None))
+                if v_aud is not None:
+                    return _extract(v_aud, def_v)
+                return def_v
 
-            def _extract(v, default):
-                if isinstance(v, dict):
-                    return v.get("enable_audio", v.get("enable_video", v.get("enable", default)))
-                return bool(v)
+            enable_b12 = _get_val("enable_b12", "b12", enable_b12)
+            enable_b23 = _get_val("enable_b23", "b23", enable_b23)
+            enable_b13 = _get_val("enable_b13", "b13", enable_b13)
+        else:
+            def _get_attr(k_flat, k_short, def_v):
+                if hasattr(tie_breakers, k_flat):
+                    return _extract(getattr(tie_breakers, k_flat), def_v)
+                if hasattr(tie_breakers, k_short):
+                    return _extract(getattr(tie_breakers, k_short), def_v)
+                v_aud = getattr(tie_breakers, f"{k_flat}_audio", getattr(tie_breakers, f"{k_short}_audio", None))
+                if v_aud is not None:
+                    return _extract(v_aud, def_v)
+                return def_v
 
-            enable_b12 = _extract(b12_val, enable_b12)
-            enable_b23 = _extract(b23_val, enable_b23)
-            enable_b13 = _extract(b13_val, enable_b13)
-        elif hasattr(tie_breakers, "enable_b12"):
-            enable_b12 = bool(getattr(tie_breakers, "enable_b12"))
-            enable_b23 = bool(getattr(tie_breakers, "enable_b23"))
-            enable_b13 = bool(getattr(tie_breakers, "enable_b13"))
-        elif hasattr(tie_breakers, "b12"):
-            b12_val = getattr(tie_breakers, "b12")
-            b23_val = getattr(tie_breakers, "b23")
-            b13_val = getattr(tie_breakers, "b13")
-
-            def _extract_attr(v, default):
-                if hasattr(v, "enable_audio"):
-                    return getattr(v, "enable_audio")
-                if hasattr(v, "enable_video"):
-                    return getattr(v, "enable_video")
-                if hasattr(v, "enable"):
-                    return getattr(v, "enable")
-                return bool(v)
-
-            enable_b12 = _extract_attr(b12_val, enable_b12)
-            enable_b23 = _extract_attr(b23_val, enable_b23)
-            enable_b13 = _extract_attr(b13_val, enable_b13)
+            enable_b12 = _get_attr("enable_b12", "b12", enable_b12)
+            enable_b23 = _get_attr("enable_b23", "b23", enable_b23)
+            enable_b13 = _get_attr("enable_b13", "b13", enable_b13)
 
     return bool(enable_b12), bool(enable_b23), bool(enable_b13)
 
