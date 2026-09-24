@@ -196,8 +196,6 @@ class LossConfig(BaseModel):
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
-    lambda_balance: float = Field(default=0.0, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
-    lambda_sparse: float = Field(default=0.0, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
 
 
 class TrainConfig(BaseModel):
@@ -257,7 +255,7 @@ class TrainConfig(BaseModel):
             d["evaluation"] = eval_dict
 
         # 4. Loss cluster
-        loss_keys = ["loss_type", "weight_act", "weight_pairwise", "weight_ce", "aux_loss_weight", "lambda_balance", "lambda_sparse"]
+        loss_keys = ["loss_type", "weight_act", "weight_pairwise", "weight_ce", "aux_loss_weight"]
         loss_dict = dict(d.get("loss", {})) if isinstance(d.get("loss"), dict) else {}
         for k in loss_keys:
             if k in d:
@@ -375,15 +373,6 @@ class TrainConfig(BaseModel):
     @aux_loss_weight.setter
     def aux_loss_weight(self, val: float) -> None: self.loss.aux_loss_weight = val
 
-    @property
-    def lambda_balance(self) -> float: return self.loss.lambda_balance
-    @lambda_balance.setter
-    def lambda_balance(self, val: float) -> None: self.loss.lambda_balance = val
-
-    @property
-    def lambda_sparse(self) -> float: return self.loss.lambda_sparse
-    @lambda_sparse.setter
-    def lambda_sparse(self, val: float) -> None: self.loss.lambda_sparse = val
 
     @property
     def num_frames(self) -> int:

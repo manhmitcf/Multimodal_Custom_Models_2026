@@ -160,7 +160,7 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
 
         # 3. Test backward pass & gradient flow
         loss_type = getattr(config, "loss_type", "pairwise_tournament")
-        if loss_type in ("pairwise_tournament", "smor_pairwise_tournament"):
+        if loss_type == "pairwise_tournament":
             loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(config, "weight_act", 0.5),
                 weight_pairwise=getattr(config, "weight_pairwise", 0.5),
