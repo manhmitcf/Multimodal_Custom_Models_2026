@@ -130,6 +130,7 @@ class MultimodalSOTANet(nn.Module):
         # Step 4: Assemble Comprehensive Output
         outputs = {
             "clipwise_output": fusion_outputs["clipwise_output"],
+            "logits": fusion_outputs.get("logits", fusion_outputs["clipwise_output"]),
             "probabilities": fusion_outputs["probabilities"],
             "logits_video": logits_video,
             "logits_audio": logits_audio,
