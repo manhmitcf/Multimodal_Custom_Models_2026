@@ -201,9 +201,12 @@ def test_all_8_dual_tie_breaker_combinations():
         (True,  True,  True,  "All 3 Dual Referees (B12 + B23 + B13)"),
     ]
 
+    from config.train_config import DualTieBreakersConfig
+
     for idx, (b12, b23, b13, desc) in enumerate(combinations, 1):
-        tb_config = {"enable_b12": b12, "enable_b23": b23, "enable_b13": b13}
-        model = MultimodalSOTANet(num_frames=2, tie_breakers=tb_config)
+        # Validate Pydantic DualTieBreakersConfig
+        tb_pydantic = DualTieBreakersConfig(enable_b12=b12, enable_b23=b23, enable_b13=b13)
+        model = MultimodalSOTANet(num_frames=2, tie_breakers=tb_pydantic)
         th = model.fusion.tournament_head
 
         # Check sub-modules existence (both Video and Audio referees)
@@ -228,6 +231,13 @@ def test_all_8_dual_tie_breaker_combinations():
             assert th.head_b13_v is None and th.head_b13_a is None
             assert th.gamma_13_v is None and th.gamma_13_a is None
 
+        # Also validate plain dict format
+        tb_dict = {"enable_b12": b12, "enable_b23": b23, "enable_b13": b13}
+        model_dict = MultimodalSOTANet(num_frames=2, tie_breakers=tb_dict)
+        assert model_dict.fusion.tournament_head.enable_b12 == b12
+        assert model_dict.fusion.tournament_head.enable_b23 == b23
+        assert model_dict.fusion.tournament_head.enable_b13 == b13
+
         # Test forward & backward
         model.train()
         outputs = model(v_input, a_input)
@@ -237,6 +247,17 @@ def test_all_8_dual_tie_breaker_combinations():
         param_count = sum(p.numel() for p in model.parameters())
         assert param_count < 5000000
         print(f"  Comb {idx}/8: [B12={b12}, B23={b23}, B13={b13}] -> {param_count:,} params | {desc} -> PASSED")
+
+    # Explicit divergence verification: B12 Only vs B23 Only must produce different logits
+    seed_everything(42)
+    m_b12 = MultimodalSOTANet(num_frames=2, tie_breakers=DualTieBreakersConfig(enable_b12=True, enable_b23=False, enable_b13=False)).eval()
+    seed_everything(42)
+    m_b23 = MultimodalSOTANet(num_frames=2, tie_breakers=DualTieBreakersConfig(enable_b12=False, enable_b23=True, enable_b13=False)).eval()
+    with torch.no_grad():
+        out_b12 = m_b12(v_input, a_input)["logits"]
+        out_b23 = m_b23(v_input, a_input)["logits"]
+    assert not torch.allclose(out_b12, out_b23, atol=1e-3), "B12 and B23 tie-breaker configs must produce distinct outputs!"
+    print("  Divergence check: B12-only vs B23-only produce distinctly calibrated logits -> PASSED")
 
     print("[PASSED] All 8 Dual Tie-Breaker ablation combinations verified successfully!")
 
