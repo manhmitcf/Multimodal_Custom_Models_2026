@@ -8,7 +8,7 @@ if project_root not in sys.path:
 
 import torch
 import torch.nn as nn
-from models.multimodal_sota_net import MultimodalBoundaryAwareNet
+from models.multimodal_sota_net import MultimodalSOTANet
 from utils.losses import PairwiseTournamentLoss
 from utils.seed import seed_everything
 
@@ -18,7 +18,7 @@ def test_parameter_budget():
     print("TEST 1: SMoR-NET TOURNAMENT PARAMETER BUDGET (< 5.0M)")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model = MultimodalSOTANet(num_frames=2)
     total_params = sum(p.numel() for p in model.parameters())
     v_params = sum(p.numel() for p in model.video_backbone.parameters())
     a_params = sum(p.numel() for p in model.audio_backbone.parameters())
@@ -40,7 +40,7 @@ def test_tournament_forward_and_pairwise():
     print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & SPARSE MIXTURE-OF-REFEREES")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model = MultimodalSOTANet(num_frames=2)
     model.eval()
 
     B = 4
@@ -115,7 +115,7 @@ def test_gradient_flow_through_loss():
     print("TEST 3: 100% GRADIENT FLOW THROUGH SMoR LOSS")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model = MultimodalSOTANet(num_frames=2)
     model.train()
 
     B = 4
@@ -156,7 +156,7 @@ def test_end_to_end_from_scratch():
     print("TEST 4: END-TO-END FROM SCRATCH SIMULTANEOUS TRAINING")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2)
+    model = MultimodalSOTANet(num_frames=2)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
@@ -198,7 +198,7 @@ def test_tie_breakers_toggle_config():
         "b23": {"enable_audio": False, "enable_video": False},
         "b13": {"enable_audio": False, "enable_video": False}
     }
-    model_baseline = MultimodalBoundaryAwareNet(tie_breakers=tb_baseline)
+    model_baseline = MultimodalSOTANet(tie_breakers=tb_baseline)
     th_base = model_baseline.fusion.tournament_head
     assert th_base.head_b12_a is None and th_base.head_b12_v is None
     assert th_base.head_b23_a is None and th_base.head_b23_v is None
@@ -214,7 +214,7 @@ def test_tie_breakers_toggle_config():
         "b23": {"enable_audio": True, "enable_video": False},
         "b13": {"enable_audio": True, "enable_video": False}
     }
-    model_audio = MultimodalBoundaryAwareNet(tie_breakers=tb_audio_only)
+    model_audio = MultimodalSOTANet(tie_breakers=tb_audio_only)
     th_aud = model_audio.fusion.tournament_head
     assert th_aud.head_b12_a is not None and th_aud.head_b12_v is None
     assert th_aud.head_b23_a is not None and th_aud.head_b23_v is None
@@ -230,7 +230,7 @@ def test_tie_breakers_toggle_config():
         "b23": {"enable_audio": False, "enable_video": True},
         "b13": {"enable_audio": False, "enable_video": True}
     }
-    model_video = MultimodalBoundaryAwareNet(tie_breakers=tb_video_only)
+    model_video = MultimodalSOTANet(tie_breakers=tb_video_only)
     th_vid = model_video.fusion.tournament_head
     assert th_vid.head_b12_a is None and th_vid.head_b12_v is not None
     assert th_vid.head_b23_a is None and th_vid.head_b23_v is not None
@@ -246,7 +246,7 @@ def test_tie_breakers_toggle_config():
         "b23": {"enable_audio": True, "enable_video": True},
         "b13": {"enable_audio": True, "enable_video": True}
     }
-    model_dual = MultimodalBoundaryAwareNet(tie_breakers=tb_full_dual)
+    model_dual = MultimodalSOTANet(tie_breakers=tb_full_dual)
     th_dual = model_dual.fusion.tournament_head
     assert th_dual.head_b12_a is not None and th_dual.head_b12_v is not None
     assert th_dual.head_b23_a is not None and th_dual.head_b23_v is not None
@@ -297,7 +297,7 @@ def test_smor_routing_and_ste_states():
     print("TEST 7: SPARSE MIXTURE-OF-REFEREES (SMoR) ROUTING & STE STATES")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2, use_sparse_moe_routing=True)
+    model = MultimodalSOTANet(num_frames=2, use_sparse_moe_routing=True)
     model.train()
 
     B = 8
@@ -360,7 +360,7 @@ def test_convnext_layerscale_and_droppath():
     print("TEST 8: CONVNEXT-NANO LAYERSCALE & DROPPATH VERIFICATION")
     print("=" * 65)
 
-    model = MultimodalBoundaryAwareNet(num_frames=2, video_drop_path=0.1, layer_scale_init_value=1e-6)
+    model = MultimodalSOTANet(num_frames=2, video_drop_path=0.1, layer_scale_init_value=1e-6)
 
     # 1. Inspect all 6 blocks across the 4 stages for LayerScale & DropPath
     expected_rates = [x.item() for x in torch.linspace(0, 0.1, 6)]
@@ -398,7 +398,7 @@ def test_convnext_layerscale_and_droppath():
     print("[PASSED] DropPath identity pass-through verified in eval mode!")
 
     # 3. Verify drop_path=0.0 turns into nn.Identity
-    model_zero = MultimodalBoundaryAwareNet(num_frames=2, video_drop_path=0.0)
+    model_zero = MultimodalSOTANet(num_frames=2, video_drop_path=0.0)
     for stage in model_zero.video_backbone.stages:
         for blk in stage:
             assert isinstance(blk.drop_path, nn.Identity), "When video_drop_path=0.0, drop_path should be nn.Identity"

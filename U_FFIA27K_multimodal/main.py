@@ -19,7 +19,7 @@ import torch
 
 from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
-from models import MultimodalBoundaryAwareNet, MultimodalSOTANet
+from models import MultimodalSOTANet
 from tasks import MultimodalTrainer
 from utils import count_parameters, measure_flops, seed_everything
 
@@ -36,7 +36,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY = {
-    "MultimodalBoundaryAwareNet": MultimodalBoundaryAwareNet,
     "MultimodalSOTANet": MultimodalSOTANet,
 }
 

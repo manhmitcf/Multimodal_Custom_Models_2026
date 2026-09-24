@@ -351,20 +351,19 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         p_strong_given_feed = p_feeding_ranks[:, 2]
 
         # 4. Final Hierarchical Combination
-        p_final_none = p_none
         p_final_weak = p_feeding * p_weak_given_feed
         p_final_medium = p_feeding * p_med_given_feed
         p_final_strong = p_feeding * p_strong_given_feed
 
         # Map to raw dataset class indexing: [0: None, 1: Strong, 2: Medium, 3: Weak]
-        p_raw = torch.stack([p_final_none, p_final_strong, p_final_medium, p_final_weak], dim=-1)
+        p_raw = torch.stack([p_none, p_final_strong, p_final_medium, p_final_weak], dim=-1)
         p_raw = p_raw / torch.sum(p_raw, dim=-1, keepdim=True)
         logits_raw = torch.log(torch.clamp(p_raw, min=1e-7))
 
         # Expected physical intensity on 0..3 ordinal scale
         # None=0, Weak=1, Medium=2, Strong=3
         expected_intensity = (
-            p_final_none * 0.0 +
+            p_none * 0.0 +
             p_final_weak * 1.0 +
             p_final_medium * 2.0 +
             p_final_strong * 3.0

@@ -9,7 +9,7 @@ from .audio_backbone import AudioMLPBackbone
 from .multimodal_fusion import MultimodalTournamentFusion
 
 
-class MultimodalBoundaryAwareNet(nn.Module):
+class MultimodalSOTANet(nn.Module):
     """
     Hierarchical Multimodal Tournament Network with Sparse Mixture-of-Referees (SMoR-Net, ~4.26M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
@@ -192,7 +192,3 @@ class MultimodalBoundaryAwareNet(nn.Module):
             "m_13_v_hard": fusion_outputs.get("m_13_v_hard"),
         }
         return outputs
-
-
-# Aliases for 100% backwards compatibility with training & evaluation pipelines
-MultimodalSOTANet = MultimodalBoundaryAwareNet
