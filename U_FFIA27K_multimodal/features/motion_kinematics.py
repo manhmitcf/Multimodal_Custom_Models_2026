@@ -55,10 +55,12 @@ class FishMotionKinematics7Ch(nn.Module):
         else:
             rgb_01 = torch.clamp(rgb_flat, 0.0, 1.0)
 
-        # Ensure buffers match input device and dtype dynamically
+        # Ensure buffers match input device, dtype, and spatial resolution dynamically
         sobel_x = self.sobel_x.to(device=device, dtype=dtype)
         sobel_y = self.sobel_y.to(device=device, dtype=dtype)
         center_field = self.center_field.to(device=device, dtype=dtype)
+        if center_field.shape[-2:] != (H, W):
+            center_field = F.interpolate(center_field, size=(H, W), mode='bilinear', align_corners=False)
 
         # 1. Grayscale luminance [B, T, 1, H, W]
         gray_flat = 0.299 * rgb_01[:, 0:1] + 0.587 * rgb_01[:, 1:2] + 0.114 * rgb_01[:, 2:3]

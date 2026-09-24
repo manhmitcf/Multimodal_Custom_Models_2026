@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from config.train_config import AudioFeaturesConfig
+from config import AudioFeaturesConfig
 
 logger = logging.getLogger(__name__)
 
