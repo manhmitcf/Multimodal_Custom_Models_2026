@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Tuple
 
 
 def _make_subspace_head(dim: int, hidden_dim: int = 112) -> nn.Sequential:
@@ -12,6 +12,64 @@ def _make_subspace_head(dim: int, hidden_dim: int = 112) -> nn.Sequential:
         nn.LayerNorm(hidden_dim),
         nn.Linear(hidden_dim, 1)
     )
+
+
+def _parse_tie_breakers(
+    tie_breakers: Any,
+    enable_b12: bool = True,
+    enable_b23: bool = True,
+    enable_b13: bool = True
+) -> Tuple[bool, bool, bool]:
+    """
+    Robustly parses tie_breakers configuration from Pydantic models (v1/v2),
+    dictionaries, or objects with attributes.
+    """
+    if tie_breakers is not None:
+        if hasattr(tie_breakers, "model_dump"):
+            d = tie_breakers.model_dump()
+        elif hasattr(tie_breakers, "dict"):
+            d = tie_breakers.dict()
+        elif isinstance(tie_breakers, dict):
+            d = dict(tie_breakers)
+        else:
+            d = {}
+
+        if d:
+            b12_val = d.get("enable_b12", d.get("b12", enable_b12))
+            b23_val = d.get("enable_b23", d.get("b23", enable_b23))
+            b13_val = d.get("enable_b13", d.get("b13", enable_b13))
+
+            def _extract(v, default):
+                if isinstance(v, dict):
+                    return v.get("enable_audio", v.get("enable_video", v.get("enable", default)))
+                return bool(v)
+
+            enable_b12 = _extract(b12_val, enable_b12)
+            enable_b23 = _extract(b23_val, enable_b23)
+            enable_b13 = _extract(b13_val, enable_b13)
+        elif hasattr(tie_breakers, "enable_b12"):
+            enable_b12 = bool(getattr(tie_breakers, "enable_b12"))
+            enable_b23 = bool(getattr(tie_breakers, "enable_b23"))
+            enable_b13 = bool(getattr(tie_breakers, "enable_b13"))
+        elif hasattr(tie_breakers, "b12"):
+            b12_val = getattr(tie_breakers, "b12")
+            b23_val = getattr(tie_breakers, "b23")
+            b13_val = getattr(tie_breakers, "b13")
+
+            def _extract_attr(v, default):
+                if hasattr(v, "enable_audio"):
+                    return getattr(v, "enable_audio")
+                if hasattr(v, "enable_video"):
+                    return getattr(v, "enable_video")
+                if hasattr(v, "enable"):
+                    return getattr(v, "enable")
+                return bool(v)
+
+            enable_b12 = _extract_attr(b12_val, enable_b12)
+            enable_b23 = _extract_attr(b23_val, enable_b23)
+            enable_b13 = _extract_attr(b13_val, enable_b13)
+
+    return bool(enable_b12), bool(enable_b23), bool(enable_b13)
 
 
 class PairwiseBoundaryTournamentHead(nn.Module):
@@ -53,29 +111,10 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.dim = dim
         self.temperature = temperature
 
-        # Parse tie_breakers configuration
-        if tie_breakers is not None:
-            if isinstance(tie_breakers, dict):
-                enable_b12 = tie_breakers.get("enable_b12", tie_breakers.get("b12", enable_b12))
-                enable_b23 = tie_breakers.get("enable_b23", tie_breakers.get("b23", enable_b23))
-                enable_b13 = tie_breakers.get("enable_b13", tie_breakers.get("b13", enable_b13))
-                if isinstance(enable_b12, dict):
-                    enable_b12 = enable_b12.get("enable_audio", enable_b12.get("enable", True))
-                if isinstance(enable_b23, dict):
-                    enable_b23 = enable_b23.get("enable_audio", enable_b23.get("enable", True))
-                if isinstance(enable_b13, dict):
-                    enable_b13 = enable_b13.get("enable_audio", enable_b13.get("enable", True))
-            elif hasattr(tie_breakers, "b12"):
-                b12_val = getattr(tie_breakers, "b12")
-                b23_val = getattr(tie_breakers, "b23")
-                b13_val = getattr(tie_breakers, "b13")
-                enable_b12 = getattr(b12_val, "enable_audio", getattr(b12_val, "enable", b12_val)) if not isinstance(b12_val, bool) else b12_val
-                enable_b23 = getattr(b23_val, "enable_audio", getattr(b23_val, "enable", b23_val)) if not isinstance(b23_val, bool) else b23_val
-                enable_b13 = getattr(b13_val, "enable_audio", getattr(b13_val, "enable", b13_val)) if not isinstance(b13_val, bool) else b13_val
-
-        self.enable_b12 = bool(enable_b12)
-        self.enable_b23 = bool(enable_b23)
-        self.enable_b13 = bool(enable_b13)
+        # Parse tie_breakers configuration robustly
+        self.enable_b12, self.enable_b23, self.enable_b13 = _parse_tie_breakers(
+            tie_breakers, enable_b12, enable_b23, enable_b13
+        )
 
         # Level 1: Feeding Activity Gate (None vs Feeding)
         self.activity_head = nn.Sequential(
@@ -257,9 +296,9 @@ class MultimodalTournamentFusion(nn.Module):
     ) -> None:
         super().__init__()
         self.dim = dim
-        self.enable_b12 = bool(enable_b12)
-        self.enable_b23 = bool(enable_b23)
-        self.enable_b13 = bool(enable_b13)
+        self.enable_b12, self.enable_b23, self.enable_b13 = _parse_tie_breakers(
+            tie_breakers, enable_b12, enable_b23, enable_b13
+        )
 
         # 1. Gated Reliability Fusion
         self.gate = nn.Sequential(
