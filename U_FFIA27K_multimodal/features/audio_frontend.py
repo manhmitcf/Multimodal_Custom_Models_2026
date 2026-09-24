@@ -158,10 +158,24 @@ class AudioFrontend(nn.Module):
             mean_energy = torch.mean(frames**2, dim=-1, keepdim=True)
             ctrl = mean_psi / (mean_energy + 1e-10)
 
-            alpha = self.alpha_max * (1.0 - torch.exp(-ctrl))
-            alpha = torch.clamp(alpha, min=0.1, max=self.alpha_max)
+            alpha_raw = self.alpha_max * (1.0 - torch.exp(-ctrl))
+            alpha_raw = torch.clamp(alpha_raw, min=0.1, max=self.alpha_max)
 
-            frames_prev = torch.cat([frames[:, :, :1], frames[:, :, :-1]], dim=-1)
+            # Recursive temporal smoothing with beta (matching TKEO.py)
+            if self.beta > 0.0 and frames.size(1) > 1:
+                B, T, _ = alpha_raw.shape
+                alpha = torch.empty_like(alpha_raw)
+                a_prev = torch.zeros(B, 1, 1, device=frames.device, dtype=frames.dtype)
+                for t in range(T):
+                    a_t = self.beta * a_prev + (1.0 - self.beta) * alpha_raw[:, t:t+1]
+                    a_t = torch.clamp(a_t, min=0.1, max=self.alpha_max)
+                    alpha[:, t:t+1] = a_t
+                    a_prev = a_t
+            else:
+                alpha = alpha_raw
+
+            # Adaptive high-pass filtering (n=0 preserved as frames[0], matching filtered_frames[0]=frames[0] in TKEO.py)
+            frames_prev = torch.cat([torch.zeros_like(frames[:, :, :1]), frames[:, :, :-1]], dim=-1)
             frames = frames - alpha * frames_prev
 
         # 4. Windowing & cuFFT Real FFT -> [Batch, Time_Steps, 2049]
