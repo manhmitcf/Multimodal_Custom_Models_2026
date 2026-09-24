@@ -91,7 +91,7 @@ class MultimodalTrainer:
 
         # Setup Loss
         loss_type = getattr(self.config, "loss_type", "pairwise_tournament")
-        if loss_type in ("pairwise_tournament", "smor_pairwise_tournament"):
+        if loss_type == "pairwise_tournament":
             self.loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(self.config, "weight_act", 0.5),
                 weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),

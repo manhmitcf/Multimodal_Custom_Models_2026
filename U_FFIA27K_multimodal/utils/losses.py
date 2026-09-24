@@ -44,9 +44,6 @@ class PairwiseTournamentLoss(BaseLoss):
         weight_pairwise: float = 0.5,
         weight_ce: float = 1.0,
         aux_loss_weight: float = 0.3,
-        lambda_balance: float = 0.0,
-        lambda_sparse: float = 0.0,
-        use_sparse_moe_routing: bool = False,
         only_backbones: bool = False,
         **kwargs
     ) -> None:
@@ -55,9 +52,6 @@ class PairwiseTournamentLoss(BaseLoss):
         self.weight_pairwise = float(kwargs.get("weight_pairwise", weight_pairwise))
         self.weight_ce = float(kwargs.get("weight_ce", weight_ce))
         self.aux_loss_weight = float(kwargs.get("aux_loss_weight", aux_loss_weight))
-        self.lambda_balance = float(kwargs.get("lambda_balance", lambda_balance))
-        self.lambda_sparse = float(kwargs.get("lambda_sparse", lambda_sparse))
-        self.use_sparse_moe_routing = bool(kwargs.get("use_sparse_moe_routing", use_sparse_moe_routing))
         self.only_backbones = bool(kwargs.get("only_backbones", only_backbones))
 
     def _get_raw_targets(self, targets: torch.Tensor) -> torch.Tensor:
