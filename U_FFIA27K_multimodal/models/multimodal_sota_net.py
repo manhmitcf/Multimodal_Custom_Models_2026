@@ -134,6 +134,7 @@ class MultimodalSOTANet(nn.Module):
         # Step 4: Assemble Comprehensive Output
         outputs = {
             "clipwise_output": fusion_outputs["clipwise_output"],
+            "logits": fusion_outputs.get("logits", fusion_outputs["clipwise_output"]),
             "probabilities": fusion_outputs["probabilities"],
             "logits_video": logits_video,
             "logits_audio": logits_audio,
@@ -191,4 +192,5 @@ class MultimodalSOTANet(nn.Module):
             "m_13_a_hard": fusion_outputs.get("m_13_a_hard"),
             "m_13_v_hard": fusion_outputs.get("m_13_v_hard"),
         }
-        return outputs
+        # Filter out None values to maintain clean output dictionary
+        return {k: v for k, v in outputs.items() if v is not None}
