@@ -16,6 +16,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
+try:
+    from sklearn.metrics import average_precision_score
+except ImportError:
+    average_precision_score = None
 
 from config import TrainConfig
 from utils import (
@@ -64,7 +68,7 @@ def _safe_torch_save(obj: Any, target_path: str) -> bool:
 class MultimodalTrainer:
     """
     Unified Trainer class for Multimodal Fish Feeding Intensity Classification.
-    Supports Pairwise Tournament Loss, OneCycleLR, QWK monitoring, and Nelder-Mead post-calibration.
+    Supports Pairwise Tournament Loss with SMoR dynamic routing, OneCycleLR, and dual-track evaluation.
     """
     def __init__(
         self,
@@ -97,7 +101,7 @@ class MultimodalTrainer:
                 lambda_sparse=getattr(self.config, "lambda_sparse", 0.0001),
                 use_sparse_moe_routing=getattr(self.config, "use_sparse_moe_routing", True),
             ).to(self.device)
-            logger.info("Configured SMoRPairwiseTournamentLoss (Activity Gate + 3 Boundaries + MoE Balancing & Sparsity).")
+            logger.info("Configured PairwiseTournamentLoss with SMoR (Activity Gate + 3 Boundaries + MoE Balancing & Sparsity).")
         else:
             self.loss_fn = ClipCELoss()
             logger.info("Configured standard ClipCELoss.")
@@ -248,13 +252,32 @@ class MultimodalTrainer:
             preds_a = np.concatenate(train_preds_audio, axis=0)
             train_acc_a = float(np.mean(target_acc_labels == np.argmax(preds_a, axis=1)))
 
-        try:
-            from sklearn import metrics as sklearn_metrics
-            train_mAP = float(np.mean(sklearn_metrics.average_precision_score(train_targets, train_preds, average=None)))
-        except Exception:
+        if average_precision_score is not None:
+            try:
+                train_mAP = float(np.mean(average_precision_score(train_targets, train_preds, average=None)))
+            except Exception:
+                train_mAP = train_acc
+        else:
             train_mAP = train_acc
 
         return epoch_loss, train_acc, train_acc_v, train_acc_a, train_mAP
+
+    def _load_model_weights(self, path: str) -> bool:
+        """Safely loads model weights with fallback across PyTorch versions."""
+        if not os.path.exists(path):
+            return False
+        try:
+            sd = torch.load(path, map_location=self.device, weights_only=True)
+            self.model.load_state_dict(sd)
+            return True
+        except Exception:
+            try:
+                sd = torch.load(path, map_location=self.device, weights_only=False)
+                self.model.load_state_dict(sd)
+                return True
+            except Exception as exc_load:
+                logger.error(f"Failed to load weights from '{path}': {exc_load}")
+                return False
 
     def train(self) -> Dict[str, Any]:
         monitor_mode = str(getattr(self.config, "monitor", "val_acc")).strip().lower()
@@ -375,7 +398,7 @@ class MultimodalTrainer:
                     # Tie-breaker: prefer higher QWK
                     best_val_metric = val_acc
                     is_best = True
-            elif self.config.monitor in ('qwk_acc', 'composite'):
+            elif monitor_mode in ('qwk_acc', 'composite'):
                 # Balanced Harmonic Score: 0.5 * QWK + 0.5 * Val_Acc
                 score = 0.5 * val_qwk + 0.5 * val_acc
                 if score > best_val_metric:
@@ -484,25 +507,9 @@ class MultimodalTrainer:
             logger.info("Running Dual-Track Tournament Test Split Evaluation...")
             logger.info("Evaluating both QWK candidate and Accuracy candidate head-to-head...")
 
-            def _load_model_weights(path: str) -> bool:
-                if not os.path.exists(path):
-                    return False
-                try:
-                    sd = torch.load(path, map_location=self.device, weights_only=True)
-                    self.model.load_state_dict(sd)
-                    return True
-                except Exception:
-                    try:
-                        sd = torch.load(path, map_location=self.device, weights_only=False)
-                        self.model.load_state_dict(sd)
-                        return True
-                    except Exception as exc_load:
-                        logger.error(f"Failed to load weights from '{path}': {exc_load}")
-                        return False
-
             # 1. Evaluate QWK candidate
             stats_qwk = None
-            if _load_model_weights(self.best_checkpoint_path_qwk):
+            if self._load_model_weights(self.best_checkpoint_path_qwk):
                 self.model.eval()
                 stats_qwk = self.evaluator.evaluate(self.test_loader)
                 logger.info(
@@ -513,7 +520,7 @@ class MultimodalTrainer:
 
             # 2. Evaluate Accuracy candidate
             stats_acc = None
-            if _load_model_weights(self.best_checkpoint_path_acc):
+            if self._load_model_weights(self.best_checkpoint_path_acc):
                 self.model.eval()
                 stats_acc = self.evaluator.evaluate(self.test_loader)
                 logger.info(
@@ -559,7 +566,7 @@ class MultimodalTrainer:
                     shutil.copy2(src_a, self.best_audio_path)
 
                 # Ensure self.model has winning weights loaded for downstream profiling
-                _load_model_weights(self.best_checkpoint_path)
+                self._load_model_weights(self.best_checkpoint_path)
                 self.model.eval()
 
                 logger.info("=" * 88)
@@ -614,19 +621,10 @@ class MultimodalTrainer:
                 final_val_stats = self.evaluator.evaluate(self.val_loader)
         else:
             # Single monitor mode: reload canonical best_model.pth
-            if os.path.exists(self.best_checkpoint_path):
-                try:
-                    state_dict = torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=True)
-                    self.model.load_state_dict(state_dict)
-                    logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
-                except Exception as exc:
-                    logger.warning(f"Failed to load checkpoint with weights_only=True ({exc}), attempting with weights_only=False...")
-                    try:
-                        state_dict = torch.load(self.best_checkpoint_path, map_location=self.device, weights_only=False)
-                        self.model.load_state_dict(state_dict)
-                        logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
-                    except Exception as exc2:
-                        logger.error(f"Could not reload best checkpoint: {exc2}. Proceeding with current in-memory model weights.")
+            if self._load_model_weights(self.best_checkpoint_path):
+                logger.info(f"Reloaded best checkpoint '{self.best_checkpoint_path}' from Epoch {best_epoch:03d}...")
+            else:
+                logger.warning(f"Could not reload best checkpoint '{self.best_checkpoint_path}'. Proceeding with current in-memory model weights.")
 
             self.model.eval()
             final_val_stats = best_val_statistics if best_val_statistics is not None else self.evaluator.evaluate(self.val_loader)
