@@ -2,7 +2,6 @@ import os
 import sys
 import copy
 import csv
-import json
 import re
 from pathlib import Path
 from datetime import datetime
@@ -19,9 +18,16 @@ import torch
 
 from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
+from features.audio_frontend import AudioFrontend
 from models import MultimodalSOTANet
 from tasks import MultimodalTrainer
-from utils import count_parameters, measure_flops, seed_everything
+from utils import (
+    count_parameters,
+    measure_flops,
+    seed_everything,
+    PairwiseTournamentLoss,
+    ClipCELoss,
+)
 
 # Ensure stdout/stderr UTF-8 encoding on Windows terminal
 if hasattr(sys.stdout, 'reconfigure'):
@@ -50,7 +56,6 @@ def validate_model_config(config: TrainConfig) -> None:
 def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Module:
     validate_model_config(config)
     model_cls = MODEL_REGISTRY[config.model.backbone]
-    from features.audio_frontend import AudioFrontend
     frontend = AudioFrontend(config.audio_features)
 
     active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
@@ -97,7 +102,6 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         use_sparse_moe_routing=use_sparse_moe_routing,
         router_hidden_dim=router_hidden_dim,
     )
-
 
 
 def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: torch.device) -> None:
@@ -155,7 +159,6 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
 
         # 3. Test backward pass & gradient flow
         loss_type = getattr(config, "loss_type", "pairwise_tournament")
-        from utils.losses import PairwiseTournamentLoss, ClipCELoss
         if loss_type in ("pairwise_tournament", "smor_pairwise_tournament"):
             loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(config, "weight_act", 0.5),
@@ -207,13 +210,6 @@ def model_cv_dir(base_ckpt_dir: str, model_name: str) -> str:
         return base_dir
     return os.path.join(base_dir, model_name)
 
-
-def write_runtime_config(config: TrainConfig, output_path: str) -> str:
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(config.model_dump(), f, indent=2)
-    return str(path)
 
 
 def read_single_summary_row(summary_path: Path) -> dict:

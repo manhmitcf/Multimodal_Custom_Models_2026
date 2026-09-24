@@ -121,11 +121,7 @@ def test_gradient_flow_through_loss():
     B = 4
     v_input = torch.randn(B, 2, 3, 224, 224)
     a_input = torch.randn(B, 512000)
-    targets = {
-        "target": torch.tensor([0, 1, 2, 3]),
-        "target_ordinal": torch.tensor([0.0, 3.0, 2.0, 1.0]),
-        "activity_target": torch.tensor([0.0, 1.0, 1.0, 1.0])
-    }
+    targets = {"target": torch.tensor([0, 1, 2, 3])}
 
     criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
     outputs = model(v_input, a_input)
