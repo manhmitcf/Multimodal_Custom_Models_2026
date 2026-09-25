@@ -35,7 +35,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
          - Dynamic Referee Intervention: logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,255,553 (~4.256M) (Strictly < 5.0M parameter constraint, remaining headroom: 744,447).
+    Total Parameters: 4,256,657 (~4.257M) (Strictly < 5.0M parameter constraint, remaining headroom: 743,343).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -49,6 +49,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
+        layer_scale_init_value: float = 1e-6,
         **kwargs
     ) -> None:
         super().__init__()
@@ -59,6 +60,7 @@ class MultimodalBoundaryAwareNet(nn.Module):
         self.in_chans = in_chans
         self.tie_breakers = tie_breakers
         self.video_drop_path = video_drop_path
+        self.layer_scale_init_value = layer_scale_init_value
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
@@ -69,7 +71,8 @@ class MultimodalBoundaryAwareNet(nn.Module):
             embed_dim=embed_dim,
             in_chans=in_chans,
             num_frames=num_frames,
-            drop_path_rate=video_drop_path
+            drop_path_rate=video_drop_path,
+            layer_scale_init_value=layer_scale_init_value,
         )
         self.audio_backbone = AudioMLPBackbone(
             in_features=2049,

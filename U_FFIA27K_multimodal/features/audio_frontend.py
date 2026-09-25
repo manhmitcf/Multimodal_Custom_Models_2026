@@ -90,6 +90,7 @@ class AudioFrontend(nn.Module):
         self.hop_length = self.config.hop_size
         self.stft_bins = self.n_fft // 2 + 1  # 2049 for n_fft=4096
         self.alpha_max = float(getattr(self.config, 'alpha_max', 0.99))
+        self.beta = float(getattr(self.config, 'beta', 0.8))
         self.use_tkeo = bool(getattr(self.config, 'use_tkeo', True))
 
         self.use_spectral_aug = bool(getattr(self.config, 'use_spectral_aug', False))
@@ -120,7 +121,7 @@ class AudioFrontend(nn.Module):
         logger.info(f"  - FFT Size (n_fft):   {self.n_fft}")
         logger.info(f"  - Hop Length:         {self.hop_length}")
         logger.info(f"  - STFT Output Bins:   {self.stft_bins} linear bins")
-        logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max})")
+        logger.info(f"  - TKEO Pre-Emphasis:  {self.use_tkeo} (alpha_max={self.alpha_max}, beta={self.beta})")
         logger.info(f"  - Spectral 1D Aug:    {'ENABLED' if self.use_spectral_aug else 'DISABLED'}")
         if self.use_spectral_aug:
             logger.info(f"    * 1D Cutout Band:   Width={self.cutout_width} bins, Prob={self.cutout_prob}")
@@ -157,10 +158,24 @@ class AudioFrontend(nn.Module):
             mean_energy = torch.mean(frames**2, dim=-1, keepdim=True)
             ctrl = mean_psi / (mean_energy + 1e-10)
 
-            alpha = self.alpha_max * (1.0 - torch.exp(-ctrl))
-            alpha = torch.clamp(alpha, min=0.1, max=self.alpha_max)
+            alpha_raw = self.alpha_max * (1.0 - torch.exp(-ctrl))
+            alpha_raw = torch.clamp(alpha_raw, min=0.1, max=self.alpha_max)
 
-            frames_prev = torch.cat([frames[:, :, :1], frames[:, :, :-1]], dim=-1)
+            # Recursive temporal smoothing with beta (matching TKEO.py)
+            if self.beta > 0.0 and frames.size(1) > 1:
+                B, T, _ = alpha_raw.shape
+                alpha = torch.empty_like(alpha_raw)
+                a_prev = torch.zeros(B, 1, 1, device=frames.device, dtype=frames.dtype)
+                for t in range(T):
+                    a_t = self.beta * a_prev + (1.0 - self.beta) * alpha_raw[:, t:t+1]
+                    a_t = torch.clamp(a_t, min=0.1, max=self.alpha_max)
+                    alpha[:, t:t+1] = a_t
+                    a_prev = a_t
+            else:
+                alpha = alpha_raw
+
+            # Adaptive high-pass filtering (n=0 preserved as frames[0], matching filtered_frames[0]=frames[0] in TKEO.py)
+            frames_prev = torch.cat([torch.zeros_like(frames[:, :, :1]), frames[:, :, :-1]], dim=-1)
             frames = frames - alpha * frames_prev
 
         # 4. Windowing & cuFFT Real FFT -> [Batch, Time_Steps, 2049]

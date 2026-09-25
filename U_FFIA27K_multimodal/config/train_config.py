@@ -40,8 +40,8 @@ class AudioFeaturesConfig(BaseModel):
     fmin: int = Field(default=0, description="Minimum frequency for STFT in Hz.")
     fmax: int = Field(default=128000, description="Maximum frequency for STFT in Hz.")
     use_tkeo: bool = Field(default=True, description="Enable Teager-Kaiser Energy Operator Adaptive Pre-Emphasis.")
-    alpha_max: float = Field(default=0.99, description="Max pre-emphasis coefficient for TKEO APE.")
-    beta: float = Field(default=0.8, description="Temporal smoothing factor for TKEO APE.")
+    alpha_max: float = Field(default=0.99, ge=0.0, le=1.0, description="Max pre-emphasis coefficient for TKEO APE.")
+    beta: float = Field(default=0.8, ge=0.0, le=1.0, description="Temporal smoothing factor for TKEO APE.")
     use_spectral_aug: bool = Field(default=True, description="Enable 1D Spectral Augmentation (Cutout & Jitter) for STFT.")
     cutout_width: int = Field(default=24, description="Width of contiguous frequency cutout mask in bins.")
     cutout_prob: float = Field(default=0.5, description="Probability of applying frequency cutout per sample.")
@@ -94,6 +94,11 @@ class ModelConfig(BaseModel):
         ge=0.0,
         le=0.5,
         description="Stochastic Depth / DropPath rate for ConvNeXt-Nano video backbone."
+    )
+    layer_scale_init_value: float = Field(
+        default=1e-6,
+        ge=0.0,
+        description="Initial value for LayerScale in ConvNeXt-Nano video backbone residual blocks."
     )
     tie_breakers: DualTieBreakersConfig = Field(
         default_factory=DualTieBreakersConfig,

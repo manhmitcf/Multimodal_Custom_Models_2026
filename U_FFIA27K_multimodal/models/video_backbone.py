@@ -47,16 +47,27 @@ class ConvNeXtBlock(nn.Module):
     - Pointwise Conv / Linear (dim -> 4*dim)
     - GELU activation
     - Pointwise Conv / Linear (4*dim -> dim)
+    - LayerScale (gamma=1e-6)
     - DropPath (Stochastic Depth)
     - Residual Connection
     """
-    def __init__(self, dim: int, drop_path: float = 0.0) -> None:
+    def __init__(
+        self,
+        dim: int,
+        drop_path: float = 0.0,
+        layer_scale_init_value: float = 1e-6,
+    ) -> None:
         super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim)
         self.norm = nn.LayerNorm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, 4 * dim)
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(4 * dim, dim)
+        self.gamma = (
+            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
+            if layer_scale_init_value > 0.0
+            else None
+        )
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -68,7 +79,9 @@ class ConvNeXtBlock(nn.Module):
         x = self.pwconv1(x)
         x = self.act(x)
         x = self.pwconv2(x)
-        x = x.permute(0, 3, 1, 2)  # [B, C, H, W]
+        if self.gamma is not None:
+            x = self.gamma * x
+        x = x.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
         return shortcut + self.drop_path(x)
 
 
@@ -83,11 +96,11 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
 
     Architecture:
       - Stem: Conv 4x4 (7 -> 48) + LayerNorm
-      - Stage 1: 48ch  x 1 block  (DropPath linear schedule)
-      - Stage 2: 96ch  x 1 block  (DropPath linear schedule)
-      - Stage 3: 192ch x 3 blocks (DropPath linear schedule)
-      - Stage 4: 384ch x 1 block  (DropPath linear schedule)
-      - Total parameters: ~2.70M params.
+      - Stage 1: 48ch  x 1 block  (LayerScale + DropPath linear schedule)
+      - Stage 2: 96ch  x 1 block  (LayerScale + DropPath linear schedule)
+      - Stage 3: 192ch x 3 blocks (LayerScale + DropPath linear schedule)
+      - Stage 4: 384ch x 1 block  (LayerScale + DropPath linear schedule)
+      - Total parameters: ~2.702M params.
     """
     def __init__(
         self,
@@ -97,6 +110,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         depths: Tuple[int, ...] = (1, 1, 3, 1),
         num_frames: int = 2,
         drop_path_rate: float = 0.1,
+        layer_scale_init_value: float = 1e-6,
         **kwargs
     ) -> None:
         super().__init__()
@@ -104,6 +118,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         self.in_chans = in_chans
         self.num_frames = num_frames
         self.drop_path_rate = drop_path_rate
+        self.layer_scale_init_value = layer_scale_init_value
 
         # 1. Stem: Patchify 4x4
         self.stem = nn.Sequential(
@@ -120,13 +135,17 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
             )
             self.downsample_layers.append(downsample)
 
-        # 3. Stages with Stochastic Depth (Linear Schedule — Chuẩn Meta AI)
+        # 3. Stages with LayerScale and Stochastic Depth (Linear Schedule — Chuẩn Meta AI)
         dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
         cur = 0
         self.stages = nn.ModuleList()
         for i in range(4):
             stage = nn.Sequential(*[
-                ConvNeXtBlock(dim=dims[i], drop_path=dp_rates[cur + j])
+                ConvNeXtBlock(
+                    dim=dims[i],
+                    drop_path=dp_rates[cur + j],
+                    layer_scale_init_value=layer_scale_init_value,
+                )
                 for j in range(depths[i])
             ])
             cur += depths[i]
@@ -141,6 +160,19 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
 
         # Residual normalization
         self.norm_video = nn.LayerNorm(embed_dim)
+
+        # 5. Initialize weights with Meta AI Truncated Normal recipe
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m: nn.Module) -> None:
+        """
+        Meta AI ConvNeXt weight initialization:
+        Truncated normal with std=0.02 for Linear and Conv2d, zero bias.
+        """
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0.0)
 
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         """

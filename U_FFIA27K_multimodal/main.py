@@ -94,6 +94,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         in_chans=in_chans,
         tie_breakers=tb_cfg,
         video_drop_path=getattr(config.model, "video_drop_path", 0.1),
+        layer_scale_init_value=getattr(config.model, "layer_scale_init_value", 1e-6),
         use_sparse_moe_routing=use_sparse_moe_routing,
         router_hidden_dim=router_hidden_dim,
     )
