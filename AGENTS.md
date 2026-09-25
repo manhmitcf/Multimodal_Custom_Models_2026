@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: main_architecture/sparse_mixture_of_referees | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.26M Params)
+# Branch: exp/reproduce_9768_layerscale_new_tkeo | Multimodal Tournament Network with LayerScale & TKEO (~4.26M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -163,7 +163,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_main_architecture_sparse_mixture_of_referees`.
+- Remote dataset repository: `manhmitcf/Results_exp_reproduce_9768_layerscale_new_tkeo`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
