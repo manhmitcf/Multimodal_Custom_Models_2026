@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: exp/reproduce_9768_layerscale_new_tkeo | Multimodal Tournament Network with LayerScale & TKEO (~4.26M Params)
+# Branch: exp/ablation_smor_no_layerscale_kaiming | Multimodal Tournament Network with SMoR & Kaiming Uniform (~4.26M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -163,7 +163,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_exp_reproduce_9768_layerscale_new_tkeo`.
+- Remote dataset repository: `manhmitcf/Results_exp_ablation_smor_no_layerscale_kaiming`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
@@ -181,9 +181,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,256,657).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,255,553).
 - [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7088 GFLOPs).
-- [x] **Gradient Propagation**: 100% of trainable parameters (176/176 tensors) receive active gradients.
+- [x] **Gradient Propagation**: 100% of trainable parameters (170/170 tensors) receive active gradients.
 - [x] **SMoR Dynamic Routing**: 4 discrete states $(1,1), (1,0), (0,1), (0,0)$ verified via Straight-Through Estimator.
 - [x] **Configurable Tie-Breakers**: Full support for toggling B12, B23, B13 Audio and Video Referees via `train_config.json`.
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
