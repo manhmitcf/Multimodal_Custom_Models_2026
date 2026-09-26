@@ -110,7 +110,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         depths: Tuple[int, ...] = (1, 1, 3, 1),
         num_frames: int = 2,
         drop_path_rate: float = 0.1,
-        layer_scale_init_value: float = 1e-6,
+        layer_scale_init_value: float = 0.0,
         **kwargs
     ) -> None:
         super().__init__()
@@ -161,8 +161,10 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         # Residual normalization
         self.norm_video = nn.LayerNorm(embed_dim)
 
-        # 5. Initialize weights with Meta AI Truncated Normal recipe
-        self.apply(self._init_weights)
+        # 5. Initialize weights with Meta AI Truncated Normal recipe if LayerScale is enabled,
+        # otherwise preserve default PyTorch Kaiming Uniform initialization (as in 97.68% baseline).
+        if self.layer_scale_init_value > 0.0:
+            self.apply(self._init_weights)
 
     def _init_weights(self, m: nn.Module) -> None:
         """

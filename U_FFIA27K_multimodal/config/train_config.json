@@ -29,7 +29,7 @@
     "classes_num": 4,
     "embed_dim": 224,
     "video_drop_path": 0.1,
-    "layer_scale_init_value": 1e-6,
+    "layer_scale_init_value": 0.0,
     "use_sparse_moe_routing": true,
     "router_hidden_dim": 32
   },

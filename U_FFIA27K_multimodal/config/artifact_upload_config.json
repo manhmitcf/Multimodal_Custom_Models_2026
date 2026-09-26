@@ -1,9 +1,9 @@
 {
   "enabled": true,
   "source_dir": "/marimo/Capstone_2026_Fish_Feeding_Intensity",
-  "zip_path": "/marimo/Results_exp_reproduce_9768_layerscale_new_tkeo.zip",
-  "repo_id": "manhmitcf/Results_exp_reproduce_9768_layerscale_new_tkeo",
+  "zip_path": "/marimo/Results_exp_ablation_smor_no_layerscale_kaiming.zip",
+  "repo_id": "manhmitcf/Results_exp_ablation_smor_no_layerscale_kaiming",
   "repo_type": "dataset",
-  "path_in_repo": "Results_exp_reproduce_9768_layerscale_new_tkeo.zip",
+  "path_in_repo": "Results_exp_ablation_smor_no_layerscale_kaiming.zip",
   "create_repo": true
 }
