@@ -72,8 +72,9 @@ class MultimodalSOTANet(nn.Module):
         )
         self.audio_backbone = AudioMLPBackbone(
             in_features=2049,
+            hidden_dim=512,
             embed_dim=embed_dim,
-            num_tokens=num_frames
+            dropout=0.1,
         )
 
         # 3. Multimodal Tournament Fusion with Sparse Mixture-of-Referees (~0.382M)
