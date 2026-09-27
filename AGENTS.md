@@ -1,7 +1,7 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: ablation/dual_tie_breakers | Multimodal Tournament Network with Dual (Video + Audio) Tie-Breakers (~4.17M Params)
+# Branch: final/dual_tie_breakers | Multimodal Tournament Network with Dual (Video + Audio) Tie-Breakers (~4.17M Params)
 
-This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `ablation/dual_tie_breakers`.
+This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `final/dual_tie_breakers`.
 
 ---
 
@@ -153,7 +153,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 - `learning_curves.png` & `confusion_matrix_heatmaps.png`: High-resolution evaluation visual assets.
 
 ### 4.3 Hugging Face Integration & Security
-- Remote dataset repository: `manhmitcf/Results_ablation_dual_tie_breakers`.
+- Remote dataset repository: `manhmitcf/Results_final_dual_tie_breakers`.
 - Token Discovery Order:
   1. `HF_TOKEN` environment variable.
   2. Local `token.txt` (or `/marimo/token.txt`).
@@ -163,7 +163,7 @@ Every run automatically exports checkpoints in `checkpoint/MultimodalSOTANet/`:
 
 ## 5. Mandatory Verification Checklist
 
-Before proposing or committing any code changes on branch `ablation/dual_tie_breakers`, agents **MUST** execute and pass:
+Before proposing or committing any code changes on branch `final/dual_tie_breakers`, agents **MUST** execute and pass:
 
 ```bash
 cd U_FFIA27K_multimodal
@@ -171,9 +171,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,170,347 with 3 dual tie-breakers).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,169,243 with 3 dual tie-breakers).
 - [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: ~1.71 GFLOPs).
-- [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients (164/164 tensors).
+- [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients (158/158 tensors).
 - [x] **Ablation 8 Combinations**: Full support for toggling B12, B23, B13 Dual Referees ($2^3 = 8$ combinations).
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
 - [x] **Clean Exit**: Dry-run completes with exit code 0 on both CPU and CUDA.
