@@ -44,7 +44,6 @@ class MultimodalSOTANet(nn.Module):
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
-        layer_scale_init_value: Optional[float] = None,
         **kwargs
     ) -> None:
         super().__init__()
@@ -55,7 +54,6 @@ class MultimodalSOTANet(nn.Module):
         self.in_chans = in_chans
         self.tie_breakers = tie_breakers
         self.video_drop_path = video_drop_path
-        self.layer_scale_init_value = layer_scale_init_value
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
