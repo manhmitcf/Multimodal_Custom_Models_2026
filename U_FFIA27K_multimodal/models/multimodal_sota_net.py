@@ -15,7 +15,7 @@ class MultimodalSOTANet(nn.Module):
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
     (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Dual Tie-Breakers (B12, B23, B13):
 
-      1. Visual-Kinematic Stream (~2.702M params):
+      1. Visual-Kinematic Stream (~2.701M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
       2. Acoustic Time-Frequency Stream (~1.166M params):
@@ -29,7 +29,7 @@ class MultimodalSOTANet(nn.Module):
          - Dynamic Dual-Referee Intervention: logit = logit_base + u_tie * (gamma_v * logit_v + gamma_a * logit_a).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,170,347 (~4.170M) with all 3 dual tie-breakers enabled (Strictly < 5.0M parameter constraint).
+    Total Parameters: 4,169,243 (~4.169M) with all 3 dual tie-breakers enabled (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -43,7 +43,7 @@ class MultimodalSOTANet(nn.Module):
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
-        layer_scale_init_value: float = 1e-6,
+        layer_scale_init_value: Optional[float] = None,
         **kwargs
     ) -> None:
         super().__init__()
@@ -54,13 +54,12 @@ class MultimodalSOTANet(nn.Module):
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~3.868M params combined)
-        # Visual: ConvNeXt-Nano 7-channel video backbone (~2.702M params)
+        # 2. Backbones (~3.867M params combined)
+        # Visual: ConvNeXt-Nano 7-channel video backbone (~2.701M params)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             in_chans=in_chans,
             embed_dim=embed_dim,
             drop_path_rate=video_drop_path,
-            layer_scale_init_value=layer_scale_init_value
         )
 
         # Acoustic: 2-layer MLP projection over 2049 TKEO-STFT bins (~1.166M params)

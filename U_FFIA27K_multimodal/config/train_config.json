@@ -32,7 +32,6 @@
     "classes_num": 4,
     "embed_dim": 224,
     "video_drop_path": 0.1,
-    "layer_scale_init_value": 1e-6,
     "tie_breakers": {
       "enable_b12": true,
       "enable_b23": true,
