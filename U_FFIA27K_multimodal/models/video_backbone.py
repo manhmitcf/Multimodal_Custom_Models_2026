@@ -47,7 +47,6 @@ class ConvNeXtBlock(nn.Module):
     - Pointwise Conv / Linear (dim -> 4*dim)
     - GELU activation
     - Pointwise Conv / Linear (4*dim -> dim)
-    - LayerScale (gamma=1e-6)
     - DropPath (Stochastic Depth)
     - Residual Connection
     """
@@ -55,7 +54,7 @@ class ConvNeXtBlock(nn.Module):
         self,
         dim: int,
         drop_path: float = 0.0,
-        layer_scale_init_value: float = 1e-6,
+        **kwargs
     ) -> None:
         super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim)
@@ -63,11 +62,6 @@ class ConvNeXtBlock(nn.Module):
         self.pwconv1 = nn.Linear(dim, 4 * dim)
         self.act = nn.GELU()
         self.pwconv2 = nn.Linear(4 * dim, dim)
-        self.gamma = (
-            nn.Parameter(layer_scale_init_value * torch.ones((dim)), requires_grad=True)
-            if layer_scale_init_value > 0.0
-            else None
-        )
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -79,8 +73,6 @@ class ConvNeXtBlock(nn.Module):
         x = self.pwconv1(x)
         x = self.act(x)
         x = self.pwconv2(x)
-        if self.gamma is not None:
-            x = self.gamma * x
         x = x.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
         return shortcut + self.drop_path(x)
 
@@ -96,11 +88,11 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
 
     Architecture:
       - Stem: Conv 4x4 (7 -> 48) + LayerNorm
-      - Stage 1: 48ch  x 1 block  (LayerScale + DropPath linear schedule)
-      - Stage 2: 96ch  x 1 block  (LayerScale + DropPath linear schedule)
-      - Stage 3: 192ch x 3 blocks (LayerScale + DropPath linear schedule)
-      - Stage 4: 384ch x 1 block  (LayerScale + DropPath linear schedule)
-      - Total parameters: ~2.702M params.
+      - Stage 1: 48ch  x 1 block  (DropPath linear schedule)
+      - Stage 2: 96ch  x 1 block  (DropPath linear schedule)
+      - Stage 3: 192ch x 3 blocks (DropPath linear schedule)
+      - Stage 4: 384ch x 1 block  (DropPath linear schedule)
+      - Total parameters: ~2.701M params.
     """
     def __init__(
         self,
@@ -110,7 +102,6 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         depths: Tuple[int, ...] = (1, 1, 3, 1),
         num_frames: int = 2,
         drop_path_rate: float = 0.1,
-        layer_scale_init_value: float = 1e-6,
         **kwargs
     ) -> None:
         super().__init__()
@@ -118,7 +109,6 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         self.in_chans = in_chans
         self.num_frames = num_frames
         self.drop_path_rate = drop_path_rate
-        self.layer_scale_init_value = layer_scale_init_value
 
         # 1. Stem: Patchify 4x4
         self.stem = nn.Sequential(
@@ -135,7 +125,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
             )
             self.downsample_layers.append(downsample)
 
-        # 3. Stages with LayerScale and Stochastic Depth (Linear Schedule — Chuẩn Meta AI)
+        # 3. Stages with Stochastic Depth (Linear Schedule — Chuẩn Meta AI)
         dp_rates = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]
         cur = 0
         self.stages = nn.ModuleList()
@@ -144,7 +134,6 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
                 ConvNeXtBlock(
                     dim=dims[i],
                     drop_path=dp_rates[cur + j],
-                    layer_scale_init_value=layer_scale_init_value,
                 )
                 for j in range(depths[i])
             ])
