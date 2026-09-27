@@ -4,7 +4,7 @@ from .history_logger import HistoryLogger
 from .inference_timer import InferenceTimer
 from .losses import BaseLoss, ClipCELoss, PairwiseTournamentLoss
 from .profile_model import count_parameters, measure_flops, measure_latency
-from .seed import seed_everything, seed_worker
+from .seed import seed_everything
 
 __all__ = [
     "EarlyStopping",
@@ -19,6 +19,5 @@ __all__ = [
     "measure_flops",
     "measure_latency",
     "seed_everything",
-    "seed_worker",
 ]
 
