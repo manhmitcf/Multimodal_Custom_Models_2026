@@ -56,8 +56,9 @@ class MultimodalSOTANet(nn.Module):
         # 2. Backbones (~3.867M params combined)
         # Visual: ConvNeXt-Nano 7-channel video backbone (~2.701M params)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
-            in_chans=in_chans,
             embed_dim=embed_dim,
+            in_chans=in_chans,
+            num_frames=num_frames,
             drop_path_rate=video_drop_path,
         )
 
