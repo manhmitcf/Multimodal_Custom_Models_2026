@@ -115,7 +115,7 @@ VideoTieBreakersConfig = DualTieBreakersConfig
 class ModelConfig(BaseModel):
     """
     Configuration for Multimodal Tournament Model with Dual (Video + Audio) Tie-Breakers (~4.17M parameters).
-    Video: ConvNeXt-Nano (7-ch Kinematics) ~2.702M
+    Video: ConvNeXt-Nano (7-ch Kinematics) ~2.701M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.166M
     Audio Frontend: TKEO-STFT LayerNorm ~0.004M
     Fusion: Pairwise Boundary Tournament Decision Head with 6 Dual Referees ~0.296M
