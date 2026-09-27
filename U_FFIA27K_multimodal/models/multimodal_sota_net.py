@@ -43,7 +43,6 @@ class MultimodalSOTANet(nn.Module):
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
-        layer_scale_init_value: Optional[float] = None,
         **kwargs
     ) -> None:
         super().__init__()

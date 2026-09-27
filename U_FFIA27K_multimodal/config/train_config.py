@@ -133,10 +133,6 @@ class ModelConfig(BaseModel):
         le=0.5,
         description="Stochastic Depth / DropPath rate for ConvNeXt-Nano video backbone."
     )
-    layer_scale_init_value: Optional[float] = Field(
-        default=None,
-        description="Optional legacy LayerScale initial value (disabled by default)."
-    )
     tie_breakers: DualTieBreakersConfig = Field(
         default_factory=DualTieBreakersConfig,
         description="Pairwise Dual (Video + Audio) Referee configurations for B12, B23, B13."
