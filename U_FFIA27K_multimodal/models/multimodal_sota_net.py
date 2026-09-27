@@ -16,7 +16,7 @@ class MultimodalSOTANet(nn.Module):
     (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Video Kinematics
     Tie-Breakers (B12, B23, B13):
 
-      1. Visual-Kinematic Stream (~2.702M params):
+      1. Visual-Kinematic Stream (~2.701M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
       2. Acoustic Time-Frequency Stream (~1.166M params):
@@ -30,7 +30,7 @@ class MultimodalSOTANet(nn.Module):
          - Dynamic Tie-Breaker Intervention: logit = logit_base + gamma * u_tie * logit_video.
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,093,733 (~4.094M) with all 3 tie-breakers enabled (Strictly < 5.0M parameter constraint).
+    Total Parameters: 4,092,629 (~4.093M) with all 3 tie-breakers enabled (Strictly < 5.0M parameter constraint).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -44,7 +44,7 @@ class MultimodalSOTANet(nn.Module):
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
-        layer_scale_init_value: float = 1e-6,
+        layer_scale_init_value: Optional[float] = None,
         **kwargs
     ) -> None:
         super().__init__()
@@ -67,7 +67,6 @@ class MultimodalSOTANet(nn.Module):
             in_chans=in_chans,
             num_frames=num_frames,
             drop_path_rate=video_drop_path,
-            layer_scale_init_value=layer_scale_init_value,
         )
         self.audio_backbone = AudioMLPBackbone(
             in_features=2049,
