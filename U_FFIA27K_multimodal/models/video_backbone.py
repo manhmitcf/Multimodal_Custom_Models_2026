@@ -150,19 +150,6 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         # Residual normalization
         self.norm_video = nn.LayerNorm(embed_dim)
 
-        # 5. Initialize weights with Meta AI Truncated Normal recipe
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m: nn.Module) -> None:
-        """
-        Meta AI ConvNeXt weight initialization:
-        Truncated normal with std=0.02 for Linear and Conv2d, zero bias.
-        """
-        if isinstance(m, (nn.Conv2d, nn.Linear)):
-            nn.init.trunc_normal_(m.weight, std=0.02)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0.0)
-
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract spatial feature vector from [B * T, C, H, W].
