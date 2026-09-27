@@ -27,8 +27,8 @@ This document defines the invariant architectural constraints, operational guide
    [ConvNeXt-Nano Video Backbone]                                 ▼
    - 7-Channel Stem: Conv2d(7->48, k=4, s=4)           [Audio MLP Backbone]
    - 4 ConvNeXt Stages: [48, 96, 192, 384]             - FC1: Linear(2049 -> 512) + GELU + LN + Drop
-   - LayerScale (1e-6) + Linear DropPath [0.0 -> 0.1]  - FC2: Linear(512 -> 224) + LN
-   Shape: f_video (B, 224) [~2.702M params]            Shape: f_audio (B, 224) [~1.166M params]
+   - Stochastic Depth (Linear DropPath [0.0 -> 0.1])   - FC2: Linear(512 -> 224) + LN
+   Shape: f_video (B, 224) [~2.701M params]            Shape: f_audio (B, 224) [~1.166M params]
              │                                                    │
              └─────────────────────────┬──────────────────────────┘
                                        ▼
@@ -56,14 +56,14 @@ This document defines the invariant architectural constraints, operational guide
 ```
 
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
-- **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,702,416` (~`2.702M`)
+- **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
 - **Tournament Decision Head (Pairwise Base + 3 Audio Referees + Borda)**: `219,435` (~`0.219M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,093,733` (~`4.094M`) with all 3 audio tie-breakers enabled.
-- **Remaining Headroom**: `906,267` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `~1.71 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+- **Total Trainable Parameters**: `4,092,629` (~`4.093M`) with all 3 audio tie-breakers enabled.
+- **Remaining Headroom**: `907,371` parameters below the 5.0M budget limit.
+- **Inference Complexity**: `1.7085 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
 
@@ -78,7 +78,6 @@ This document defines the invariant architectural constraints, operational guide
   - Channel 6: Fluid Vorticity omega = dv/dx - du/dy.
 - **ConvNeXt-Nano Video Backbone (`ConvNeXtNanoVideoBackbone`)**:
   - 4 stages: [48, 96, 192, 384] with block depths (1, 1, 3, 1).
-  - LayerScale: Learnable channel-wise scale parameter $\gamma$ initialized to $10^{-6}$ for each of the 6 residual blocks.
   - Stochastic Depth (`DropPath`): Linear schedule [0.0 -> 0.1] across 6 residual blocks during training; identity pass-through during evaluation.
   - Weight Initialization: Meta AI Truncated Normal $\mathcal{N}(0, 0.02)$, bias $= 0$.
 - **Consistent Video Transform (`ConsistentVideoTransform`)**:

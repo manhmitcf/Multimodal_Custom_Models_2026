@@ -110,7 +110,7 @@ class AudioTieBreakersConfig(BaseModel):
 class ModelConfig(BaseModel):
     """
     Configuration for Multimodal Tournament Model with 3 Audio STFT Tie-Breakers (~4.09M parameters).
-    Video: ConvNeXt-Nano (7-ch Kinematics) ~2.702M
+    Video: ConvNeXt-Nano (7-ch Kinematics) ~2.701M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.166M
     Audio Frontend: TKEO-STFT LayerNorm ~0.004M
     Fusion: Pairwise Boundary Tournament Decision Head with 3 Audio Tie-Breakers ~0.219M
