@@ -16,7 +16,7 @@ class MultimodalSOTANet(nn.Module):
     (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Sparse Mixture-of-Referees
     (SMoR: Audio STFT + Video Kinematics + Dynamic STE Routers) for all pairwise matchups (B12, B23, B13):
 
-      1. Visual-Kinematic Stream (~2.702M params):
+      1. Visual-Kinematic Stream (~2.701M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
       2. Acoustic Time-Frequency Stream (~1.166M params):
@@ -34,7 +34,7 @@ class MultimodalSOTANet(nn.Module):
          - Dynamic Referee Intervention: logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,256,657 (~4.257M) (Strictly < 5.0M parameter constraint, remaining headroom: 743,343).
+    Total Parameters: 4,255,553 (~4.256M) (Strictly < 5.0M parameter constraint, remaining headroom: 744,447).
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -48,7 +48,7 @@ class MultimodalSOTANet(nn.Module):
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
-        layer_scale_init_value: float = 1e-6,
+        layer_scale_init_value: Optional[float] = None,
         **kwargs
     ) -> None:
         super().__init__()
@@ -59,7 +59,6 @@ class MultimodalSOTANet(nn.Module):
         self.in_chans = in_chans
         self.tie_breakers = tie_breakers
         self.video_drop_path = video_drop_path
-        self.layer_scale_init_value = layer_scale_init_value
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
@@ -71,7 +70,6 @@ class MultimodalSOTANet(nn.Module):
             in_chans=in_chans,
             num_frames=num_frames,
             drop_path_rate=video_drop_path,
-            layer_scale_init_value=layer_scale_init_value,
         )
         self.audio_backbone = AudioMLPBackbone(
             in_features=2049,

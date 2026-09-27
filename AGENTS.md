@@ -27,8 +27,8 @@ This document defines the invariant architectural constraints, operational guide
    [ConvNeXt-Nano Video Backbone]                                 ▼
    - 7-Channel Stem: Conv2d(7->48, k=4, s=4)           [Audio MLP Backbone]
    - 4 ConvNeXt Stages: [48, 96, 192, 384]             - FC1: Linear(2049 -> 512) + GELU + LN + Drop
-   - LayerScale (1e-6) + Linear DropPath [0.0 -> 0.1]  - FC2: Linear(512 -> 224) + LN
-   Shape: f_video (B, 224) [~2.702M params]            Shape: f_audio (B, 224) [~1.166M params]
+   - Stochastic Depth (Linear DropPath [0.0 -> 0.1])   - FC2: Linear(512 -> 224) + LN
+   Shape: f_video (B, 224) [~2.701M params]            Shape: f_audio (B, 224) [~1.166M params]
              │                                                    │
              └─────────────────────────┬──────────────────────────┘
                                        ▼
@@ -60,13 +60,13 @@ This document defines the invariant architectural constraints, operational guide
 ```
 
 ### Parameter Budget Breakdown (Strict < 5.0M Limit)
-- **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,702,416` (~`2.702M`)
+- **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
 - **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `382,359` (~`0.382M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,256,657` (~`4.257M`)
-- **Remaining Headroom**: `743,343` parameters below the 5.0M budget limit.
+- **Total Trainable Parameters**: `4,255,553` (~`4.256M`)
+- **Remaining Headroom**: `744,447` parameters below the 5.0M budget limit.
 - **Inference Complexity**: `1.7088 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
@@ -82,7 +82,6 @@ This document defines the invariant architectural constraints, operational guide
   - Channel 6: Fluid Vorticity omega = dv/dx - du/dy.
 - **ConvNeXt-Nano Video Backbone (`ConvNeXtNanoVideoBackbone`)**:
   - 4 stages: [48, 96, 192, 384] with block depths (1, 1, 3, 1).
-  - LayerScale: Learnable channel-wise scale parameter $\gamma$ initialized to $10^{-6}$ for each of the 6 residual blocks.
   - Stochastic Depth (`DropPath`): Linear schedule [0.0 -> 0.1] across 6 residual blocks during training; identity pass-through during evaluation.
   - Weight Initialization: Meta AI Truncated Normal $\mathcal{N}(0, 0.02)$, bias $= 0$.
 - **Consistent Video Transform (`ConsistentVideoTransform`)**:
@@ -181,9 +180,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,256,657).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,255,553).
 - [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7088 GFLOPs).
-- [x] **Gradient Propagation**: 100% of trainable parameters (176/176 tensors) receive active gradients.
+- [x] **Gradient Propagation**: 100% of trainable parameters (170/170 tensors) receive active gradients.
 - [x] **SMoR Dynamic Routing**: 4 discrete states $(1,1), (1,0), (0,1), (0,0)$ verified via Straight-Through Estimator.
 - [x] **Configurable Tie-Breakers**: Full support for toggling B12, B23, B13 Audio and Video Referees via `train_config.json`.
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
