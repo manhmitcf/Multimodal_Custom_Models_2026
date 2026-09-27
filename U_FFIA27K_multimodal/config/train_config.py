@@ -108,10 +108,6 @@ class DualTieBreakersConfig(BaseModel):
         return self.enable_b13
 
 
-# Backward-compatible alias
-VideoTieBreakersConfig = DualTieBreakersConfig
-
-
 class ModelConfig(BaseModel):
     """
     Configuration for Multimodal Tournament Model with Dual (Video + Audio) Tie-Breakers (~4.17M parameters).
