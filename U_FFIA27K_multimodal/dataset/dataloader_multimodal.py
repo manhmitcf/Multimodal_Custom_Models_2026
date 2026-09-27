@@ -19,7 +19,6 @@ from config import (
 )
 from dataset.data_split import FishDataSplitter
 from transforms.video_transform import ConsistentVideoTransform
-from utils.seed import seed_worker
 
 
 logging.basicConfig(
@@ -128,7 +127,6 @@ class FishMultimodalDataLoader:
         num_frames: int = 2,
         sample_rate: int = 256000,
         splitter_config: Optional[SplitterConfig] = None,
-        seed: int = 42,
     ) -> None:
         self.batch_size = batch_size
         self.dataloader_workers = dataloader_workers
@@ -140,7 +138,6 @@ class FishMultimodalDataLoader:
         self.image_size = image_size
         self.num_frames = num_frames
         self.sample_rate = sample_rate
-        self.seed = int(seed)
 
 
         if self.dataloader_workers == -1:
@@ -381,9 +378,6 @@ class FishMultimodalDataLoader:
         dataset = self._InnerDataset(self, split)
         is_train = (split == 'train')
 
-        generator = torch.Generator()
-        generator.manual_seed(self.seed)
-
         kwargs = {
             'batch_size': self.batch_size,
             'shuffle': is_train,
@@ -391,8 +385,6 @@ class FishMultimodalDataLoader:
             'collate_fn': self.collate_fn,
             'pin_memory': torch.cuda.is_available(),
             'drop_last': is_train,
-            'worker_init_fn': seed_worker if self.dataloader_workers > 0 else None,
-            'generator': generator if is_train else None,
         }
         if self.dataloader_workers > 0 and self.prefetch_factor is not None:
             kwargs['prefetch_factor'] = self.prefetch_factor

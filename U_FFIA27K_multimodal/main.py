@@ -490,7 +490,6 @@ def run_training_session(
                 num_frames=fold_config.num_frames,
                 sample_rate=fold_config.sample_rate,
                 splitter_config=fold_config.dataset_splitter,
-                seed=fold_seed,
             )
 
             model = build_model(fold_config, seed=fold_seed).to(device)
@@ -511,12 +510,7 @@ def run_training_session(
         if len(target_folds) == num_folds:
             generate_cv_summary_report(base_dir, num_folds)
     else:
-        del preflight_model
-        if device.type == "cuda" and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
         logger.info(f"Starting Holdout Training for {model_name} (Epochs={config.epochs}, Patience={config.patience})...")
-        seed_everything(active_seed)
         data_loader = FishMultimodalDataLoader(
             batch_size=config.batch_size,
             dataloader_workers=config.dataloader_workers,
@@ -526,10 +520,9 @@ def run_training_session(
             num_frames=config.num_frames,
             sample_rate=config.sample_rate,
             splitter_config=config.dataset_splitter,
-            seed=active_seed,
         )
 
-        model = build_model(config, seed=active_seed).to(device)
+        model = preflight_model
 
         trainer = MultimodalTrainer(
             model=model,
