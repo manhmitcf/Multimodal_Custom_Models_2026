@@ -100,12 +100,16 @@ class MultimodalSOTANet(nn.Module):
             - Full prediction dictionary containing tournament voting probabilities,
               calibrated logits, pairwise boundaries, uncertainty, and unimodal logits.
         """
-        # Step 1: Frontends
-        # Video: 3ch RGB -> 7ch Spatiotemporal Fluid Kinematics
-        frames_7ch, _ = self.motion_kinematics(video_input)  # [B, 2, 7, 224, 224]
+        # Step 1: Preprocessing & Frontend Extraction
+        if video_input.ndim == 5 and video_input.size(2) == 3:
+            frames_7ch, _ = self.motion_kinematics(video_input)
+        else:
+            frames_7ch = video_input
 
-        # Audio: Raw 1D waveform -> TKEO-STFT Log Magnitude Spectrogram
-        stft_feat = self.audio_frontend(audio_input)         # [B, 2049]
+        if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
+            stft_feat = self.audio_frontend(audio_input)
+        else:
+            stft_feat = audio_input
 
         # Step 2: Unimodal Spatiotemporal Feature Extraction
         f_video = self.video_backbone(frames_7ch)
