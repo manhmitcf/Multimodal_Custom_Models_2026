@@ -88,11 +88,11 @@ class DualTieBreakersConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model with Sparse Mixture-of-Referees (SMoR-Net, ~4.26M parameters).
+    Configuration for Multimodal Tournament Model with Sparse Mixture-of-Referees (SMoR-Net, ~4.28M parameters).
     Video: ConvNeXt-Nano (7-ch Kinematics) ~2.701M
     Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.166M
     Audio Frontend: TKEO-STFT LayerNorm ~0.004M
-    Fusion: Pairwise Boundary Tournament Decision Head with SMoR Dynamic Routing ~0.382M
+    Fusion: Pairwise Boundary Tournament Decision Head with SMoR Dynamic Routing ~0.404M
     Auxiliary Heads: Video + Audio Aux Heads ~0.002M
     """
     backbone: str = Field(
@@ -215,8 +215,8 @@ class LossConfig(BaseModel):
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
-    lambda_balance: float = Field(default=0.01, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
-    lambda_sparse: float = Field(default=0.0001, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
+    lambda_balance: float = Field(default=0.0, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
+    lambda_sparse: float = Field(default=0.0, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
 
 
 class TrainConfig(BaseModel):

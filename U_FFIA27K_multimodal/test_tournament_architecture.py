@@ -329,14 +329,14 @@ def test_smor_routing_and_ste_states():
         weight_pairwise=0.5,
         weight_ce=1.0,
         aux_loss_weight=0.3,
-        lambda_balance=0.01,
-        lambda_sparse=0.0001,
+        lambda_balance=0.0,
+        lambda_sparse=0.0,
         use_sparse_moe_routing=True
     )
     loss = criterion(out, targets)
     loss.backward()
 
-    # 4. Verify all router parameters receive active gradients through STE & balance loss
+    # 4. Verify all router parameters receive active gradients through STE & classification loss
     router_params = [
         model.fusion.tournament_head.router_b12,
         model.fusion.tournament_head.router_b23,
@@ -348,7 +348,7 @@ def test_smor_routing_and_ste_states():
             assert not torch.isnan(p.grad).any(), f"Router {idx} param {name} has NaN gradient!"
 
     print(f"[PASSED] SMoR Straight-Through Estimator and 4-state dynamic routing verified!")
-    print(f"  SMoR Composite Loss with Balancing & Sparsity: {loss.item():.4f}")
+    print(f"  SMoR Composite Loss (Pure Task End-to-End, lambda=0): {loss.item():.4f}")
 
 
 def test_convnext_droppath_verification():

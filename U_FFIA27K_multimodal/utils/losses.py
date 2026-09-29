@@ -44,8 +44,8 @@ class PairwiseTournamentLoss(BaseLoss):
         weight_pairwise: float = 0.5,
         weight_ce: float = 1.0,
         aux_loss_weight: float = 0.3,
-        lambda_balance: float = 0.01,
-        lambda_sparse: float = 0.0001,
+        lambda_balance: float = 0.0,
+        lambda_sparse: float = 0.0,
         use_sparse_moe_routing: bool = True,
         only_backbones: bool = False,
         **kwargs
