@@ -29,7 +29,7 @@
   },
   "model": {
     "backbone": "MultimodalSOTANet",
-    "audio_backbone": "mlp",
+    "audio_backbone": "tfmamba",
     "classes_num": 4,
     "embed_dim": 224,
     "video_drop_path": 0.1,

@@ -938,8 +938,8 @@ class DualPathTFMambaBlock(nn.Module):
         super().__init__()
         self.channels = channels
 
-        # Frequency Path: intra-frame harmonic modeling
-        self.norm_f = nn.GroupNorm(4, channels)
+        # Frequency Path: intra-frame harmonic modeling (LayerNorm directly along channel dimension)
+        self.norm_f = nn.LayerNorm(channels)
         self.mamba_f = BiMambaBlock(
             d_model=channels,
             d_state=d_state,
@@ -948,8 +948,8 @@ class DualPathTFMambaBlock(nn.Module):
             expand=expand,
         )
 
-        # Time Path: inter-frame cadence modeling
-        self.norm_t = nn.GroupNorm(4, channels)
+        # Time Path: inter-frame cadence modeling (LayerNorm directly along channel dimension)
+        self.norm_t = nn.LayerNorm(channels)
         self.mamba_t = BiMambaBlock(
             d_model=channels,
             d_state=d_state,
@@ -972,14 +972,14 @@ class DualPathTFMambaBlock(nn.Module):
         # 1. Frequency Path (intra-frame):
         # Permute & reshape to (B * T, F, C)
         x_f = x.permute(0, 2, 3, 1).contiguous().view(B * T, F, C)
-        x_f_norm = self.norm_f(x_f.transpose(1, 2)).transpose(1, 2)
+        x_f_norm = self.norm_f(x_f)
         out_f = self.drop(self.mamba_f(x_f_norm))
         x = x + out_f.view(B, T, F, C).permute(0, 3, 1, 2)
 
         # 2. Time Path (inter-frame):
         # Permute & reshape to (B * F, T, C)
         x_t = x.permute(0, 3, 2, 1).contiguous().view(B * F, T, C)
-        x_t_norm = self.norm_t(x_t.transpose(1, 2)).transpose(1, 2)
+        x_t_norm = self.norm_t(x_t)
         out_t = self.drop(self.mamba_t(x_t_norm))
         x = x + out_t.view(B, F, T, C).permute(0, 3, 2, 1)
 
@@ -988,16 +988,16 @@ class DualPathTFMambaBlock(nn.Module):
 
 class TFMambaAudioBackbone(nn.Module):
     """
-    Dual-Path Time-Frequency Mamba Audio Backbone (~0.18M params).
-    Inspired by Interspeech 2025 TF-Mamba (arXiv:2409.05034).
+    Dual-Path Time-Frequency Mamba Audio Backbone (~0.14M params).
+    Inspired by Interspeech 2025 TF-Mamba (arXiv:2409.05034) & ASCMamba.
 
     Input: [B, 251, 2049] (viewed as [B, 1, 251, 2049])
       - 2D Conv Stem:
-          Conv2d(1 -> 32, k=(5, 9), s=(2, 4), p=(2, 4)) + BN + GELU
-          Conv2d(32 -> channels, k=(5, 9), s=(2, 4), p=(2, 4)) + BN + GELU
-          AdaptiveAvgPool2d((32, 32)) -> [B, channels, 32, 32]
+          Conv2d(1 -> 32, k=(3, 5), s=(2, 4), p=(1, 2)) + BN + GELU
+          Conv2d(32 -> channels, k=(3, 5), s=(2, 4), p=(1, 2)) + BN + GELU
+          AdaptiveAvgPool2d((16, 16)) -> [B, channels, 16, 16]
       - 2x DualPathTFMambaBlock(channels=48, d_state=16, dt_rank=4)
-      - 2D Global Average Pooling: [B, channels, 32, 32] -> [B, channels]
+      - 2D Global Average Pooling: [B, channels, 16, 16] -> [B, channels]
       - Head: Linear(channels -> 224) + LayerNorm(224) -> f_audio [B, 224]
     """
     requires_2d: bool = True
@@ -1022,13 +1022,13 @@ class TFMambaAudioBackbone(nn.Module):
 
         # 1. 2D Convolutional Stem
         self.stem = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=(5, 9), stride=(2, 4), padding=(2, 4), bias=False),
+            nn.Conv2d(1, 32, kernel_size=(3, 5), stride=(2, 4), padding=(1, 2), bias=False),
             nn.BatchNorm2d(32),
             nn.GELU(),
-            nn.Conv2d(32, channels, kernel_size=(5, 9), stride=(2, 4), padding=(2, 4), bias=False),
+            nn.Conv2d(32, channels, kernel_size=(3, 5), stride=(2, 4), padding=(1, 2), bias=False),
             nn.BatchNorm2d(channels),
             nn.GELU(),
-            nn.AdaptiveAvgPool2d((32, 32)),
+            nn.AdaptiveAvgPool2d((16, 16)),
         )
 
         # 2. Dual-Path TF-Mamba Stages
@@ -1060,6 +1060,10 @@ class TFMambaAudioBackbone(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1.0)
                 nn.init.constant_(m.bias, 0.0)
+        for m in self.stages.modules():
+            if isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
         for m in self.head.modules():
             if isinstance(m, nn.Linear):
                 init_layer(m)
@@ -1077,7 +1081,7 @@ class TFMambaAudioBackbone(nn.Module):
         elif x.ndim == 3:
             x = x.unsqueeze(1)  # [B, 1, T, F]
 
-        # 1. 2D Conv Stem -> [B, channels, 32, 32]
+        # 1. 2D Conv Stem -> [B, channels, 16, 16]
         feat = self.stem(x)
 
         # 2. Dual-Path TF-Mamba Stages

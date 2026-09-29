@@ -30,7 +30,7 @@ This document defines the invariant architectural constraints, operational guide
    - Stochastic Depth (DropPath [0.0 -> 0.1])          - 'bigru': CRNN-BiGRU 2-layer Sequence [~0.653M]
    Shape: f_video (B, 224) [~2.701M params]            - 'conformer': Conformer Attention-CNN [~0.794M]
              │                                         - 'bimamba': Bidirectional Audio Mamba [~0.693M]
-             │                                         - 'tfmamba': Dual-Path TF-Mamba [~0.184M]
+             │                                         - 'tfmamba': Dual-Path TF-Mamba [~0.137M]
              │                                         Shape: f_audio (B, 224)
              │                                                    │
              └─────────────────────────┬──────────────────────────┘
@@ -69,8 +69,8 @@ This document defines the invariant architectural constraints, operational guide
   * `bigru`: `652,864` (~`0.653M`) | **Total Model**: `3,502,895` (~`3.503M`)
   * `conformer`: `794,016` (~`0.794M`) | **Total Model**: `3,644,047` (~`3.644M`)
   * `bimamba`: `693,152` (~`0.693M`) | **Total Model**: `3,543,183` (~`3.543M`)
-  * `tfmamba`: `184,288` (~`0.184M`) | **Total Model**: `3,034,319` (~`3.034M`)
-- **Remaining Headroom**: `983,985` - `1,965,681` parameters below the 5.0M budget limit across all configurations.
+  * `tfmamba`: `137,248` (~`0.137M`) | **Total Model**: `2,987,279` (~`2.987M`)
+- **Remaining Headroom**: `983,985` - `2,012,721` parameters below the 5.0M budget limit across all configurations.
 
 ---
 
@@ -104,7 +104,7 @@ This document defines the invariant architectural constraints, operational guide
   3. **CRNN-BiGRU (`CRNNBiGRUAudioBackbone`)**: DCASE Task 4 sequence baseline. Linear projection (2049 -> 128) + 2-layer Bidirectional GRU (hidden_size=112 -> 224 output) + temporal mean pooling (~0.653M).
   4. **Conformer (`ConformerAudioBackbone`)**: Google Interspeech 2020 via `torchaudio.models.Conformer`. Linear projection (2049 -> 128) + 2 Conformer blocks (4 heads, ffn_dim=256, depthwise_conv_kernel=15) + temporal mean pooling + output projection (128 -> 224) (~0.794M).
   5. **Bidirectional Audio Mamba (`BiMambaAudioBackbone`)**: KAIST AuM (arXiv:2406.03344) & Vision Mamba (ICML 2024). Linear stem (2049 -> 128) + 3 BiMamba layers (d_state=16, dt_rank=8, expand=2) with low-rank delta, HiPPO S4D diagonal initialization (A = -exp(A_log)), inverse softplus delta bias initialization, and independent forward/backward SSM streams + temporal mean pooling (~0.693M).
-  6. **Dual-Path Time-Frequency Mamba (`TFMambaAudioBackbone`)**: Interspeech 2025 (arXiv:2409.05034) & ASCMamba. 2D Conv Stem downsampling to [B, 48, 32, 32] + 2 Dual-Path TF-Mamba stages alternating between intra-frame Frequency-BiMamba and inter-frame Temporal-BiMamba + 2D global average pooling (~0.184M).
+  6. **Dual-Path Time-Frequency Mamba (`TFMambaAudioBackbone`)**: Interspeech 2025 (arXiv:2409.05034) & ASCMamba. 2D Conv Stem downsampling to [B, 48, 16, 16] + 2 Dual-Path TF-Mamba stages alternating between intra-frame Frequency-BiMamba and inter-frame Temporal-BiMamba + 2D global average pooling (~0.137M).
 - **Initialization & Augmentation Policy**:
   - **100% Train From Scratch**: Zero pretrained weights. All weights initialized randomly using native PyTorch/Qualcomm/Mamba initializations with master seed locked to 42.
   - **Zero Extra Augmentations**: Strictly NO time masking, NO time shift. Only the existing frequency cutout (24 bins) and Gaussian jitter (std=0.02) are applied.
