@@ -327,7 +327,7 @@ def test_smor_soft_routing():
         weight_ce=1.0,
         aux_loss_weight=0.3,
         lambda_balance=0.0,
-        lambda_sparse=0.0,
+        lambda_sparse=0.01,
         use_sparse_moe_routing=True
     )
     loss = criterion(out, targets)
@@ -339,7 +339,7 @@ def test_smor_soft_routing():
             assert not torch.isnan(p.grad).any(), f"Router {idx} param {name} has NaN gradient!"
 
     print(f"[PASSED] Fully Differentiable Soft-Routing (SoftMoE) verified: 100% active gradient flow!")
-    print(f"  SMoR Composite Loss (Pure Task End-to-End, lambda=0): {loss.item():.4f}")
+    print(f"  SMoR Composite Loss (End-to-End, lambda_balance=0.0, lambda_sparse=0.01): {loss.item():.4f}")
 
 
 def test_convnext_droppath_verification():

@@ -27,7 +27,7 @@
     "weight_ce": 1.0,
     "aux_loss_weight": 0.3,
     "lambda_balance": 0.0,
-    "lambda_sparse": 0.0
+    "lambda_sparse": 0.01
   },
   "model": {
     "backbone": "MultimodalSOTANet",

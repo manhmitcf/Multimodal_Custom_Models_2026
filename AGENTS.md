@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: final/main | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.28M Params)
+# Branch: final/main | Multimodal Tournament Network with Sparse Mixture-of-Referees (~4.23M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase.
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-     HIERARCHICAL 2-LEVEL TOURNAMENT WITH SPARSE MIXTURE-OF-REFEREES (~4.28M PARAMS)
+     HIERARCHICAL 2-LEVEL TOURNAMENT WITH SPARSE MIXTURE-OF-REFEREES (~4.23M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -45,13 +45,13 @@ This document defines the invariant architectural constraints, operational guide
                          * B23: Medium vs Strong (Base + Audio Referee + Video Referee + Router B23)
                          * B13: Weak vs Strong (Base + Audio Referee + Video Referee + Router B13)
                       - Sparse Referee Router (SoftMoE Fully Differentiable):
-                          Input: [f_joint || f_video || f_audio || |f_video - f_audio| || f_video * f_audio || u_tie] (dim=1121) -> Linear(1121->32) -> GELU -> Linear(32->2)
+                          Input: [f_video || f_audio || f_video * f_audio || u_tie] (dim=673) -> Linear(673->32) -> GELU -> Linear(32->2)
                           Continuous Routing Weights: [m_A, m_V] = sigmoid(logits) in (0, 1)^2
                       - Dynamic Referee Intervention Formula:
                           u_tie = exp(-|logit_base| / 2.0)
                           logit = logit_base + u_tie * (m_A * gamma_A * logit_audio + m_V * gamma_V * logit_video)
                       - Tournament Borda Voting -> Final Calibrated Probabilities
-                      [~0.404M params | FLOPs: 1.7089 GFLOPs]
+                      [~0.361M params | FLOPs: 1.7088 GFLOPs]
                                         │
                                         ▼
                       [4 Feeding Intensity Predictions]
@@ -62,11 +62,11 @@ This document defines the invariant architectural constraints, operational guide
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
-- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `403,959` (~`0.404M`)
+- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `360,951` (~`0.361M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,277,153` (~`4.277M`)
-- **Remaining Headroom**: `722,847` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `1.7089 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+- **Total Trainable Parameters**: `4,234,145` (~`4.234M`)
+- **Remaining Headroom**: `765,855` parameters below the 5.0M budget limit.
+- **Inference Complexity**: `1.7088 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
 
@@ -110,8 +110,8 @@ This document defines the invariant architectural constraints, operational guide
     - B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23).
     - B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13).
   - **Sparse Referee Router (SoftMoE Fully Differentiable)**:
-    $$x_{\text{route}} = [f_{\text{joint}} \parallel f_V \parallel f_A \parallel |f_V - f_A| \parallel f_V \odot f_A \parallel u_{\text{tie}}] \in \mathbb{R}^{1121}$$
-    $$[m_A, m_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{1121 \to 32}(x_{\text{route}})))) \in (0, 1)^2$$
+    $$x_{\text{route}} = [f_V \parallel f_A \parallel f_V \odot f_A \parallel u_{\text{tie}}] \in \mathbb{R}^{673}$$
+    $$[m_A, m_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{673 \to 32}(x_{\text{route}})))) \in (0, 1)^2$$
     Eliminates gradient mismatch and hard threshold discretization, enabling continuous confidence modulation in $(0, 1)$.
   - **Dynamic Referee Intervention Formulation**:
     $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}| / 2.0)$$
@@ -132,7 +132,7 @@ Configurations are defined in `config/train_config.json` and validated by `confi
 - **Gradient Clipping**: max_norm = 5.0.
 - **Loss Function (`PairwiseTournamentLoss`)**:
   $$\mathcal{L}_{\text{total}} = 0.5 \mathcal{L}_{\text{act}} + 0.5 \mathcal{L}_{\text{pairwise}} + 1.0 \mathcal{L}_{\text{CE}} + 0.3 \mathcal{L}_{\text{aux}} + \lambda_{\text{balance}} \mathcal{L}_{\text{balance}} + \lambda_{\text{sparse}} \mathcal{L}_{\text{sparse}}$$
-  - **Standard Setting for Fair Comparison**: $\lambda_{\text{balance}} = 0.0$ and $\lambda_{\text{sparse}} = 0.0$ (allows the router to autonomously select referees driven 100% by pure task classification loss without artificial 50/50 balance penalties, maintaining exact objective parity with single-referee and dual-referee ablation branches).
+  - **Active Regularization**: $\lambda_{\text{balance}} = 0.0$ and $\lambda_{\text{sparse}} = 0.01$ (MoE parsimonious sparsity penalty encourages the router to selectively activate referees and suppress noisy modality interference without artificial 50/50 balance bias).
   - Optional MoE Regularizers: $\mathcal{L}_{\text{balance}} = 2 \cdot (P_A^2 + P_V^2)$ (SoftMoE load balancing) and $\mathcal{L}_{\text{sparse}} = P_A + P_V$ (parsimonious sparsity).
 - **DataLoader Workers**: Fixed strictly to `8`.
 - **Evaluation Monitor**: 3 configurable modes supported in `train_config.json`:
@@ -179,8 +179,8 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,277,153).
-- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7089 GFLOPs).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,234,145).
+- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7088 GFLOPs).
 - [x] **Gradient Propagation**: 100% of trainable parameters (170/170 tensors) receive active gradients.
 - [x] **SMoR Dynamic Routing**: Fully differentiable continuous routing $m_A, m_V \in (0, 1)$ verified with 100% active gradient flow.
 - [x] **Configurable Tie-Breakers**: Full support for toggling B12, B23, B13 Audio and Video Referees via `train_config.json`.
