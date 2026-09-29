@@ -477,9 +477,149 @@ class AudioMLPBackbone(nn.Module):
 
 
 # =========================================================================
-# 5. Pure PyTorch Selective Scan Core (S6) & Bidirectional Mamba (AuM / ViM)
-# Authentic Implementation based on Gu & Dao (2023) and KAIST AuM (2024)
+# 5. Fast Parallel Selective Scan Core (S6) & Bidirectional Mamba (AuM / ViM)
+# Hardware-Accelerated Blelloch Parallel Scan O(log L) based on Gu & Dao (2023) and KAIST AuM (2024)
 # =========================================================================
+
+def _npo2(length: int) -> int:
+    """Returns next power of 2 above length."""
+    return 2 ** math.ceil(math.log2(max(length, 1)))
+
+
+def _pad_npo2(X: torch.Tensor) -> torch.Tensor:
+    """Pads input length dimension (dim 1) to the next power of 2."""
+    len_npo2 = _npo2(X.size(1))
+    pad_tuple = (0, 0, 0, 0, 0, len_npo2 - X.size(1))
+    return F.pad(X, pad_tuple, "constant", 0)
+
+
+class PScan(torch.autograd.Function):
+    """
+    Blelloch Parallel Associative Scan in PyTorch.
+    Computes linear recurrence h_t = A_t * h_{t-1} + X_t in 2 * log2(L) parallel steps
+    instead of L sequential Python loop iterations.
+    Equipped with analytical closed-form backward pass (pscan_rev) to avoid building
+    unrolled graph nodes in Autograd.
+    """
+    @staticmethod
+    def pscan(A: torch.Tensor, X: torch.Tensor) -> None:
+        B, D, L, _ = A.size()
+        num_steps = int(math.log2(L))
+
+        Aa = A
+        Xa = X
+        for _ in range(num_steps - 2):
+            T = Xa.size(2)
+            Aa = Aa.view(B, D, T // 2, 2, -1)
+            Xa = Xa.view(B, D, T // 2, 2, -1)
+            Xa[:, :, :, 1].add_(Aa[:, :, :, 1].mul(Xa[:, :, :, 0]))
+            Aa[:, :, :, 1].mul_(Aa[:, :, :, 0])
+            Aa = Aa[:, :, :, 1]
+            Xa = Xa[:, :, :, 1]
+
+        if Xa.size(2) == 4:
+            Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 0]))
+            Aa[:, :, 1].mul_(Aa[:, :, 0])
+            Xa[:, :, 3].add_(Aa[:, :, 3].mul(Xa[:, :, 2] + Aa[:, :, 2].mul(Xa[:, :, 1])))
+        elif Xa.size(2) == 2:
+            Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 0]))
+            return
+        else:
+            return
+
+        Aa = A[:, :, 2**(num_steps - 2) - 1:L:2**(num_steps - 2)]
+        Xa = X[:, :, 2**(num_steps - 2) - 1:L:2**(num_steps - 2)]
+        Xa[:, :, 2].add_(Aa[:, :, 2].mul(Xa[:, :, 1]))
+        Aa[:, :, 2].mul_(Aa[:, :, 1])
+
+        for k in range(num_steps - 3, -1, -1):
+            Aa = A[:, :, 2**k - 1:L:2**k]
+            Xa = X[:, :, 2**k - 1:L:2**k]
+            T = Xa.size(2)
+            Aa = Aa.view(B, D, T // 2, 2, -1)
+            Xa = Xa.view(B, D, T // 2, 2, -1)
+            Xa[:, :, 1:, 0].add_(Aa[:, :, 1:, 0].mul(Xa[:, :, :-1, 1]))
+            Aa[:, :, 1:, 0].mul_(Aa[:, :, :-1, 1])
+
+    @staticmethod
+    def pscan_rev(A: torch.Tensor, X: torch.Tensor) -> None:
+        B, D, L, _ = A.size()
+        num_steps = int(math.log2(L))
+
+        Aa = A
+        Xa = X
+        for _ in range(num_steps - 2):
+            T = Xa.size(2)
+            Aa = Aa.view(B, D, T // 2, 2, -1)
+            Xa = Xa.view(B, D, T // 2, 2, -1)
+            Xa[:, :, :, 0].add_(Aa[:, :, :, 0].mul(Xa[:, :, :, 1]))
+            Aa[:, :, :, 0].mul_(Aa[:, :, :, 1])
+            Aa = Aa[:, :, :, 0]
+            Xa = Xa[:, :, :, 0]
+
+        if Xa.size(2) == 4:
+            Xa[:, :, 2].add_(Aa[:, :, 2].mul(Xa[:, :, 3]))
+            Aa[:, :, 2].mul_(Aa[:, :, 3])
+            Xa[:, :, 0].add_(Aa[:, :, 0].mul(Xa[:, :, 1].add(Aa[:, :, 1].mul(Xa[:, :, 2]))))
+        elif Xa.size(2) == 2:
+            Xa[:, :, 0].add_(Aa[:, :, 0].mul(Xa[:, :, 1]))
+            return
+        else:
+            return
+
+        Aa = A[:, :, 0:L:2**(num_steps - 2)]
+        Xa = X[:, :, 0:L:2**(num_steps - 2)]
+        Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 2]))
+        Aa[:, :, 1].mul_(Aa[:, :, 2])
+
+        for k in range(num_steps - 3, -1, -1):
+            Aa = A[:, :, 0:L:2**k]
+            Xa = X[:, :, 0:L:2**k]
+            T = Xa.size(2)
+            Aa = Aa.view(B, D, T // 2, 2, -1)
+            Xa = Xa.view(B, D, T // 2, 2, -1)
+            Xa[:, :, :-1, 1].add_(Aa[:, :, :-1, 1].mul(Xa[:, :, 1:, 0]))
+            Aa[:, :, :-1, 1].mul_(Aa[:, :, 1:, 0])
+
+    @staticmethod
+    def forward(ctx, A_in: torch.Tensor, X_in: torch.Tensor) -> torch.Tensor:
+        L = X_in.size(1)
+        if L == _npo2(L):
+            A = A_in.clone()
+            X = X_in.clone()
+        else:
+            A = _pad_npo2(A_in)
+            X = _pad_npo2(X_in)
+
+        A = A.transpose(2, 1)  # (B, D, npo2(L), N)
+        X = X.transpose(2, 1)  # (B, D, npo2(L), N)
+
+        PScan.pscan(A, X)
+
+        ctx.save_for_backward(A_in, X)
+        return X.transpose(2, 1)[:, :L]
+
+    @staticmethod
+    def backward(ctx, grad_output_in: torch.Tensor):
+        A_in, X = ctx.saved_tensors
+        L = grad_output_in.size(1)
+
+        if L == _npo2(L):
+            grad_output = grad_output_in.clone()
+        else:
+            grad_output = _pad_npo2(grad_output_in)
+            A_in = _pad_npo2(A_in)
+
+        grad_output = grad_output.transpose(2, 1)
+        A_in = A_in.transpose(2, 1)
+        A = F.pad(A_in[:, :, 1:], (0, 0, 0, 1))
+
+        PScan.pscan_rev(A, grad_output)
+
+        Q = torch.zeros_like(X)
+        Q[:, :, 1:].add_(X[:, :, :-1] * grad_output[:, :, 1:])
+        return Q.transpose(2, 1)[:, :L], grad_output.transpose(2, 1)[:, :L]
+
 
 def selective_scan_pure_pytorch(
     u: torch.Tensor,
@@ -490,13 +630,9 @@ def selective_scan_pure_pytorch(
     D: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
-    Pure PyTorch vectorized implementation of Selective State Space Model (S6).
-    Discretization:
-        deltaA_t = exp(delta_t * A)         [B, D, N]
-        deltaB_t = delta_t * B_t           [B, D, N]
-    Recurrent State Scan:
-        h_t = deltaA_t * h_{t-1} + deltaB_t * u_t
-        y_t = sum_n (h_t * C_t) + D * u_t
+    Selective State Space Model (S6) core recurrence.
+    Uses Blelloch Parallel Scan (PScan) for O(log L) parallel steps when L >= 4,
+    and falls back to sequential scan for ultra-short sequences (L < 4).
     Computations are explicitly executed in float32 for numerical stability.
     """
     orig_dtype = u.dtype
@@ -512,19 +648,22 @@ def selective_scan_pure_pytorch(
     # Pre-compute continuous-to-discrete transition
     # delta: [B, L, D, 1], A: [1, 1, D, N] -> deltaA: [B, L, D, N]
     deltaA = torch.exp(delta.unsqueeze(-1) * A.view(1, 1, d_in, d_state))
-    # delta: [B, L, D, 1], B: [B, L, 1, N] -> deltaB: [B, L, D, N]
+    # delta: [B, L, D, 1], B: [B, L, 1, N], u: [B, L, D, 1] -> deltaB_u: [B, L, D, N]
     deltaB = delta.unsqueeze(-1) * B.unsqueeze(2)
     deltaB_u = deltaB * u.unsqueeze(-1)
 
-    h = torch.zeros(batch_size, d_in, d_state, device=u.device, dtype=torch.float32)
-    ys = []
-
-    for t in range(seq_len):
-        h = deltaA[:, t] * h + deltaB_u[:, t]
-        y_t = torch.sum(h * C[:, t].unsqueeze(1), dim=-1)
-        ys.append(y_t)
-
-    y = torch.stack(ys, dim=1)
+    if seq_len < 4:
+        h = torch.zeros(batch_size, d_in, d_state, device=u.device, dtype=torch.float32)
+        ys = []
+        for t in range(seq_len):
+            h = deltaA[:, t] * h + deltaB_u[:, t]
+            y_t = torch.sum(h * C[:, t].unsqueeze(1), dim=-1)
+            ys.append(y_t)
+        y = torch.stack(ys, dim=1)
+    else:
+        # High-speed O(log L) Blelloch Parallel Scan
+        h = PScan.apply(deltaA, deltaB_u)  # [B, L, D, N]
+        y = torch.sum(h * C.unsqueeze(2), dim=-1)  # [B, L, D]
 
     if D is not None:
         y = y + u * D.view(1, 1, d_in).float()
