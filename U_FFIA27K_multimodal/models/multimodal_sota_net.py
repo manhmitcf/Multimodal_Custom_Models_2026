@@ -5,32 +5,36 @@ from typing import Dict, Optional, Any
 from features.motion_kinematics import FishMotionKinematics7Ch
 from features.audio_frontend import AudioFrontend
 from .video_backbone import ConvNeXtNanoVideoBackbone
-from .audio_backbone import AudioMLPBackbone
+from .audio_backbone import build_audio_backbone
 from .multimodal_fusion import MultimodalTournamentFusion
 
 
 class MultimodalSOTANet(nn.Module):
     """
-    Hierarchical Multimodal Tournament Network with 3 Video Kinematics Tie-Breakers (~4.09M Total Parameters).
+    Hierarchical Multimodal Tournament Network (~3.17M - ~4.09M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
-    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with 3 Configurable Video Kinematics
-    Tie-Breakers (B12, B23, B13):
+    (None, Strong, Medium, Weak) via 2-level tournament hierarchy with configurable
+    Audio Backbones (MLP, BC-ResNet-8, CRNN-BiGRU, Conformer) and Pairwise Video Referees (B12, B23, B13).
 
       1. Visual-Kinematic Stream (~2.701M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
          for T=2 frames.
-      2. Acoustic Time-Frequency Stream (~1.166M params):
+      2. Acoustic Time-Frequency Stream (~0.38M - ~1.17M params):
          High-Resolution TKEO-STFT Audio Frontend (256 kHz, 2049 linear bins)
-         + 2-layer MLP Projection (2049 -> 224).
-      3. Pairwise Tournament Fusion with 3 Video Kinematics Tie-Breakers (~0.219M params):
+         + Configurable Audio Backbone:
+           * 'mlp': High-Resolution STFT MLP (~1.17M params)
+           * 'bcresnet8': Qualcomm BC-ResNet-8 with Sub-Spectral Norm (~0.38M params)
+           * 'bigru': CRNN-BiGRU Sequence Baseline (~0.65M params)
+           * 'conformer': Conformer Attention-CNN (~0.79M params)
+      3. Pairwise Tournament Fusion (~0.219M params):
          - Dynamic Cross-Modal Reliability Gating: g = sigma(W[f_V || f_A]).
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding).
          - Level 2: 3 Specialized Pairwise Subspace Expert Heads on f_joint
-             with 3 Configurable Video Kinematics Referees on f_video (B12, B23, B13).
+             with optional Video Kinematics Referees on f_video (B12, B23, B13).
          - Dynamic Tie-Breaker Intervention: logit = logit_base + gamma * u_tie * logit_video.
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
-    Total Parameters: 4,092,629 (~4.093M) with all 3 tie-breakers enabled (Strictly < 5.0M parameter constraint).
+    Total Parameters: Strictly < 5.0M parameter constraint across all configurations.
     """
     model_name: str = "MultimodalSOTANet"
 
@@ -44,6 +48,7 @@ class MultimodalSOTANet(nn.Module):
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
+        audio_backbone: str = "mlp",
         **kwargs
     ) -> None:
         super().__init__()
@@ -54,26 +59,28 @@ class MultimodalSOTANet(nn.Module):
         self.in_chans = in_chans
         self.tie_breakers = tie_breakers
         self.video_drop_path = video_drop_path
+        self.audio_backbone_name = str(audio_backbone).lower().strip()
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
         self.motion_kinematics = FishMotionKinematics7Ch(image_size=image_size)
 
-        # 2. Backbones (~3.87M)
+        # 2. Backbones (~3.08M - ~3.87M)
         self.video_backbone = ConvNeXtNanoVideoBackbone(
             embed_dim=embed_dim,
             in_chans=in_chans,
             num_frames=num_frames,
             drop_path_rate=video_drop_path,
         )
-        self.audio_backbone = AudioMLPBackbone(
+        self.audio_backbone = build_audio_backbone(
+            name=self.audio_backbone_name,
             in_features=2049,
-            hidden_dim=512,
             embed_dim=embed_dim,
             dropout=0.1,
+            **kwargs
         )
 
-        # 3. Multimodal Tournament Fusion with 3 Video Kinematics Tie-Breakers (~0.219M)
+        # 3. Multimodal Tournament Fusion (~0.219M)
         self.fusion = MultimodalTournamentFusion(
             dim=embed_dim,
             dropout=0.1,
@@ -106,8 +113,9 @@ class MultimodalSOTANet(nn.Module):
         else:
             frames_7ch = video_input
 
+        requires_2d = getattr(self.audio_backbone, "requires_2d", False)
         if audio_input.ndim >= 1 and audio_input.size(-1) > 2049:
-            stft_feat = self.audio_frontend(audio_input)
+            stft_feat = self.audio_frontend(audio_input, return_2d=requires_2d)
         else:
             stft_feat = audio_input
 

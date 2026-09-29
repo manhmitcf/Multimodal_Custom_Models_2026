@@ -85,6 +85,8 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
     else:
         b12_str = b23_str = b13_str = "All True"
 
+    audio_backbone = getattr(config.model, "audio_backbone", "mlp")
+    logger.info(f"Audio Backbone architecture: [{audio_backbone}]")
     logger.info(
         f"Video Tie-Breakers configuration: "
         f"B12 (Weak vs Med)=[{b12_str}], "
@@ -101,6 +103,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         in_chans=in_chans,
         tie_breakers=tb_cfg,
         video_drop_path=getattr(config.model, "video_drop_path", 0.1),
+        audio_backbone=audio_backbone,
     )
 
 
@@ -126,15 +129,25 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     try:
         # 1. Parameter audit
         stats = count_parameters(model)
-        logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
-        logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
-        logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+        audio_name = getattr(model, "audio_backbone_name", getattr(config.model, "audio_backbone", "mlp"))
+        audio_label = {
+            "mlp": "TKEO-STFT-MLP 256k",
+            "bcresnet8": "Qualcomm BC-ResNet-8",
+            "bigru": "CRNN-BiGRU Sequence",
+            "conformer": "Conformer Attention-CNN"
+        }.get(audio_name, audio_name)
+        v_title = "Video Backbone (ConvNeXt-Nano 7-ch)"
+        a_title = f"Audio Backbone ({audio_label})"
+        f_title = "Tournament Fusion (Cross-Boundary)"
+        logger.info(f"  - {v_title:<42}: {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+        logger.info(f"  - {a_title:<42}: {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+        logger.info(f"  - {f_title:<42}: {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+        logger.info(f"  * {'Total Architecture Parameters':<42}: {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
+        logger.info(f"  * {'Total Trainable Parameters':<42}: {stats['total']:,} ({stats['total_million']:.3f} M)")
 
         try:
             gflops = measure_flops(model, device=device.type, num_frames=getattr(config, "num_frames", 2))
-            logger.info(f"  * Inference Complexity (FLOPs):        {gflops:.4f} GFLOPs")
+            logger.info(f"  * {'Inference Complexity (FLOPs)':<42}: {gflops:.4f} GFLOPs")
         except Exception as flop_err:
             logger.warning(f"  * FLOPs profiling skipped: {flop_err}")
 

@@ -3,7 +3,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional, Literal, Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 
 # Ensure project root is in sys.path
 project_root = str(Path(__file__).resolve().parent.parent)
@@ -128,10 +128,24 @@ class ModelConfig(BaseModel):
         le=0.5,
         description="Stochastic Depth / DropPath rate for ConvNeXt-Nano video backbone."
     )
+    audio_backbone: str = Field(
+        default="mlp",
+        description="Audio backbone architecture: 'mlp', 'bcresnet8', 'bigru', 'conformer'."
+    )
     tie_breakers: VideoTieBreakersConfig = Field(
         default_factory=VideoTieBreakersConfig,
         description="Pairwise Video Kinematics Referee configurations for B12, B23, B13."
     )
+
+    @field_validator("audio_backbone")
+    @classmethod
+    def validate_audio_backbone(cls, v: str) -> str:
+        valid_backbones = {"mlp", "bcresnet8", "bigru", "conformer"}
+        norm = str(v).lower().strip()
+        if norm not in valid_backbones:
+            raise ValueError(f"Invalid audio_backbone: '{v}'. Must be one of {sorted(valid_backbones)}.")
+        return norm
+
 
 
 class SplitterConfig(BaseModel):

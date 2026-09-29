@@ -19,10 +19,12 @@ logger = logging.getLogger(__name__)
 
 class Spectral1DAugmentation(nn.Module):
     """
-    1D Spectral Augmentation Module for High-Resolution TKEO-STFT vectors [B, 2049].
-    Encapsulates dedicated 1D augmentation techniques for spectral distributions:
-      1. 1D Frequency Cutout: Masks a narrow contiguous frequency band (cutout_width bins)
+    1D Spectral Augmentation Module for High-Resolution TKEO-STFT representations.
+    Encapsulates dedicated augmentation techniques for spectral distributions:
+      1. Frequency Cutout: Masks a narrow contiguous frequency band (cutout_width bins)
          with the sample's minimum energy (noise floor) instead of 0.0 to prevent energy explosion.
+         Operates identically on 1D vectors [B, 2049] or 2D spectrograms [B, T, 2049]
+         by broadcasting the cutout mask across the temporal dimension.
       2. Gaussian Spectral Jitter: Simulates hydrophone sensor thermal and quantization noise.
     """
     def __init__(
@@ -36,31 +38,46 @@ class Spectral1DAugmentation(nn.Module):
         self.cutout_prob = float(cutout_prob)
         self.noise_std = float(noise_std)
 
-    def forward(self, spec_vector: torch.Tensor) -> torch.Tensor:
+    def forward(self, spec_tensor: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            spec_vector: STFT spectral energy vector [B, 2049] or [2049].
+            spec_tensor: STFT spectral energy tensor [B, 2049], [2049], or [B, T, 2049].
         Returns:
-            Augmented spectral vector with the same shape.
+            Augmented spectral tensor with the exact same shape.
         """
         if not self.training:
-            return spec_vector
+            return spec_tensor
 
-        is_1d = (spec_vector.ndim == 1)
-        out = spec_vector.unsqueeze(0).clone() if is_1d else spec_vector.clone()
-        B, F = out.shape
+        is_1d = (spec_tensor.ndim == 1)
+        out = spec_tensor.unsqueeze(0).clone() if is_1d else spec_tensor.clone()
 
-        # 1. 1D Frequency Cutout (Vectorized 2D mask on GPU, zero Python loop, zero device sync)
-        if self.cutout_width > 0 and self.cutout_prob > 0.0 and F > self.cutout_width:
-            mask_decisions = (torch.rand(B, 1, device=out.device) < self.cutout_prob)
-            if mask_decisions.any():
-                start_indices = torch.randint(
-                    0, F - self.cutout_width, (B, 1), device=out.device
-                )
-                freq_indices = torch.arange(F, device=out.device).unsqueeze(0)  # [1, F]
-                cutout_mask = (freq_indices >= start_indices) & (freq_indices < start_indices + self.cutout_width) & mask_decisions
-                min_vals = out.min(dim=-1, keepdim=True)[0]
-                out = torch.where(cutout_mask, min_vals, out)
+        # 1. Frequency Cutout (Vectorized mask on GPU, zero Python loop, zero device sync)
+        if self.cutout_width > 0 and self.cutout_prob > 0.0:
+            if out.ndim == 2:
+                B, F = out.shape
+                if F > self.cutout_width:
+                    mask_decisions = (torch.rand(B, 1, device=out.device) < self.cutout_prob)
+                    if mask_decisions.any():
+                        start_indices = torch.randint(
+                            0, F - self.cutout_width, (B, 1), device=out.device
+                        )
+                        freq_indices = torch.arange(F, device=out.device).unsqueeze(0)  # [1, F]
+                        cutout_mask = (freq_indices >= start_indices) & (freq_indices < start_indices + self.cutout_width) & mask_decisions
+                        min_vals = out.min(dim=-1, keepdim=True)[0]
+                        out = torch.where(cutout_mask, min_vals, out)
+
+            elif out.ndim == 3:
+                B, _, F = out.shape
+                if F > self.cutout_width:
+                    mask_decisions = (torch.rand(B, 1, 1, device=out.device) < self.cutout_prob)
+                    if mask_decisions.any():
+                        start_indices = torch.randint(
+                            0, F - self.cutout_width, (B, 1, 1), device=out.device
+                        )
+                        freq_indices = torch.arange(F, device=out.device).view(1, 1, F)  # [1, 1, F]
+                        cutout_mask = (freq_indices >= start_indices) & (freq_indices < start_indices + self.cutout_width) & mask_decisions
+                        min_vals = out.amin(dim=(-2, -1), keepdim=True)
+                        out = torch.where(cutout_mask, min_vals, out)
 
         # 2. Gaussian Spectral Jitter
         if self.noise_std > 0.0:
@@ -128,13 +145,16 @@ class AudioFrontend(nn.Module):
             logger.info(f"    * Gaussian Jitter:  Noise Std={self.noise_std}")
         logger.info("==================================================")
 
-    def forward(self, input_tensor: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_tensor: torch.Tensor, return_2d: bool = False) -> torch.Tensor:
         """
         Args:
             input_tensor: Raw 1D audio waveform [Batch, Num_Samples].
+            return_2d: If True, returns normalized 2D STFT spectrogram [Batch, Time_Steps, 2049]
+                       for sequence and convolutional backbones (BC-ResNet, BiGRU, Conformer).
+                       If False (default), returns temporally pooled vector [Batch, 2049] for MLP.
 
         Returns:
-            torch.Tensor: Normalized STFT spectral vector [Batch, 2049].
+            torch.Tensor: Normalized STFT spectral tensor [Batch, 2049] or [Batch, Time_Steps, 2049].
         """
         if input_tensor.ndim == 1:
             input_tensor = input_tensor.unsqueeze(0)
@@ -182,17 +202,19 @@ class AudioFrontend(nn.Module):
         frames_win = frames * self.window
         complex_spec = torch.fft.rfft(frames_win, n=self.n_fft, dim=-1)
 
-        # 5. Log Magnitude: log(|X| + 1e-8)
+        # 5. Log Magnitude: log(|X| + 1e-8) -> [Batch, Time_Steps, 2049]
         log_mag = torch.log(torch.abs(complex_spec) + 1e-8)
 
-        # 6. Mean over time axis -> [Batch, 2049]
-        spec_vector = log_mag.mean(dim=1)
-
-        # 7. 1D Spectral Augmentation for MLP (Cutout & Jitter) if enabled
-        if self.spectral_augmenter is not None:
-            spec_vector = self.spectral_augmenter(spec_vector)
-
-        # 8. Layer Normalization
-        out = self.norm(spec_vector)
-
-        return out
+        if return_2d:
+            # 2D Spectrogram Path for Sequence/CNN Backbones
+            if self.spectral_augmenter is not None:
+                log_mag = self.spectral_augmenter(log_mag)
+            out = self.norm(log_mag)
+            return out
+        else:
+            # 1D Vector Path for MLP Backbone (Temporal Mean Pooling -> [Batch, 2049])
+            spec_vector = log_mag.mean(dim=1)
+            if self.spectral_augmenter is not None:
+                spec_vector = self.spectral_augmenter(spec_vector)
+            out = self.norm(spec_vector)
+            return out
