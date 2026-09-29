@@ -132,6 +132,12 @@ class ModelConfig(BaseModel):
         default="mlp",
         description="Audio backbone architecture: 'mlp', 'bcresnet8', 'bigru', 'conformer', 'bimamba', 'tfmamba'."
     )
+    audio_dropout: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=0.9,
+        description="Dropout rate for audio backbone."
+    )
     tie_breakers: VideoTieBreakersConfig = Field(
         default_factory=VideoTieBreakersConfig,
         description="Pairwise Video Kinematics Referee configurations for B12, B23, B13."

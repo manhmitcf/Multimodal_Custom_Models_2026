@@ -49,6 +49,7 @@ class MultimodalSOTANet(nn.Module):
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
         audio_backbone: str = "mlp",
+        audio_dropout: float = 0.2,
         **kwargs
     ) -> None:
         super().__init__()
@@ -60,6 +61,7 @@ class MultimodalSOTANet(nn.Module):
         self.tie_breakers = tie_breakers
         self.video_drop_path = video_drop_path
         self.audio_backbone_name = str(audio_backbone).lower().strip()
+        self.audio_dropout = audio_dropout
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
@@ -76,7 +78,7 @@ class MultimodalSOTANet(nn.Module):
             name=self.audio_backbone_name,
             in_features=2049,
             embed_dim=embed_dim,
-            dropout=0.1,
+            dropout=self.audio_dropout,
             **kwargs
         )
 

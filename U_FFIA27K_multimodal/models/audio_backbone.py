@@ -933,7 +933,7 @@ class DualPathTFMambaBlock(nn.Module):
         dt_rank: int = 4,
         d_conv: int = 4,
         expand: int = 2,
-        dropout: float = 0.1,
+        dropout: float = 0.2,
     ) -> None:
         super().__init__()
         self.channels = channels
@@ -1012,7 +1012,7 @@ class TFMambaAudioBackbone(nn.Module):
         dt_rank: int = 4,
         d_conv: int = 4,
         expand: int = 2,
-        dropout: float = 0.1,
+        dropout: float = 0.2,
         **kwargs
     ) -> None:
         super().__init__()

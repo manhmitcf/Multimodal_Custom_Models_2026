@@ -86,7 +86,8 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         b12_str = b23_str = b13_str = "All True"
 
     audio_backbone = getattr(config.model, "audio_backbone", "mlp")
-    logger.info(f"Audio Backbone architecture: [{audio_backbone}]")
+    audio_dropout = getattr(config.model, "audio_dropout", 0.2)
+    logger.info(f"Audio Backbone architecture: [{audio_backbone}] (Dropout: {audio_dropout})")
     logger.info(
         f"Video Tie-Breakers configuration: "
         f"B12 (Weak vs Med)=[{b12_str}], "
@@ -104,6 +105,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         tie_breakers=tb_cfg,
         video_drop_path=getattr(config.model, "video_drop_path", 0.1),
         audio_backbone=audio_backbone,
+        audio_dropout=getattr(config.model, "audio_dropout", 0.2),
     )
 
 
