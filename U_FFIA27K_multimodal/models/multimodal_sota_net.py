@@ -93,6 +93,35 @@ class MultimodalSOTANet(nn.Module):
         self.aux_head_video = nn.Linear(embed_dim, classes_num)
         self.aux_head_audio = nn.Linear(embed_dim, classes_num)
 
+    def get_parameter_groups(self, weight_decay: float = 0.05) -> list:
+        """
+        Separates model parameters into decay and no-decay groups according to standard Mamba/Transformer practice:
+          - No-decay (weight_decay=0.0): parameters marked with `_no_weight_decay`, biases,
+            1D normalization weights (LayerNorm, BatchNorm, GroupNorm), A_log, dt_proj.bias, D.
+          - Decay (weight_decay=weight_decay): all other 2D+ weight matrices.
+        """
+        decay_params = []
+        no_decay_params = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if (
+                getattr(param, "_no_weight_decay", False)
+                or param.ndim <= 1
+                or name.endswith(".bias")
+                or "norm" in name.lower()
+                or "bn" in name.lower()
+                or "ln" in name.lower()
+                or "gn" in name.lower()
+            ):
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+        return [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ]
+
     def forward(
         self,
         video_input: torch.Tensor,

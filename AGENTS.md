@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: exp/ablation_audio_models_no_tie_breakers | Audio Backbones Ablation Study (~3.23M - ~4.02M Params)
+# Branch: exp/ablation_audio_models_no_tie_breakers | Audio Backbones Ablation Study (~3.03M - ~4.02M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `exp/ablation_audio_models_no_tie_breakers`.
 
@@ -9,7 +9,7 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-       MULTIMODAL TOURNAMENT NETWORK: AUDIO BACKBONES ABLATION STUDY (~3.23M - ~4.02M)
+       MULTIMODAL TOURNAMENT NETWORK: AUDIO BACKBONES ABLATION STUDY (~3.03M - ~4.02M)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
@@ -29,6 +29,8 @@ This document defines the invariant architectural constraints, operational guide
    - 4 ConvNeXt Stages: [48, 96, 192, 384]             - 'bcresnet8': Qualcomm BC-ResNet-8 [~0.376M]
    - Stochastic Depth (DropPath [0.0 -> 0.1])          - 'bigru': CRNN-BiGRU 2-layer Sequence [~0.653M]
    Shape: f_video (B, 224) [~2.701M params]            - 'conformer': Conformer Attention-CNN [~0.794M]
+             │                                         - 'bimamba': Bidirectional Audio Mamba [~0.693M]
+             │                                         - 'tfmamba': Dual-Path TF-Mamba [~0.184M]
              │                                         Shape: f_audio (B, 224)
              │                                                    │
              └─────────────────────────┬──────────────────────────┘
@@ -48,7 +50,7 @@ This document defines the invariant architectural constraints, operational guide
                      - Video Tie-Breakers: All disabled for fair audio ablation
                        (enable_b12: false, enable_b23: false, enable_b13: false)
                      - Tournament Borda Voting -> Final Calibrated Probabilities
-                     [~0.143M params | FLOPs: ~1.71 - ~2.15 GFLOPs]
+                     [~0.143M params | FLOPs: ~1.71 - ~3.20 GFLOPs]
                                        │
                                        ▼
                      [4 Feeding Intensity Predictions]
@@ -66,7 +68,9 @@ This document defines the invariant architectural constraints, operational guide
   * `bcresnet8`: `375,552` (~`0.376M`) | **Total Model**: `3,225,583` (~`3.226M`)
   * `bigru`: `652,864` (~`0.653M`) | **Total Model**: `3,502,895` (~`3.503M`)
   * `conformer`: `794,016` (~`0.794M`) | **Total Model**: `3,644,047` (~`3.644M`)
-- **Remaining Headroom**: `983,985` - `1,774,417` parameters below the 5.0M budget limit across all configurations.
+  * `bimamba`: `693,152` (~`0.693M`) | **Total Model**: `3,543,183` (~`3.543M`)
+  * `tfmamba`: `184,288` (~`0.184M`) | **Total Model**: `3,034,319` (~`3.034M`)
+- **Remaining Headroom**: `983,985` - `1,965,681` parameters below the 5.0M budget limit across all configurations.
 
 ---
 
@@ -93,15 +97,18 @@ This document defines the invariant architectural constraints, operational guide
   - Hann-windowed cuFFT Real FFT: n_fft = 4096, hop_size = 2048 -> 2049 linear frequency bins.
   - Log Magnitude: log(|X| + 1e-8).
   - Spectral Augmentation (`Spectral1DAugmentation`): Frequency Cutout (24 bins, p=0.5) and Gaussian Spectral Jitter (std=0.02) during training; identity pass-through during evaluation. Broadcasted identically across temporal dimension for 2D inputs.
-  - Dynamic Output: 1D vector `[B, 2049]` for MLP (`return_2d=False`) or 2D spectrogram `[B, T=251, 2049]` for sequence/CNN models (`return_2d=True`).
+  - Dynamic Output: 1D vector `[B, 2049]` for MLP (`return_2d=False`) or 2D spectrogram `[B, T=251, 2049]` for sequence/CNN/SSM models (`return_2d=True`).
 - **Ablation Backbones**:
   1. **STFT-MLP (`AudioMLPBackbone`)**: 2-layer MLP projection (2049 -> 512 -> 224) with GELU, LayerNorm, and Dropout (~1.166M).
   2. **Qualcomm BC-ResNet-8 (`BCResNet8AudioBackbone`)**: Qualcomm AI Research Interspeech 2021 official architecture. Uses `nn.AdaptiveAvgPool2d((40, None))` zero-parameter adapter to feed Qualcomm's native 40 frequency bins into SubSpectralNorm and Broadcasted Residual blocks (~0.376M).
   3. **CRNN-BiGRU (`CRNNBiGRUAudioBackbone`)**: DCASE Task 4 sequence baseline. Linear projection (2049 -> 128) + 2-layer Bidirectional GRU (hidden_size=112 -> 224 output) + temporal mean pooling (~0.653M).
   4. **Conformer (`ConformerAudioBackbone`)**: Google Interspeech 2020 via `torchaudio.models.Conformer`. Linear projection (2049 -> 128) + 2 Conformer blocks (4 heads, ffn_dim=256, depthwise_conv_kernel=15) + temporal mean pooling + output projection (128 -> 224) (~0.794M).
+  5. **Bidirectional Audio Mamba (`BiMambaAudioBackbone`)**: KAIST AuM (arXiv:2406.03344) & Vision Mamba (ICML 2024). Linear stem (2049 -> 128) + 3 BiMamba layers (d_state=16, dt_rank=8, expand=2) with low-rank delta, HiPPO S4D diagonal initialization (A = -exp(A_log)), inverse softplus delta bias initialization, and independent forward/backward SSM streams + temporal mean pooling (~0.693M).
+  6. **Dual-Path Time-Frequency Mamba (`TFMambaAudioBackbone`)**: Interspeech 2025 (arXiv:2409.05034) & ASCMamba. 2D Conv Stem downsampling to [B, 48, 32, 32] + 2 Dual-Path TF-Mamba stages alternating between intra-frame Frequency-BiMamba and inter-frame Temporal-BiMamba + 2D global average pooling (~0.184M).
 - **Initialization & Augmentation Policy**:
-  - **100% Train From Scratch**: Zero pretrained weights. All weights initialized randomly using native PyTorch/Qualcomm initializations with master seed locked to 42.
+  - **100% Train From Scratch**: Zero pretrained weights. All weights initialized randomly using native PyTorch/Qualcomm/Mamba initializations with master seed locked to 42.
   - **Zero Extra Augmentations**: Strictly NO time masking, NO time shift. Only the existing frequency cutout (24 bins) and Gaussian jitter (std=0.02) are applied.
+  - **Optimizer Parameter Grouping**: Pure PyTorch Selective Scan computes recurrence in FP32; SSM core parameters (A_log, dt_bias, D) are explicitly exempt from weight decay (weight_decay=0.0).
 
 ### 2.3 Tournament Fusion Engine (`MultimodalTournamentFusion`)
 - **Reliability Gating**: alpha = sigma(W_gate[f_V || f_A]).
@@ -123,7 +130,7 @@ Configurations are defined in `config/train_config.json` and validated by `confi
 - **Loss Function (`PairwiseTournamentLoss`)**:
   $$\mathcal{L}_{\text{total}} = 0.5 \mathcal{L}_{\text{act}} + 0.5 \mathcal{L}_{\text{pairwise}} + 1.0 \mathcal{L}_{\text{CE}} + 0.3 \mathcal{L}_{\text{aux}}$$
 - **DataLoader Workers**: Fixed strictly to `8`.
-- **Audio Backbone Selection**: Configurable via `"audio_backbone": "mlp" | "bcresnet8" | "bigru" | "conformer"`.
+- **Audio Backbone Selection**: Configurable via `"audio_backbone": "mlp" | "bcresnet8" | "bigru" | "conformer" | "bimamba" | "tfmamba"`.
 
 ---
 
@@ -154,9 +161,9 @@ python test_audio_backbones_ablation.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 across all 4 audio backbones.
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 across all 6 audio backbones (~3.03M - ~4.02M).
 - [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients (no dead tensors).
-- [x] **Ablation Audio Models**: All 4 backbones (`mlp`, `bcresnet8`, `bigru`, `conformer`) produce identical embedding shape `[B, 224]`.
+- [x] **Ablation Audio Models**: All 6 backbones (`mlp`, `bcresnet8`, `bigru`, `conformer`, `bimamba`, `tfmamba`) produce identical embedding shape `[B, 224]`.
 - [x] **No Tie-Breakers**: All 3 video tie-breakers verified disabled (`enable_b12: false, enable_b23: false, enable_b13: false`).
 - [x] **Zero Extra Augmentations**: Strictly frequency cutout (24 bins) and Gaussian jitter (std=0.02) only.
 - [x] **Zero Pretraining**: 100% trained from scratch with deterministic master seed 42.

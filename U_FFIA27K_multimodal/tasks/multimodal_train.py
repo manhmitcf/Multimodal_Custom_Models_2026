@@ -108,12 +108,18 @@ class MultimodalTrainer:
         self.steps_per_epoch = max(1, len(self.train_loader))
         self.use_onecycle = getattr(self.config, "use_onecycle", True)
 
-        # Optimizer: Authentic AdamW across full model
-        self.optimizer = optimizer if optimizer is not None else optim.AdamW(
-            self.model.parameters(),
-            lr=self.config.learning_rate,
-            weight_decay=self.weight_decay
-        )
+        # Optimizer: Authentic AdamW across full model (with decay/no-decay parameter separation)
+        if optimizer is not None:
+            self.optimizer = optimizer
+        elif hasattr(self.model, "get_parameter_groups"):
+            param_groups = self.model.get_parameter_groups(weight_decay=self.weight_decay)
+            self.optimizer = optim.AdamW(param_groups, lr=self.config.learning_rate)
+        else:
+            self.optimizer = optim.AdamW(
+                self.model.parameters(),
+                lr=self.config.learning_rate,
+                weight_decay=self.weight_decay
+            )
 
         # LR Scheduler: OneCycleLR with cosine annealing
         if self.use_onecycle:

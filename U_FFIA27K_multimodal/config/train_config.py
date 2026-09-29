@@ -130,7 +130,7 @@ class ModelConfig(BaseModel):
     )
     audio_backbone: str = Field(
         default="mlp",
-        description="Audio backbone architecture: 'mlp', 'bcresnet8', 'bigru', 'conformer'."
+        description="Audio backbone architecture: 'mlp', 'bcresnet8', 'bigru', 'conformer', 'bimamba', 'tfmamba'."
     )
     tie_breakers: VideoTieBreakersConfig = Field(
         default_factory=VideoTieBreakersConfig,
@@ -140,7 +140,7 @@ class ModelConfig(BaseModel):
     @field_validator("audio_backbone")
     @classmethod
     def validate_audio_backbone(cls, v: str) -> str:
-        valid_backbones = {"mlp", "bcresnet8", "bigru", "conformer"}
+        valid_backbones = {"mlp", "bcresnet8", "bigru", "conformer", "bimamba", "tfmamba"}
         norm = str(v).lower().strip()
         if norm not in valid_backbones:
             raise ValueError(f"Invalid audio_backbone: '{v}'. Must be one of {sorted(valid_backbones)}.")

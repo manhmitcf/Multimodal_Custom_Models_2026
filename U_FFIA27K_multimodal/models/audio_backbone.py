@@ -1,6 +1,8 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional, Tuple, Dict, Any, List
 
 
 def init_layer(layer: nn.Module) -> None:
@@ -475,7 +477,482 @@ class AudioMLPBackbone(nn.Module):
 
 
 # =========================================================================
-# 5. Audio Backbone Factory
+# 5. Pure PyTorch Selective Scan Core (S6) & Bidirectional Mamba (AuM / ViM)
+# Authentic Implementation based on Gu & Dao (2023) and KAIST AuM (2024)
+# =========================================================================
+
+def selective_scan_pure_pytorch(
+    u: torch.Tensor,
+    delta: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    D: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """
+    Pure PyTorch vectorized implementation of Selective State Space Model (S6).
+    Discretization:
+        deltaA_t = exp(delta_t * A)         [B, D, N]
+        deltaB_t = delta_t * B_t           [B, D, N]
+    Recurrent State Scan:
+        h_t = deltaA_t * h_{t-1} + deltaB_t * u_t
+        y_t = sum_n (h_t * C_t) + D * u_t
+    Computations are explicitly executed in float32 for numerical stability.
+    """
+    orig_dtype = u.dtype
+    u = u.float()
+    delta = delta.float()
+    A = A.float()
+    B = B.float()
+    C = C.float()
+
+    batch_size, seq_len, d_in = u.shape
+    d_state = A.shape[-1]
+
+    # Pre-compute continuous-to-discrete transition
+    # delta: [B, L, D, 1], A: [1, 1, D, N] -> deltaA: [B, L, D, N]
+    deltaA = torch.exp(delta.unsqueeze(-1) * A.view(1, 1, d_in, d_state))
+    # delta: [B, L, D, 1], B: [B, L, 1, N] -> deltaB: [B, L, D, N]
+    deltaB = delta.unsqueeze(-1) * B.unsqueeze(2)
+    deltaB_u = deltaB * u.unsqueeze(-1)
+
+    h = torch.zeros(batch_size, d_in, d_state, device=u.device, dtype=torch.float32)
+    ys = []
+
+    for t in range(seq_len):
+        h = deltaA[:, t] * h + deltaB_u[:, t]
+        y_t = torch.sum(h * C[:, t].unsqueeze(1), dim=-1)
+        ys.append(y_t)
+
+    y = torch.stack(ys, dim=1)
+
+    if D is not None:
+        y = y + u * D.view(1, 1, d_in).float()
+
+    return y.to(dtype=orig_dtype)
+
+
+class BiMambaBlock(nn.Module):
+    """
+    Bidirectional Mamba Block (AuM / ViM).
+    Processes sequence in both forward (t=1..L) and backward (t=L..1) directions.
+    Features:
+      - Low-rank factorization for delta (dt_rank = ceil(d_model / 16))
+      - HiPPO / S4D diagonal initialization for A (A = -exp(A_log))
+      - Inverse softplus bias initialization for dt_proj
+      - Independent forward and backward SSM streams with parameter exemption from weight decay
+      - Multiplicative SiLU gating
+    """
+    def __init__(
+        self,
+        d_model: int,
+        d_state: int = 16,
+        d_conv: int = 4,
+        expand: int = 2,
+        dt_rank: Optional[int] = None,
+        dt_min: float = 0.001,
+        dt_max: float = 0.1,
+        dt_init_floor: float = 1e-4,
+        conv_bias: bool = True,
+        bias: bool = False,
+    ) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.d_state = d_state
+        self.d_conv = d_conv
+        self.expand = expand
+        self.d_inner = int(self.expand * self.d_model)
+        self.dt_rank = math.ceil(self.d_model / 16) if dt_rank is None else dt_rank
+
+        # In-projection to SSM branch (u) and gate branch (z)
+        self.in_proj = nn.Linear(self.d_model, self.d_inner * 2, bias=bias)
+
+        # 1D Causal Depthwise Conv on u
+        self.conv1d = nn.Conv1d(
+            in_channels=self.d_inner,
+            out_channels=self.d_inner,
+            bias=conv_bias,
+            kernel_size=d_conv,
+            groups=self.d_inner,
+            padding=d_conv - 1,
+        )
+
+        # Forward SSM projections
+        self.x_proj_fwd = nn.Linear(self.d_inner, self.dt_rank + self.d_state * 2, bias=False)
+        self.dt_proj_fwd = nn.Linear(self.dt_rank, self.d_inner, bias=True)
+
+        # Backward SSM projections
+        self.x_proj_bwd = nn.Linear(self.d_inner, self.dt_rank + self.d_state * 2, bias=False)
+        self.dt_proj_bwd = nn.Linear(self.dt_rank, self.d_inner, bias=True)
+
+        # S4D / HiPPO A parameter initialization
+        A_fwd = torch.arange(1, self.d_state + 1, dtype=torch.float32).repeat(self.d_inner, 1)
+        self.A_log_fwd = nn.Parameter(torch.log(A_fwd))
+        self.A_log_fwd._no_weight_decay = True
+
+        A_bwd = torch.arange(1, self.d_state + 1, dtype=torch.float32).repeat(self.d_inner, 1)
+        self.A_log_bwd = nn.Parameter(torch.log(A_bwd))
+        self.A_log_bwd._no_weight_decay = True
+
+        # D skip parameter
+        self.D_fwd = nn.Parameter(torch.ones(self.d_inner))
+        self.D_fwd._no_weight_decay = True
+
+        self.D_bwd = nn.Parameter(torch.ones(self.d_inner))
+        self.D_bwd._no_weight_decay = True
+
+        # Initialize dt_proj with Inverse Softplus
+        self._init_dt_proj(self.dt_proj_fwd, dt_min, dt_max, dt_init_floor)
+        self._init_dt_proj(self.dt_proj_bwd, dt_min, dt_max, dt_init_floor)
+
+        # Out-projection back to d_model
+        self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=bias)
+
+    def _init_dt_proj(self, dt_proj: nn.Linear, dt_min: float, dt_max: float, dt_init_floor: float) -> None:
+        dt_init_std = self.dt_rank ** -0.5
+        nn.init.uniform_(dt_proj.weight, -dt_init_std, dt_init_std)
+
+        # Inverse softplus for delta bias
+        dt = torch.exp(
+            torch.rand(self.d_inner) * (math.log(dt_max) - math.log(dt_min)) + math.log(dt_min)
+        ).clamp(min=dt_init_floor)
+        inv_dt = dt + torch.log(-torch.expm1(-dt))
+        with torch.no_grad():
+            dt_proj.bias.copy_(inv_dt)
+        dt_proj.bias._no_reinit = True
+        dt_proj.bias._no_weight_decay = True
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Input tensor [B, L, D]
+        Returns:
+            out: Output tensor [B, L, D]
+        """
+        B, L, D = x.shape
+
+        # 1. Project to u and z
+        xz = self.in_proj(x)
+        u, z = xz.chunk(2, dim=-1)
+
+        # 2. 1D Causal Conv over u
+        u_conv = self.conv1d(u.transpose(1, 2))[:, :, :L].transpose(1, 2)
+        u_conv = F.silu(u_conv)
+
+        # 3. Forward SSM
+        A_fwd = -torch.exp(self.A_log_fwd.float())
+        x_proj_f = self.x_proj_fwd(u_conv)
+        dt_f, B_f, C_f = torch.split(x_proj_f, [self.dt_rank, self.d_state, self.d_state], dim=-1)
+        delta_f = F.softplus(self.dt_proj_fwd(dt_f))
+        y_fwd = selective_scan_pure_pytorch(u_conv, delta_f, A_fwd, B_f, C_f, self.D_fwd)
+
+        # 4. Backward SSM
+        u_conv_bwd = torch.flip(u_conv, dims=[1])
+        A_bwd = -torch.exp(self.A_log_bwd.float())
+        x_proj_b = self.x_proj_bwd(u_conv_bwd)
+        dt_b, B_b, C_b = torch.split(x_proj_b, [self.dt_rank, self.d_state, self.d_state], dim=-1)
+        delta_b = F.softplus(self.dt_proj_bwd(dt_b))
+        y_bwd = selective_scan_pure_pytorch(u_conv_bwd, delta_b, A_bwd, B_b, C_b, self.D_bwd)
+        y_bwd = torch.flip(y_bwd, dims=[1])
+
+        # 5. Merge bidirectional paths
+        y = y_fwd + y_bwd
+
+        # 6. Multiplicative Gating with z
+        y = y * F.silu(z)
+
+        # 7. Out-projection
+        out = self.out_proj(y)
+        return out
+
+
+class BiMambaLayer(nn.Module):
+    """Pre-LayerNorm residual wrapper for BiMambaBlock."""
+    def __init__(self, d_model: int, dropout: float = 0.1, **kwargs) -> None:
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model)
+        self.block = BiMambaBlock(d_model=d_model, **kwargs)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.dropout(self.block(self.norm(x)))
+
+
+class BiMambaAudioBackbone(nn.Module):
+    """
+    Bidirectional Audio Mamba (AuM) Sequence Backbone (~0.69M params).
+    Inspired by KAIST Audio Mamba (AuM, arXiv:2406.03344) & Vision Mamba (ICML 2024).
+
+    Input: [B, T=251, F=2049] (251 time frames, 2049 frequency bins)
+      - Linear Stem: Linear(2049 -> 128) + LayerNorm(128) + GELU + Dropout(0.1)
+      - 3x BiMambaLayer(d_model=128, d_state=16, d_conv=4, expand=2)
+      - Final LayerNorm(128)
+      - Global Temporal Mean Pooling: [B, 251, 128] -> [B, 128]
+      - Head: Linear(128 -> 224) + LayerNorm(224) -> f_audio [B, 224]
+    """
+    requires_2d: bool = True
+
+    def __init__(
+        self,
+        in_features: int = 2049,
+        d_model: int = 128,
+        embed_dim: int = 224,
+        num_layers: int = 3,
+        d_state: int = 16,
+        d_conv: int = 4,
+        expand: int = 2,
+        dropout: float = 0.1,
+        **kwargs
+    ) -> None:
+        super().__init__()
+        self.in_features = in_features
+        self.d_model = d_model
+        self.embed_dim = embed_dim
+
+        # 1. Frequency projection stem: 2049 -> d_model
+        self.stem = nn.Sequential(
+            nn.Linear(in_features, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+        # 2. Stack of BiMamba layers
+        self.layers = nn.ModuleList([
+            BiMambaLayer(
+                d_model=d_model,
+                d_state=d_state,
+                d_conv=d_conv,
+                expand=expand,
+                dropout=dropout,
+            )
+            for _ in range(num_layers)
+        ])
+
+        self.norm = nn.LayerNorm(d_model)
+
+        # 3. Output projection head: d_model -> embed_dim (224)
+        self.head = nn.Sequential(
+            nn.Linear(d_model, embed_dim),
+            nn.LayerNorm(embed_dim),
+        )
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for m in self.stem.modules():
+            if isinstance(m, nn.Linear):
+                init_layer(m)
+        for m in self.head.modules():
+            if isinstance(m, nn.Linear):
+                init_layer(m)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Spectrogram tensor [B, T=251, F=2049] or [B, 2049]
+        Returns:
+            f_audio: Embedding [B, embed_dim=224]
+        """
+        if x.ndim == 2:
+            x = x.unsqueeze(1)
+        elif x.ndim == 4:
+            x = x.squeeze(1)
+
+        # Stem projection: [B, T, F] -> [B, T, d_model]
+        h = self.stem(x)
+
+        # BiMamba sequence modeling
+        for layer in self.layers:
+            h = layer(h)
+        h = self.norm(h)
+
+        # Global Temporal Mean Pooling: [B, T, d_model] -> [B, d_model]
+        pooled = h.mean(dim=1)
+
+        # Final projection to 224
+        f_audio = self.head(pooled)
+        return f_audio
+
+
+# =========================================================================
+# 6. Dual-Path Time-Frequency Mamba (TF-Mamba)
+# Authentic Implementation based on Interspeech 2025 (arXiv:2409.05034) & ASCMamba
+# =========================================================================
+
+class DualPathTFMambaBlock(nn.Module):
+    """
+    Dual-Path Time-Frequency Mamba Block.
+    Alternates:
+      1. Intra-frame Frequency Scan (F-BiMamba): scans across F frequency bins to capture harmonic structure
+      2. Inter-frame Temporal Scan (T-BiMamba): scans across T time frames to capture feeding burst dynamics
+    """
+    def __init__(
+        self,
+        channels: int = 48,
+        d_state: int = 16,
+        dt_rank: int = 4,
+        d_conv: int = 4,
+        expand: int = 2,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        self.channels = channels
+
+        # Frequency Path: intra-frame harmonic modeling
+        self.norm_f = nn.GroupNorm(4, channels)
+        self.mamba_f = BiMambaBlock(
+            d_model=channels,
+            d_state=d_state,
+            dt_rank=dt_rank,
+            d_conv=d_conv,
+            expand=expand,
+        )
+
+        # Time Path: inter-frame cadence modeling
+        self.norm_t = nn.GroupNorm(4, channels)
+        self.mamba_t = BiMambaBlock(
+            d_model=channels,
+            d_state=d_state,
+            dt_rank=dt_rank,
+            d_conv=d_conv,
+            expand=expand,
+        )
+
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: 2D feature map [B, C, T, F]
+        Returns:
+            out: 2D feature map [B, C, T, F]
+        """
+        B, C, T, F = x.shape
+
+        # 1. Frequency Path (intra-frame):
+        # Permute & reshape to (B * T, F, C)
+        x_f = x.permute(0, 2, 3, 1).contiguous().view(B * T, F, C)
+        x_f_norm = self.norm_f(x_f.transpose(1, 2)).transpose(1, 2)
+        out_f = self.drop(self.mamba_f(x_f_norm))
+        x = x + out_f.view(B, T, F, C).permute(0, 3, 1, 2)
+
+        # 2. Time Path (inter-frame):
+        # Permute & reshape to (B * F, T, C)
+        x_t = x.permute(0, 3, 2, 1).contiguous().view(B * F, T, C)
+        x_t_norm = self.norm_t(x_t.transpose(1, 2)).transpose(1, 2)
+        out_t = self.drop(self.mamba_t(x_t_norm))
+        x = x + out_t.view(B, F, T, C).permute(0, 3, 2, 1)
+
+        return x
+
+
+class TFMambaAudioBackbone(nn.Module):
+    """
+    Dual-Path Time-Frequency Mamba Audio Backbone (~0.18M params).
+    Inspired by Interspeech 2025 TF-Mamba (arXiv:2409.05034).
+
+    Input: [B, 251, 2049] (viewed as [B, 1, 251, 2049])
+      - 2D Conv Stem:
+          Conv2d(1 -> 32, k=(5, 9), s=(2, 4), p=(2, 4)) + BN + GELU
+          Conv2d(32 -> channels, k=(5, 9), s=(2, 4), p=(2, 4)) + BN + GELU
+          AdaptiveAvgPool2d((32, 32)) -> [B, channels, 32, 32]
+      - 2x DualPathTFMambaBlock(channels=48, d_state=16, dt_rank=4)
+      - 2D Global Average Pooling: [B, channels, 32, 32] -> [B, channels]
+      - Head: Linear(channels -> 224) + LayerNorm(224) -> f_audio [B, 224]
+    """
+    requires_2d: bool = True
+
+    def __init__(
+        self,
+        in_features: int = 2049,
+        channels: int = 48,
+        embed_dim: int = 224,
+        num_stages: int = 2,
+        d_state: int = 16,
+        dt_rank: int = 4,
+        d_conv: int = 4,
+        expand: int = 2,
+        dropout: float = 0.1,
+        **kwargs
+    ) -> None:
+        super().__init__()
+        self.in_features = in_features
+        self.channels = channels
+        self.embed_dim = embed_dim
+
+        # 1. 2D Convolutional Stem
+        self.stem = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=(5, 9), stride=(2, 4), padding=(2, 4), bias=False),
+            nn.BatchNorm2d(32),
+            nn.GELU(),
+            nn.Conv2d(32, channels, kernel_size=(5, 9), stride=(2, 4), padding=(2, 4), bias=False),
+            nn.BatchNorm2d(channels),
+            nn.GELU(),
+            nn.AdaptiveAvgPool2d((32, 32)),
+        )
+
+        # 2. Dual-Path TF-Mamba Stages
+        self.stages = nn.ModuleList([
+            DualPathTFMambaBlock(
+                channels=channels,
+                d_state=d_state,
+                dt_rank=dt_rank,
+                d_conv=d_conv,
+                expand=expand,
+                dropout=dropout,
+            )
+            for _ in range(num_stages)
+        ])
+
+        # 3. Global 2D Pooling & Output Head
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.head = nn.Sequential(
+            nn.Linear(channels, embed_dim),
+            nn.LayerNorm(embed_dim),
+        )
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for m in self.stem.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
+        for m in self.head.modules():
+            if isinstance(m, nn.Linear):
+                init_layer(m)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: Spectrogram [B, T=251, F=2049] or [B, 2049]
+        Returns:
+            f_audio: Joint acoustic embedding [B, embed_dim=224]
+        """
+        if x.ndim == 2:
+            B = x.size(0)
+            x = x.view(B, 1, 1, self.in_features)
+        elif x.ndim == 3:
+            x = x.unsqueeze(1)  # [B, 1, T, F]
+
+        # 1. 2D Conv Stem -> [B, channels, 32, 32]
+        feat = self.stem(x)
+
+        # 2. Dual-Path TF-Mamba Stages
+        for stage in self.stages:
+            feat = stage(feat)
+
+        # 3. Global Pooling & Projection
+        pooled = self.pool(feat).flatten(1)  # [B, channels]
+        f_audio = self.head(pooled)          # [B, embed_dim=224]
+        return f_audio
+
+
+# =========================================================================
+# 7. Audio Backbone Factory
 # =========================================================================
 
 def build_audio_backbone(
@@ -491,6 +968,8 @@ def build_audio_backbone(
       - 'bcresnet8': Qualcomm BC-ResNet-8 (~0.38M params)
       - 'bigru': CRNN-BiGRU Sequence Baseline (~0.65M params)
       - 'conformer': Conformer Attention-CNN (~0.79M params)
+      - 'bimamba': Bidirectional Audio Mamba Sequence Backbone (~0.69M params)
+      - 'tfmamba': Dual-Path Time-Frequency Mamba Backbone (~0.18M params)
     """
     norm_name = str(name).lower().strip()
     if norm_name in ("mlp", "stft_mlp"):
@@ -524,7 +1003,41 @@ def build_audio_backbone(
             dropout=dropout,
             **kwargs
         )
+    elif norm_name in ("bimamba", "audio_mamba", "aum", "mamba"):
+        d_model = kwargs.get("d_model", 128)
+        num_layers = kwargs.get("num_layers", 3)
+        return BiMambaAudioBackbone(
+            in_features=in_features,
+            d_model=d_model,
+            embed_dim=embed_dim,
+            num_layers=num_layers,
+            dropout=dropout,
+            **kwargs
+        )
+    elif norm_name in ("tfmamba", "tf_mamba", "dual_path_mamba", "time_frequency_mamba"):
+        channels = kwargs.get("channels", 48)
+        num_stages = kwargs.get("num_stages", 2)
+        return TFMambaAudioBackbone(
+            in_features=in_features,
+            channels=channels,
+            embed_dim=embed_dim,
+            num_stages=num_stages,
+            dropout=dropout,
+            **kwargs
+        )
     else:
         raise ValueError(
-            f"Unsupported audio backbone '{name}'. Must be one of ['mlp', 'bcresnet8', 'bigru', 'conformer']."
+            f"Unsupported audio backbone '{name}'. Must be one of ['mlp', 'bcresnet8', 'bigru', 'conformer', 'bimamba', 'tfmamba']."
         )
+
+
+__all__ = [
+    "init_layer",
+    "AudioMLPBackbone",
+    "BCResNet8AudioBackbone",
+    "CRNNBiGRUAudioBackbone",
+    "ConformerAudioBackbone",
+    "BiMambaAudioBackbone",
+    "TFMambaAudioBackbone",
+    "build_audio_backbone",
+]

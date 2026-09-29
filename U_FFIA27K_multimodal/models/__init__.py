@@ -4,6 +4,8 @@ from .audio_backbone import (
     BCResNet8AudioBackbone,
     CRNNBiGRUAudioBackbone,
     ConformerAudioBackbone,
+    BiMambaAudioBackbone,
+    TFMambaAudioBackbone,
     build_audio_backbone,
 )
 from .multimodal_fusion import MultimodalTournamentFusion, PairwiseBoundaryTournamentHead
@@ -15,6 +17,8 @@ __all__ = [
     "BCResNet8AudioBackbone",
     "CRNNBiGRUAudioBackbone",
     "ConformerAudioBackbone",
+    "BiMambaAudioBackbone",
+    "TFMambaAudioBackbone",
     "build_audio_backbone",
     "MultimodalTournamentFusion",
     "PairwiseBoundaryTournamentHead",

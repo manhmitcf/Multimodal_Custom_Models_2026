@@ -37,15 +37,17 @@ find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
 find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
 
 # ==============================================================================
-# 3. HUẤN LUYỆN ABLATION: Nghiên cứu Đối chứng 4 Mô hình Audio SOTA (Không dùng Trọng tài)
+# 3. HUẤN LUYỆN ABLATION: Nghiên cứu Đối chứng 6 Mô hình Audio SOTA (Không dùng Trọng tài)
 #    Nhánh: exp/ablation_audio_models_no_tie_breakers (400 EPOCHS, AdamW 1e-3, OneCycleLR)
 #    - Toàn bộ trọng tài tắt hoàn toàn (enable_b12: false, enable_b23: false, enable_b13: false)
 #    - Video Stream: 7-ch ConvNeXt-Nano (~2.701M)
-#    - Audio Stream (4 Tùy chọn độc lập):
+#    - Audio Stream (6 Tùy chọn độc lập):
 #        * 'mlp'        : High-Resolution STFT-MLP Baseline (~1.166M | Tổng: ~4.016M params)
 #        * 'bcresnet8'   : Qualcomm BC-ResNet-8 Interspeech 2021 (~0.376M | Tổng: ~3.226M params)
 #        * 'bigru'       : CRNN-BiGRU DCASE Sequence Baseline (~0.653M | Tổng: ~3.503M params)
 #        * 'conformer'   : Conformer Attention-CNN Google 2020 (~0.794M | Tổng: ~3.644M params)
+#        * 'bimamba'     : Bidirectional Audio Mamba KAIST 2024 (~0.693M | Tổng: ~3.543M params)
+#        * 'tfmamba'     : Dual-Path Time-Frequency Mamba Interspeech 2025 (~0.184M | Tổng: ~3.034M params)
 # ==============================================================================
 if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
     git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
@@ -64,7 +66,7 @@ python test_tournament_architecture.py
 python test_audio_backbones_ablation.py
 python main.py --dry-run
 
-# --- BƯỚC 3.2: LỆNH CHỌN MÔ HÌNH AUDIO CHO BÀI CHẠY (CHỌN 1 TRONG 4 DÒNG) ---
+# --- BƯỚC 3.2: LỆNH CHỌN MÔ HÌNH AUDIO CHO BÀI CHẠY (CHỌN 1 TRONG 6 DÒNG) ---
 # [Tùy chọn A] STFT-MLP Baseline (Mặc định):
 # python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['audio_backbone']='mlp'; json.dump(d,open(p,'w'),indent=2)"
 
@@ -76,6 +78,12 @@ python main.py --dry-run
 
 # [Tùy chọn D] Conformer Attention-CNN (Google):
 # python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['audio_backbone']='conformer'; json.dump(d,open(p,'w'),indent=2)"
+
+# [Tùy chọn E] Bidirectional Audio Mamba (AuM - KAIST 2024 / ViM):
+# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['audio_backbone']='bimamba'; json.dump(d,open(p,'w'),indent=2)"
+
+# [Tùy chọn F] Dual-Path Time-Frequency Mamba (TF-Mamba - Interspeech 2025):
+# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['audio_backbone']='tfmamba'; json.dump(d,open(p,'w'),indent=2)"
 
 # --- BƯỚC 3.3: CHẠY HUẤN LUYỆN CHÍNH THỨC TRÊN GPU (BACKGROUND) ---
 pkill -f "python main.py" || true

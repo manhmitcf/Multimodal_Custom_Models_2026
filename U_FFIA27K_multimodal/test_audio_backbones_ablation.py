@@ -18,7 +18,7 @@ def test_audio_backbones_forward_and_params():
     print("TEST 1: AUDIO BACKBONES PARAMETER BUDGET & FORWARD OUTPUT SHAPES")
     print("=" * 65)
 
-    backbones = ["mlp", "bcresnet8", "bigru", "conformer"]
+    backbones = ["mlp", "bcresnet8", "bigru", "conformer", "bimamba", "tfmamba"]
     tb_off = VideoTieBreakersConfig(enable_b12=False, enable_b23=False, enable_b13=False)
 
     B = 2
@@ -49,10 +49,10 @@ def test_audio_backbones_forward_and_params():
 
 def test_audio_backbones_gradient_flow():
     print("\n" + "=" * 65)
-    print("TEST 2: 100% ACTIVE GRADIENT FLOW FOR ALL 4 AUDIO BACKBONES")
+    print("TEST 2: 100% ACTIVE GRADIENT FLOW FOR ALL 6 AUDIO BACKBONES")
     print("=" * 65)
 
-    backbones = ["mlp", "bcresnet8", "bigru", "conformer"]
+    backbones = ["mlp", "bcresnet8", "bigru", "conformer", "bimamba", "tfmamba"]
     tb_off = VideoTieBreakersConfig(enable_b12=False, enable_b23=False, enable_b13=False)
     criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
 
