@@ -120,6 +120,10 @@ class ModelConfig(BaseModel):
         gt=0,
         description="Hidden dimension for Sparse Referee Routers."
     )
+    routing_mode: str = Field(
+        default="soft",
+        description="Routing mode for Mixture-of-Referees: 'soft' (SoftMoE fully differentiable)."
+    )
 
 
 class SplitterConfig(BaseModel):
@@ -215,7 +219,7 @@ class LossConfig(BaseModel):
     weight_pairwise: float = Field(default=0.5, ge=0.0, description="Weight for Level-2 Pairwise Boundaries loss.")
     weight_ce: float = Field(default=1.0, ge=0.0, description="Weight for Multi-class CE on Tournament Logits.")
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
-    lambda_balance: float = Field(default=0.0, ge=0.0, description="Weight for Switch Transformer MoE load balancing loss.")
+    lambda_balance: float = Field(default=0.0, ge=0.0, description="Weight for SoftMoE load balancing loss.")
     lambda_sparse: float = Field(default=0.0, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
 
 
@@ -451,6 +455,14 @@ class TrainConfig(BaseModel):
     @router_hidden_dim.setter
     def router_hidden_dim(self, val: int) -> None:
         self.model.router_hidden_dim = val
+
+    @property
+    def routing_mode(self) -> str:
+        return self.model.routing_mode
+
+    @routing_mode.setter
+    def routing_mode(self, val: str) -> None:
+        self.model.routing_mode = val
 
     @classmethod
     def from_json(cls, path: str = "config/train_config.json") -> "TrainConfig":

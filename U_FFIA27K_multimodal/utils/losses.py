@@ -36,7 +36,7 @@ class PairwiseTournamentLoss(BaseLoss):
                - B23: Medium vs Strong
                - B13: Weak vs Strong (Cross-boundary jumping protection)
       Level 3: End-to-End Multi-Class Cross Entropy on final tournament voting probabilities.
-      Level 4: MoE Switch Transformer Load Balancing Loss & Parsimonious Sparsity Penalty.
+      Level 4: MoE SoftMoE Load Balancing Loss & Sparsity Regularization.
     """
     def __init__(
         self,
@@ -144,24 +144,18 @@ class PairwiseTournamentLoss(BaseLoss):
             for tag in ["12", "23", "13"]:
                 prob_a_key = f"prob_{tag}_a"
                 prob_v_key = f"prob_{tag}_v"
-                m_a_h_key = f"m_{tag}_a_hard"
-                m_v_h_key = f"m_{tag}_v_hard"
 
                 if prob_a_key in output_dict and prob_v_key in output_dict:
                     p_a = output_dict[prob_a_key][route_mask]
                     p_v = output_dict[prob_v_key][route_mask]
-                    m_a_h = output_dict[m_a_h_key][route_mask] if m_a_h_key in output_dict else (p_a >= 0.5).float()
-                    m_v_h = output_dict[m_v_h_key][route_mask] if m_v_h_key in output_dict else (p_v >= 0.5).float()
 
                     P_A = torch.mean(p_a)
                     P_V = torch.mean(p_v)
-                    f_A = torch.mean(m_a_h)
-                    f_V = torch.mean(m_v_h)
 
-                    # Switch Transformer Load Balancing Loss (minimized at 50/50 balance = 1.0)
-                    loss_balance = loss_balance + 2.0 * (f_A * P_A + f_V * P_V)
+                    # SoftMoE Load Balancing Loss (minimized at 50/50 balance = 1.0)
+                    loss_balance = loss_balance + 2.0 * (P_A * P_A + P_V * P_V)
                     # Sparsity penalty (L1 norm on routing probabilities)
-                    loss_sparse = loss_sparse + (torch.mean(p_a) + torch.mean(p_v))
+                    loss_sparse = loss_sparse + (P_A + P_V)
                     n_pairs += 1
 
             if n_pairs > 0:

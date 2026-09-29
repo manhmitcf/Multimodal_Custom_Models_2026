@@ -189,6 +189,7 @@ class MultimodalTrainer:
         logger.info(f"  - Learning Rate:            {self.config.learning_rate}")
         logger.info(f"  - Weight Decay:             {self.weight_decay}")
         logger.info(f"  - Monitor Metric:           {self.config.monitor}")
+        logger.info(f"  - Routing Mechanism:        SoftMoE (Fully Differentiable)")
         logger.info(f"  - Early Stopping:           {getattr(self.config, 'early_stopping', False)}")
         logger.info(f"  - Checkpoint Run Dir:       '{self.run_dir}'")
         logger.info("==================================================")

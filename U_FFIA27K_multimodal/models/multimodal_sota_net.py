@@ -14,7 +14,7 @@ class MultimodalSOTANet(nn.Module):
     Hierarchical Multimodal Tournament Network with Sparse Mixture-of-Referees (SMoR-Net, ~4.28M Total Parameters).
     Specifically architected to resolve fish feeding intensity assessment across 4 classes
     (None, Strong, Medium, Weak) via 2-level tournament hierarchy with Sparse Mixture-of-Referees
-    (SMoR: Audio STFT + Video Kinematics + Dynamic STE Routers) for all pairwise matchups (B12, B23, B13):
+    (SMoR: Audio STFT + Video Kinematics + SoftMoE Routers) for all pairwise matchups (B12, B23, B13):
 
       1. Visual-Kinematic Stream (~2.701M params):
          7-Channel ConvNeXt-Nano (Spatial RGB + Flow (u,v) + Velocity |V| + Fluid Vorticity omega)
@@ -29,8 +29,7 @@ class MultimodalSOTANet(nn.Module):
              * B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B12)
              * B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23)
              * B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13)
-         - Sparse Referee Routers with Straight-Through Estimator (STE) supporting 4 discrete states:
-           (1,1), (1,0), (0,1), (0,0).
+         - Sparse Referee Routers with Fully Differentiable Soft-Routing (SoftMoE).
          - Dynamic Referee Intervention: logit = logit_base + u_tie * (m_A * gamma_A * logit_A + m_V * gamma_V * logit_V).
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
 
@@ -48,6 +47,7 @@ class MultimodalSOTANet(nn.Module):
         in_chans: int = 7,
         tie_breakers: Optional[Any] = None,
         video_drop_path: float = 0.1,
+        routing_mode: str = "soft",
         **kwargs
     ) -> None:
         super().__init__()
@@ -58,6 +58,7 @@ class MultimodalSOTANet(nn.Module):
         self.in_chans = in_chans
         self.tie_breakers = tie_breakers
         self.video_drop_path = video_drop_path
+        self.routing_mode = str(kwargs.get("routing_mode", routing_mode)).strip().lower()
 
         # 1. Frontends
         self.audio_frontend = audio_frontend if audio_frontend is not None else AudioFrontend()
@@ -82,6 +83,7 @@ class MultimodalSOTANet(nn.Module):
             dim=embed_dim,
             dropout=0.1,
             tie_breakers=tie_breakers,
+            routing_mode=self.routing_mode,
             **kwargs
         )
 
@@ -170,25 +172,19 @@ class MultimodalSOTANet(nn.Module):
             "p_m_over_s": fusion_outputs.get("p_m_over_s"),
             "p_w_over_s": fusion_outputs.get("p_w_over_s"),
             "v_voting": fusion_outputs.get("v_voting"),
-            # SMoR Routing gates, probabilities & discrete states
+            # SMoR Routing continuous confidence probabilities & modulated weights
             "m_12_a": fusion_outputs.get("m_12_a"),
             "m_12_v": fusion_outputs.get("m_12_v"),
             "prob_12_a": fusion_outputs.get("prob_12_a"),
             "prob_12_v": fusion_outputs.get("prob_12_v"),
-            "m_12_a_hard": fusion_outputs.get("m_12_a_hard"),
-            "m_12_v_hard": fusion_outputs.get("m_12_v_hard"),
             "m_23_a": fusion_outputs.get("m_23_a"),
             "m_23_v": fusion_outputs.get("m_23_v"),
             "prob_23_a": fusion_outputs.get("prob_23_a"),
             "prob_23_v": fusion_outputs.get("prob_23_v"),
-            "m_23_a_hard": fusion_outputs.get("m_23_a_hard"),
-            "m_23_v_hard": fusion_outputs.get("m_23_v_hard"),
             "m_13_a": fusion_outputs.get("m_13_a"),
             "m_13_v": fusion_outputs.get("m_13_v"),
             "prob_13_a": fusion_outputs.get("prob_13_a"),
             "prob_13_v": fusion_outputs.get("prob_13_v"),
-            "m_13_a_hard": fusion_outputs.get("m_13_a_hard"),
-            "m_13_v_hard": fusion_outputs.get("m_13_v_hard"),
         }
         # Filter out None values to maintain clean output dictionary
         return {k: v for k, v in outputs.items() if v is not None}

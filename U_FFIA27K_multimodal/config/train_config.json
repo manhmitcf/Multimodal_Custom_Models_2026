@@ -35,7 +35,8 @@
     "embed_dim": 224,
     "video_drop_path": 0.1,
     "use_sparse_moe_routing": true,
-    "router_hidden_dim": 32
+    "router_hidden_dim": 32,
+    "routing_mode": "soft"
   },
   "video_features": {
     "image_size": 224,

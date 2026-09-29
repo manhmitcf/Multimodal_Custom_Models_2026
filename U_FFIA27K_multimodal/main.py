@@ -87,13 +87,14 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     use_sparse_moe_routing = getattr(config.model, "use_sparse_moe_routing", getattr(config, "use_sparse_moe_routing", True))
     router_hidden_dim = getattr(config.model, "router_hidden_dim", getattr(config, "router_hidden_dim", 32))
+    routing_mode = getattr(config.model, "routing_mode", "soft")
 
     logger.info(
         f"Sparse Mixture-of-Referees (SMoR) configuration: "
         f"B12 (Weak vs Med)=[{b12_str}], "
         f"B23 (Med vs Strong)=[{b23_str}], "
         f"B13 (Weak vs Strong)=[{b13_str}] | "
-        f"SMoR Routing={use_sparse_moe_routing} (Hidden Dim={router_hidden_dim})"
+        f"SMoR Routing={use_sparse_moe_routing} (Hidden Dim={router_hidden_dim}, SoftMoE Fully Differentiable)"
     )
 
     return model_cls(
@@ -107,6 +108,7 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         video_drop_path=getattr(config.model, "video_drop_path", 0.1),
         use_sparse_moe_routing=use_sparse_moe_routing,
         router_hidden_dim=router_hidden_dim,
+        routing_mode=routing_mode,
     )
 
 

@@ -288,21 +288,20 @@ def test_consistent_video_transform():
     print("[PASSED] Val mode preserves clean full frames without erasing!")
 
 
-def test_smor_routing_and_ste_states():
+def test_smor_soft_routing():
     print("\n" + "=" * 65)
-    print("TEST 7: SPARSE MIXTURE-OF-REFEREES (SMoR) ROUTING & STE STATES")
+    print("TEST 7: SPARSE MIXTURE-OF-REFEREES (SMoR) SOFT-ROUTING (SoftMoE)")
     print("=" * 65)
-
-    model = MultimodalSOTANet(num_frames=2, use_sparse_moe_routing=True)
-    model.train()
 
     B = 8
     v_input = torch.randn(B, 2, 3, 224, 224)
     a_input = torch.randn(B, 512000)
+    targets = {"target": torch.tensor([0, 1, 2, 3, 1, 2, 3, 0])}
+
+    model = MultimodalSOTANet(num_frames=2, use_sparse_moe_routing=True)
+    model.train()
 
     out = model(v_input, a_input)
-
-    # 1. Verify router output keys
     for tag in ["12", "23", "13"]:
         assert f"m_{tag}_a" in out, f"Missing m_{tag}_a"
         assert f"m_{tag}_v" in out, f"Missing m_{tag}_v"
@@ -314,16 +313,14 @@ def test_smor_routing_and_ste_states():
         p_a = out[f"prob_{tag}_a"]
         p_v = out[f"prob_{tag}_v"]
 
-        # 2. In forward pass, STE outputs must be strictly binary {0.0, 1.0}
-        assert torch.all((m_a == 0.0) | (m_a == 1.0)), f"m_{tag}_a must be binary {0, 1}"
-        assert torch.all((m_v == 0.0) | (m_v == 1.0)), f"m_{tag}_v must be binary {0, 1}"
-        assert torch.all((p_a >= 0.0) & (p_a <= 1.0)), f"prob_{tag}_a must be in [0, 1]"
-        assert torch.all((p_v >= 0.0) & (p_v <= 1.0)), f"prob_{tag}_v must be in [0, 1]"
+        # In SoftMoE, routing weights equal continuous confidence probabilities in (0, 1)
+        assert torch.allclose(m_a, p_a), f"Soft routing m_{tag}_a must equal continuous prob p_a"
+        assert torch.allclose(m_v, p_v), f"Soft routing m_{tag}_v must equal continuous prob p_v"
+        assert torch.all((p_a > 0.0) & (p_a < 1.0)), f"p_{tag}_a must be strictly in (0, 1)"
+        assert torch.all((p_v > 0.0) & (p_v < 1.0)), f"p_{tag}_v must be strictly in (0, 1)"
 
-        print(f"  Matchup B{tag} Router Decisions: m_Audio={m_a.tolist()}, m_Video={m_v.tolist()}")
+        print(f"  Matchup B{tag} Soft Confidence: m_Audio={m_a.tolist()[:3]}, m_Video={m_v.tolist()[:3]}")
 
-    # 3. Test loss with MoE balancing and sparsity
-    targets = {"target": torch.tensor([0, 1, 2, 3, 1, 2, 3, 0])}
     criterion = PairwiseTournamentLoss(
         weight_act=0.5,
         weight_pairwise=0.5,
@@ -336,18 +333,12 @@ def test_smor_routing_and_ste_states():
     loss = criterion(out, targets)
     loss.backward()
 
-    # 4. Verify all router parameters receive active gradients through STE & classification loss
-    router_params = [
-        model.fusion.tournament_head.router_b12,
-        model.fusion.tournament_head.router_b23,
-        model.fusion.tournament_head.router_b13
-    ]
-    for idx, router in enumerate(router_params):
+    for idx, router in enumerate([model.fusion.tournament_head.router_b12, model.fusion.tournament_head.router_b23, model.fusion.tournament_head.router_b13]):
         for name, p in router.named_parameters():
             assert p.grad is not None, f"Router {idx} param {name} missing gradient!"
             assert not torch.isnan(p.grad).any(), f"Router {idx} param {name} has NaN gradient!"
 
-    print(f"[PASSED] SMoR Straight-Through Estimator and 4-state dynamic routing verified!")
+    print(f"[PASSED] Fully Differentiable Soft-Routing (SoftMoE) verified: 100% active gradient flow!")
     print(f"  SMoR Composite Loss (Pure Task End-to-End, lambda=0): {loss.item():.4f}")
 
 
@@ -408,7 +399,7 @@ if __name__ == "__main__":
     test_end_to_end_from_scratch()
     test_tie_breakers_toggle_config()
     test_consistent_video_transform()
-    test_smor_routing_and_ste_states()
+    test_smor_soft_routing()
     test_convnext_droppath_verification()
 
     print("\n" + "=" * 65)
