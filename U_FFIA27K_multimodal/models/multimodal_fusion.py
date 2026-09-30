@@ -208,7 +208,7 @@ def _parse_smor_tie_breakers(
 
 class PairwiseBoundaryTournamentHead(nn.Module):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Head with Sparse Mixture-of-Referees (SMoR, ~309K params).
+    Hierarchical Pairwise Cross-Boundary Tournament Head with Sparse Mixture-of-Referees (SMoR, ~368.5K params).
     
     Level 1: Feeding Activity Gating
       - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
@@ -554,7 +554,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine with SMoR (~361K params).
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine with SMoR (~369K params).
     1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
     2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
        with Sparse Mixture-of-Referees (Audio STFT + Video Kinematics + SoftMoE Routers) on B12, B23, B13.
