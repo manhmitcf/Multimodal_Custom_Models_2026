@@ -7,46 +7,86 @@ from typing import Dict, Optional, Any, Tuple
 
 class SparseRefereeRouter(nn.Module):
     """
-    Context-Aware Sparse Referee Router with Fully Differentiable Soft-Routing (SoftMoE).
-    Generates dynamic continuous confidence modulation weights [m_audio, m_video] in (0, 1)^2
-    conditioned on unimodal embeddings, cross-modal Hadamard agreement, and base matchup uncertainty u_tie:
-    x_route = [f_video || f_audio || f_video * f_audio || u_tie]
-    (dim = embed_dim * 3 + 1 = 673).
+    Dual-Stream Disagreement-Aware Sparse Referee Router with Fully Differentiable Soft-Routing (SoftMoE).
+    
+    Architecture (inspired by CVPR 2024 Dual-Stream MoE & ACL 2026 RIDER-MoE):
+      Stream 1 (Feature Context):
+        x_ctx = [f_video || f_audio || f_video * f_audio] (dim = embed_dim * 3 = 672)
+        h_ctx = GELU(Linear(LayerNorm(x_ctx))) (dim = hidden_dim = 32)
+      
+      Stream 2 (Decision & Disagreement):
+        u_tie     = exp(-|logit_base| / 2.0)               in (0, 1]
+        z_video   = tanh(logit_video / 2.0)                in (-1, 1)
+        z_audio   = tanh(logit_audio / 2.0)                in (-1, 1)
+        consensus = z_video * z_audio                      in (-1, 1)  (> 0: agree, < 0: conflict)
+        conflict  = |z_video - z_audio|                    in [0, 2]   (disagreement magnitude)
+        d_dec     = [u_tie, z_video, z_audio, consensus, conflict] (dim = 5)
+        
+      Dual-Stream Fusion:
+        x_fused = [h_ctx || d_dec] (dim = 32 + 5 = 37)
+        logits  = Linear(GELU(Linear(x_fused, hidden_dim)), 2)
+        [m_audio, m_video] = sigmoid(logits) in (0, 1)^2
     """
     def __init__(self, embed_dim: int = 224, hidden_dim: int = 32, **kwargs) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.hidden_dim = hidden_dim
-        in_dim = embed_dim * 3 + 1  # 224 * 3 + 1 = 673
-        self.router_mlp = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim),
+
+        # Stream 1: Feature Context Stream (672 -> 32) with LayerNorm
+        ctx_dim = embed_dim * 3
+        self.norm_ctx = nn.LayerNorm(ctx_dim)
+        self.ctx_proj = nn.Sequential(
+            nn.Linear(ctx_dim, hidden_dim),
+            nn.GELU()
+        )
+
+        # Stream 2: Decision & Disagreement Dimension = 5
+        # [u_tie, z_v, z_a, consensus, conflict]
+        decision_dim = 5
+
+        # Dual-Stream Fusion MLP: (32 + 5 = 37 -> 32 -> 2)
+        self.fusion_mlp = nn.Sequential(
+            nn.Linear(hidden_dim + decision_dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, 2)
         )
+
         self._init_weights()
 
     def _init_weights(self) -> None:
-        # FC1: Kaiming uniform (standard for GELU activation)
-        nn.init.kaiming_uniform_(self.router_mlp[0].weight, a=math.sqrt(5))
-        if self.router_mlp[0].bias is not None:
-            nn.init.zeros_(self.router_mlp[0].bias)
+        # Context projection: Kaiming uniform
+        nn.init.kaiming_uniform_(self.ctx_proj[0].weight, a=math.sqrt(5))
+        if self.ctx_proj[0].bias is not None:
+            nn.init.zeros_(self.ctx_proj[0].bias)
 
-        # FC2: Small Normal (mean=0.0, std=0.01) + Positive bias (+0.5) so initial exploration starts receptive (p ~= 0.62)
-        nn.init.normal_(self.router_mlp[2].weight, mean=0.0, std=0.01)
-        if self.router_mlp[2].bias is not None:
-            nn.init.constant_(self.router_mlp[2].bias, 0.5)
+        # Fusion layer 1: Kaiming uniform
+        nn.init.kaiming_uniform_(self.fusion_mlp[0].weight, a=math.sqrt(5))
+        if self.fusion_mlp[0].bias is not None:
+            nn.init.zeros_(self.fusion_mlp[0].bias)
+
+        # Output layer: Small Normal (mean=0.0, std=0.01) + Positive bias (+0.5) so initial exploration starts receptive (p ~= 0.62)
+        nn.init.normal_(self.fusion_mlp[2].weight, mean=0.0, std=0.01)
+        if self.fusion_mlp[2].bias is not None:
+            nn.init.constant_(self.fusion_mlp[2].bias, 0.5)
 
     def forward(
         self,
         f_video: torch.Tensor,
         f_audio: torch.Tensor,
         u_tie: Optional[torch.Tensor] = None,
+        logit_video: Optional[torch.Tensor] = None,
+        logit_audio: Optional[torch.Tensor] = None,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
         B = f_video.size(0)
 
+        # 1. Stream 1: Feature Context Stream
         prod_f = f_video * f_audio
+        x_ctx = torch.cat([f_video, f_audio, prod_f], dim=-1)  # [B, 672]
+        x_ctx = self.norm_ctx(x_ctx)
+        h_ctx = self.ctx_proj(x_ctx)                           # [B, hidden_dim=32]
 
+        # 2. Stream 2: Decision & Disagreement Metrics
         if u_tie is None:
             u_tie_feat = torch.zeros(B, 1, device=f_video.device, dtype=f_video.dtype)
         elif u_tie.ndim == 1:
@@ -54,13 +94,32 @@ class SparseRefereeRouter(nn.Module):
         else:
             u_tie_feat = u_tie
 
-        x_route = torch.cat([f_video, f_audio, prod_f, u_tie_feat], dim=-1)  # [B, in_dim=673]
+        if logit_video is None:
+            z_v = torch.zeros(B, 1, device=f_video.device, dtype=f_video.dtype)
+        elif logit_video.ndim == 1:
+            z_v = torch.tanh(logit_video.unsqueeze(-1) / 2.0)
+        else:
+            z_v = torch.tanh(logit_video / 2.0)
 
-        logits = self.router_mlp(x_route)               # [B, 2]
-        probs = torch.sigmoid(logits)                    # [B, 2] in (0, 1)
+        if logit_audio is None:
+            z_a = torch.zeros(B, 1, device=f_audio.device, dtype=f_audio.dtype)
+        elif logit_audio.ndim == 1:
+            z_a = torch.tanh(logit_audio.unsqueeze(-1) / 2.0)
+        else:
+            z_a = torch.tanh(logit_audio / 2.0)
 
-        m_audio = probs[:, 0]                            # [B] in (0, 1)
-        m_video = probs[:, 1]                            # [B] in (0, 1)
+        consensus = z_v * z_a
+        conflict = torch.abs(z_v - z_a)
+
+        d_dec = torch.cat([u_tie_feat, z_v, z_a, consensus, conflict], dim=-1)  # [B, 5]
+
+        # 3. Dual-Stream Fusion
+        x_fused = torch.cat([h_ctx, d_dec], dim=-1)            # [B, 37]
+        logits = self.fusion_mlp(x_fused)                      # [B, 2]
+        probs = torch.sigmoid(logits)                          # [B, 2] in (0, 1)
+
+        m_audio = probs[:, 0]                                  # [B] in (0, 1)
+        m_video = probs[:, 1]                                  # [B] in (0, 1)
 
         return {
             "m_audio": m_audio,
@@ -287,10 +346,25 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         # B12 (Weak vs Medium)
         logit_12_base = self.head_b12(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Medium)
         u_tie_12 = torch.exp(-torch.abs(logit_12_base) / 2.0)
-        ref_effect_12 = torch.zeros_like(logit_12_base)
+
+        if self.enable_b12_a and self.head_b12_a is not None and f_audio is not None:
+            logit_12_a = self.head_b12_a(f_audio).squeeze(-1)
+        else:
+            logit_12_a = logit_12_base
+
+        if self.enable_b12_v and self.head_b12_v is not None and f_video is not None:
+            logit_12_v = self.head_b12_v(f_video).squeeze(-1)
+        else:
+            logit_12_v = logit_12_base
 
         if self.use_sparse_moe_routing and self.router_b12 is not None and f_audio is not None and f_video is not None:
-            r12 = self.router_b12(f_video=f_video, f_audio=f_audio, u_tie=u_tie_12)
+            r12 = self.router_b12(
+                f_video=f_video,
+                f_audio=f_audio,
+                u_tie=u_tie_12,
+                logit_video=logit_12_v,
+                logit_audio=logit_12_a
+            )
             m_12_a, m_12_v = r12["m_audio"], r12["m_video"]
             prob_12_a, prob_12_v = r12["prob_audio"], r12["prob_video"]
         else:
@@ -299,27 +373,36 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             prob_12_a = torch.full_like(logit_12_base, 0.5)
             prob_12_v = torch.full_like(logit_12_base, 0.5)
 
+        ref_effect_12 = torch.zeros_like(logit_12_base)
         if self.enable_b12_a and self.head_b12_a is not None and f_audio is not None:
-            logit_12_a = self.head_b12_a(f_audio).squeeze(-1)
             ref_effect_12 = ref_effect_12 + m_12_a * self.gamma_12_a * logit_12_a
-        else:
-            logit_12_a = logit_12_base
-
         if self.enable_b12_v and self.head_b12_v is not None and f_video is not None:
-            logit_12_v = self.head_b12_v(f_video).squeeze(-1)
             ref_effect_12 = ref_effect_12 + m_12_v * self.gamma_12_v * logit_12_v
-        else:
-            logit_12_v = logit_12_base
 
         logit_12 = logit_12_base + u_tie_12 * ref_effect_12
 
         # B23 (Medium vs Strong)
         logit_23_base = self.head_b23(f).squeeze(-1)        # [B] (Positive -> Medium, Negative -> Strong)
         u_tie_23 = torch.exp(-torch.abs(logit_23_base) / 2.0)
-        ref_effect_23 = torch.zeros_like(logit_23_base)
+
+        if self.enable_b23_a and self.head_b23_a is not None and f_audio is not None:
+            logit_23_a = self.head_b23_a(f_audio).squeeze(-1)
+        else:
+            logit_23_a = logit_23_base
+
+        if self.enable_b23_v and self.head_b23_v is not None and f_video is not None:
+            logit_23_v = self.head_b23_v(f_video).squeeze(-1)
+        else:
+            logit_23_v = logit_23_base
 
         if self.use_sparse_moe_routing and self.router_b23 is not None and f_audio is not None and f_video is not None:
-            r23 = self.router_b23(f_video=f_video, f_audio=f_audio, u_tie=u_tie_23)
+            r23 = self.router_b23(
+                f_video=f_video,
+                f_audio=f_audio,
+                u_tie=u_tie_23,
+                logit_video=logit_23_v,
+                logit_audio=logit_23_a
+            )
             m_23_a, m_23_v = r23["m_audio"], r23["m_video"]
             prob_23_a, prob_23_v = r23["prob_audio"], r23["prob_video"]
         else:
@@ -328,27 +411,36 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             prob_23_a = torch.full_like(logit_23_base, 0.5)
             prob_23_v = torch.full_like(logit_23_base, 0.5)
 
+        ref_effect_23 = torch.zeros_like(logit_23_base)
         if self.enable_b23_a and self.head_b23_a is not None and f_audio is not None:
-            logit_23_a = self.head_b23_a(f_audio).squeeze(-1)
             ref_effect_23 = ref_effect_23 + m_23_a * self.gamma_23_a * logit_23_a
-        else:
-            logit_23_a = logit_23_base
-
         if self.enable_b23_v and self.head_b23_v is not None and f_video is not None:
-            logit_23_v = self.head_b23_v(f_video).squeeze(-1)
             ref_effect_23 = ref_effect_23 + m_23_v * self.gamma_23_v * logit_23_v
-        else:
-            logit_23_v = logit_23_base
 
         logit_23 = logit_23_base + u_tie_23 * ref_effect_23
 
         # B13 (Weak vs Strong)
         logit_13_base = self.head_b13(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Strong)
         u_tie_13 = torch.exp(-torch.abs(logit_13_base) / 2.0)
-        ref_effect_13 = torch.zeros_like(logit_13_base)
+
+        if self.enable_b13_a and self.head_b13_a is not None and f_audio is not None:
+            logit_13_a = self.head_b13_a(f_audio).squeeze(-1)
+        else:
+            logit_13_a = logit_13_base
+
+        if self.enable_b13_v and self.head_b13_v is not None and f_video is not None:
+            logit_13_v = self.head_b13_v(f_video).squeeze(-1)
+        else:
+            logit_13_v = logit_13_base
 
         if self.use_sparse_moe_routing and self.router_b13 is not None and f_audio is not None and f_video is not None:
-            r13 = self.router_b13(f_video=f_video, f_audio=f_audio, u_tie=u_tie_13)
+            r13 = self.router_b13(
+                f_video=f_video,
+                f_audio=f_audio,
+                u_tie=u_tie_13,
+                logit_video=logit_13_v,
+                logit_audio=logit_13_a
+            )
             m_13_a, m_13_v = r13["m_audio"], r13["m_video"]
             prob_13_a, prob_13_v = r13["prob_audio"], r13["prob_video"]
         else:
@@ -357,17 +449,11 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             prob_13_a = torch.full_like(logit_13_base, 0.5)
             prob_13_v = torch.full_like(logit_13_base, 0.5)
 
+        ref_effect_13 = torch.zeros_like(logit_13_base)
         if self.enable_b13_a and self.head_b13_a is not None and f_audio is not None:
-            logit_13_a = self.head_b13_a(f_audio).squeeze(-1)
             ref_effect_13 = ref_effect_13 + m_13_a * self.gamma_13_a * logit_13_a
-        else:
-            logit_13_a = logit_13_base
-
         if self.enable_b13_v and self.head_b13_v is not None and f_video is not None:
-            logit_13_v = self.head_b13_v(f_video).squeeze(-1)
             ref_effect_13 = ref_effect_13 + m_13_v * self.gamma_13_v * logit_13_v
-        else:
-            logit_13_v = logit_13_base
 
         logit_13 = logit_13_base + u_tie_13 * ref_effect_13
 

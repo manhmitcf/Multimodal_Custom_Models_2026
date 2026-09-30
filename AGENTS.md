@@ -44,14 +44,15 @@ This document defines the invariant architectural constraints, operational guide
                          * B12: Weak vs Medium (Base + Audio Referee + Video Referee + Router B12)
                          * B23: Medium vs Strong (Base + Audio Referee + Video Referee + Router B23)
                          * B13: Weak vs Strong (Base + Audio Referee + Video Referee + Router B13)
-                      - Sparse Referee Router (SoftMoE Fully Differentiable):
-                          Input: [f_video || f_audio || f_video * f_audio || u_tie] (dim=673) -> Linear(673->32) -> GELU -> Linear(32->2)
-                          Continuous Routing Weights: [m_A, m_V] = sigmoid(logits) in (0, 1)^2
+                      - Sparse Referee Router (SoftMoE Fully Differentiable Dual-Stream Disagreement-Aware):
+                          * Stream 1 (Context): [f_V || f_A || f_V * f_A] (672d) -> LayerNorm -> Linear(672->32) -> GELU -> h_ctx (32d)
+                          * Stream 2 (Decision & Disagreement): [u_tie, z_V, z_A, z_V * z_A, |z_V - z_A|] (5d, with z = tanh(logit / 2))
+                          * Dual-Stream Fusion: [h_ctx || d_dec] (37d) -> Linear(37->32) -> GELU -> Linear(32->2) -> sigmoid -> [m_A, m_V] in (0, 1)^2
                       - Dynamic Referee Intervention Formula:
                           u_tie = exp(-|logit_base| / 2.0)
                           logit = logit_base + u_tie * (m_A * gamma_A * logit_audio + m_V * gamma_V * logit_video)
                       - Tournament Borda Voting -> Final Calibrated Probabilities
-                      [~0.361M params | FLOPs: 1.7088 GFLOPs]
+                      [~0.369M params | FLOPs: 1.7088 GFLOPs]
                                         │
                                         ▼
                       [4 Feeding Intensity Predictions]
@@ -62,10 +63,10 @@ This document defines the invariant architectural constraints, operational guide
 - **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
 - **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
-- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Routers + Borda)**: `360,951` (~`0.361M`)
+- **Tournament Decision Head (Pairwise Base + 6 Referees + 3 Dual-Stream Routers + Borda)**: `368,535` (~`0.369M`)
 - **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,234,145` (~`4.234M`)
-- **Remaining Headroom**: `765,855` parameters below the 5.0M budget limit.
+- **Total Trainable Parameters**: `4,241,729` (~`4.242M`)
+- **Remaining Headroom**: `758,271` parameters below the 5.0M budget limit.
 - **Inference Complexity**: `1.7088 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
 
 ---
@@ -109,10 +110,14 @@ This document defines the invariant architectural constraints, operational guide
     - B12: Weak vs Medium (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B12).
     - B23: Medium vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B23).
     - B13: Weak vs Strong (Base Joint + Audio STFT Referee + Video Kinematics Referee + Router B13).
-  - **Sparse Referee Router (SoftMoE Fully Differentiable)**:
-    $$x_{\text{route}} = [f_V \parallel f_A \parallel f_V \odot f_A \parallel u_{\text{tie}}] \in \mathbb{R}^{673}$$
-    $$[m_A, m_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{673 \to 32}(x_{\text{route}})))) \in (0, 1)^2$$
-    Eliminates gradient mismatch and hard threshold discretization, enabling continuous confidence modulation in $(0, 1)$.
+  - **Sparse Referee Router (SoftMoE Fully Differentiable Dual-Stream Disagreement-Aware)**:
+    - *Stream 1 (Feature Context)*:
+      $$x_{\text{ctx}} = [f_V \parallel f_A \parallel f_V \odot f_A] \in \mathbb{R}^{672} \implies h_{\text{ctx}} = \text{GELU}(\text{Linear}_{672 \to 32}(\text{LayerNorm}(x_{\text{ctx}}))) \in \mathbb{R}^{32}$$
+    - *Stream 2 (Decision & Disagreement)*:
+      $$z_V = \tanh(\text{logit}_V / 2), \quad z_A = \tanh(\text{logit}_A / 2), \quad d_{\text{dec}} = [u_{\text{tie}} \parallel z_V \parallel z_A \parallel z_V \cdot z_A \parallel |z_V - z_A|] \in \mathbb{R}^5$$
+    - *Dual-Stream Fusion*:
+      $$[m_A, m_V] = \sigma(\text{Linear}_{32 \to 2}(\text{GELU}(\text{Linear}_{37 \to 32}([h_{\text{ctx}} \parallel d_{\text{dec}}])))) \in (0, 1)^2$$
+    Eliminates gradient mismatch, scale explosion, and feature dilution, enabling calibrated consensus-aware confidence modulation in $(0, 1)$.
   - **Dynamic Referee Intervention Formulation**:
     $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}| / 2.0)$$
     $$\text{logit} = \text{logit}_{\text{base}} + u_{\text{tie}} \cdot \Big(m_A \cdot \gamma_A \cdot \text{logit}_{\text{audio}} + m_V \cdot \gamma_V \cdot \text{logit}_{\text{video}}\Big)$$
@@ -126,7 +131,7 @@ This document defines the invariant architectural constraints, operational guide
 ## 3. Training & Optimization Policy
 
 Configurations are defined in `config/train_config.json` and validated by `config/train_config.py`:
-- **Training Strategy**: Single-Phase End-to-End simultaneously optimizing all 176 parameter tensors.
+- **Training Strategy**: Single-Phase End-to-End simultaneously optimizing all 182 parameter tensors.
 - **Optimizer**: AdamW (learning_rate = 1e-3, weight_decay = 0.05).
 - **Learning Rate Schedule**: OneCycleLR (batch-level, epochs = 400, pct_start = 0.05, div_factor = 25, final_div_factor = 1000).
 - **Gradient Clipping**: max_norm = 5.0.
@@ -179,9 +184,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,234,145).
+- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,241,729).
 - [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: 1.7088 GFLOPs).
-- [x] **Gradient Propagation**: 100% of trainable parameters (170/170 tensors) receive active gradients.
+- [x] **Gradient Propagation**: 100% of trainable parameters (182/182 tensors) receive active gradients.
 - [x] **SMoR Dynamic Routing**: Fully differentiable continuous routing $m_A, m_V \in (0, 1)$ verified with 100% active gradient flow.
 - [x] **Configurable Tie-Breakers**: Full support for toggling B12, B23, B13 Audio and Video Referees via `train_config.json`.
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
