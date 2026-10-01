@@ -136,9 +136,10 @@ Configurations are defined in `config/train_config.json` and validated by `confi
 - **Learning Rate Schedule**: OneCycleLR (batch-level, epochs = 400, pct_start = 0.05, div_factor = 25, final_div_factor = 1000).
 - **Gradient Clipping**: max_norm = 5.0.
 - **Loss Function (`PairwiseTournamentLoss`)**:
-  $$\mathcal{L}_{\text{total}} = 0.5 \mathcal{L}_{\text{act}} + 0.5 \mathcal{L}_{\text{pairwise}} + 1.0 \mathcal{L}_{\text{CE}} + 0.3 \mathcal{L}_{\text{aux}} + \lambda_{\text{balance}} \mathcal{L}_{\text{balance}} + \lambda_{\text{sparse}} \mathcal{L}_{\text{sparse}}$$
-  - **Active Regularization**: $\lambda_{\text{balance}} = 0.0$ and $\lambda_{\text{sparse}} = 0.01$ (MoE parsimonious sparsity penalty encourages the router to selectively activate referees and suppress noisy modality interference without artificial 50/50 balance bias).
-  - Optional MoE Regularizers: $\mathcal{L}_{\text{balance}} = 2 \cdot (P_A^2 + P_V^2)$ (SoftMoE load balancing) and $\mathcal{L}_{\text{sparse}} = P_A + P_V$ (parsimonious sparsity).
+  $$\mathcal{L}_{\text{total}} = 0.5 \mathcal{L}_{\text{act}} + 0.5 \mathcal{L}_{\text{pairwise}} + 1.0 \mathcal{L}_{\text{CE}} + 0.3 \mathcal{L}_{\text{aux}} + \lambda_{\text{balance}} \mathcal{L}_{\text{balance}} + \mathcal{L}_{\text{sparse}}$$
+  - **Active Regularization**: $\lambda_{\text{balance}} = 0.0$ and **Asymmetric Sparsity Penalty** $\mathcal{L}_{\text{sparse}} = \frac{1}{3} \sum_{\text{tag}} (\lambda_{\text{sparse}}^A \cdot P_A^{(\text{tag})} + \lambda_{\text{sparse}}^V \cdot P_V^{(\text{tag})})$ with $\lambda_{\text{sparse}}^A = 0.05$ and $\lambda_{\text{sparse}}^V = 0.005$.
+    * Rationale: Audio hydrophone SNR (~90.25%) is lower than visual kinematics (~95.36%). Applying 10x higher sparsity penalty to Audio forces the router to only activate Audio referee when its acoustic chewing cues are exceptionally certain, preventing noisy hydrophone splash artifacts from overturning correct classifications on ambiguous $B_{12}/B_{23}$ boundaries.
+  - Optional MoE Regularizers: $\mathcal{L}_{\text{balance}} = 2 \cdot (P_A^2 + P_V^2)$ (SoftMoE load balancing) and symmetric fallback $\mathcal{L}_{\text{sparse}} = \lambda_{\text{sparse}} \cdot (P_A + P_V)$.
 - **DataLoader Workers**: Fixed strictly to `8`.
 - **Evaluation Monitor**: 3 configurable modes supported in `train_config.json`:
   * `"val_acc"` / `"accuracy"` (Default): Single-track monitoring peak validation Accuracy (`best_model.pth`, `best_video_backbone.pth`, `best_audio_backbone.pth`). Uses peak Val QWK as tie-breaker when validation accuracies match.

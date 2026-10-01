@@ -221,6 +221,8 @@ class LossConfig(BaseModel):
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
     lambda_balance: float = Field(default=0.0, ge=0.0, description="Weight for SoftMoE load balancing loss.")
     lambda_sparse: float = Field(default=0.01, ge=0.0, description="Weight for MoE sparsity regularization penalty.")
+    lambda_sparse_audio: Optional[float] = Field(default=0.05, ge=0.0, description="Asymmetric MoE sparsity penalty for Audio referee.")
+    lambda_sparse_video: Optional[float] = Field(default=0.005, ge=0.0, description="Asymmetric MoE sparsity penalty for Video referee.")
 
 
 class TrainConfig(BaseModel):
@@ -280,7 +282,7 @@ class TrainConfig(BaseModel):
             d["evaluation"] = eval_dict
 
         # 4. Loss cluster
-        loss_keys = ["loss_type", "weight_act", "weight_pairwise", "weight_ce", "aux_loss_weight", "lambda_balance", "lambda_sparse"]
+        loss_keys = ["loss_type", "weight_act", "weight_pairwise", "weight_ce", "aux_loss_weight", "lambda_balance", "lambda_sparse", "lambda_sparse_audio", "lambda_sparse_video"]
         loss_dict = dict(d.get("loss", {})) if isinstance(d.get("loss"), dict) else {}
         for k in loss_keys:
             if k in d:
@@ -407,6 +409,16 @@ class TrainConfig(BaseModel):
     def lambda_sparse(self) -> float: return self.loss.lambda_sparse
     @lambda_sparse.setter
     def lambda_sparse(self, val: float) -> None: self.loss.lambda_sparse = val
+
+    @property
+    def lambda_sparse_audio(self) -> Optional[float]: return self.loss.lambda_sparse_audio
+    @lambda_sparse_audio.setter
+    def lambda_sparse_audio(self, val: Optional[float]) -> None: self.loss.lambda_sparse_audio = val
+
+    @property
+    def lambda_sparse_video(self) -> Optional[float]: return self.loss.lambda_sparse_video
+    @lambda_sparse_video.setter
+    def lambda_sparse_video(self, val: Optional[float]) -> None: self.loss.lambda_sparse_video = val
 
     @property
     def num_frames(self) -> int:

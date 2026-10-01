@@ -94,6 +94,8 @@ class MultimodalTrainer:
         if loss_type in ("pairwise_tournament", "smor_pairwise_tournament"):
             lb = getattr(self.config, "lambda_balance", 0.0)
             ls = getattr(self.config, "lambda_sparse", 0.01)
+            ls_a = getattr(self.config, "lambda_sparse_audio", None)
+            ls_v = getattr(self.config, "lambda_sparse_video", None)
             self.loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(self.config, "weight_act", 0.5),
                 weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
@@ -101,9 +103,13 @@ class MultimodalTrainer:
                 aux_loss_weight=getattr(self.config, "aux_loss_weight", 0.3),
                 lambda_balance=lb,
                 lambda_sparse=ls,
+                lambda_sparse_audio=ls_a,
+                lambda_sparse_video=ls_v,
                 use_sparse_moe_routing=getattr(self.config, "use_sparse_moe_routing", True),
             ).to(self.device)
-            if lb == 0.0 and ls == 0.0:
+            if ls_a is not None and ls_v is not None:
+                logger.info(f"Configured PairwiseTournamentLoss with Asymmetric Sparsity: Audio Sparsity={ls_a}, Video Sparsity={ls_v} (Balance={lb}).")
+            elif lb == 0.0 and ls == 0.0:
                 logger.info("Configured PairwiseTournamentLoss with SMoR (Activity Gate + 3 Boundaries, Pure Task Optimization).")
             else:
                 logger.info(f"Configured PairwiseTournamentLoss with SMoR (Activity Gate + 3 Boundaries + MoE Balancing={lb} & Sparsity={ls}).")

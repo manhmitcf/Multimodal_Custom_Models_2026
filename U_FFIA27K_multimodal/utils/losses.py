@@ -46,6 +46,8 @@ class PairwiseTournamentLoss(BaseLoss):
         aux_loss_weight: float = 0.3,
         lambda_balance: float = 0.0,
         lambda_sparse: float = 0.01,
+        lambda_sparse_audio: float = None,
+        lambda_sparse_video: float = None,
         use_sparse_moe_routing: bool = True,
         only_backbones: bool = False,
         **kwargs
@@ -57,6 +59,10 @@ class PairwiseTournamentLoss(BaseLoss):
         self.aux_loss_weight = float(kwargs.get("aux_loss_weight", aux_loss_weight))
         self.lambda_balance = float(kwargs.get("lambda_balance", lambda_balance))
         self.lambda_sparse = float(kwargs.get("lambda_sparse", lambda_sparse))
+        raw_lsa = kwargs.get("lambda_sparse_audio", lambda_sparse_audio)
+        self.lambda_sparse_audio = float(raw_lsa) if raw_lsa is not None else None
+        raw_lsv = kwargs.get("lambda_sparse_video", lambda_sparse_video)
+        self.lambda_sparse_video = float(raw_lsv) if raw_lsv is not None else None
         self.use_sparse_moe_routing = bool(kwargs.get("use_sparse_moe_routing", use_sparse_moe_routing))
         self.only_backbones = bool(kwargs.get("only_backbones", only_backbones))
 
@@ -140,6 +146,7 @@ class PairwiseTournamentLoss(BaseLoss):
             feeding_mask = (y_raw != 0)
             route_mask = feeding_mask if feeding_mask.sum() > 0 else torch.ones_like(feeding_mask, dtype=torch.bool)
             
+            is_asymmetric = (self.lambda_sparse_audio is not None and self.lambda_sparse_video is not None)
             n_pairs = 0
             for tag in ["12", "23", "13"]:
                 prob_a_key = f"prob_{tag}_a"
@@ -154,8 +161,11 @@ class PairwiseTournamentLoss(BaseLoss):
 
                     # SoftMoE Load Balancing Loss (minimized at 50/50 balance = 1.0)
                     loss_balance = loss_balance + 2.0 * (P_A * P_A + P_V * P_V)
-                    # Sparsity penalty (L1 norm on routing probabilities)
-                    loss_sparse = loss_sparse + (P_A + P_V)
+                    # Sparsity penalty (Asymmetric vs Symmetric L1 norm)
+                    if is_asymmetric:
+                        loss_sparse = loss_sparse + (self.lambda_sparse_audio * P_A + self.lambda_sparse_video * P_V)
+                    else:
+                        loss_sparse = loss_sparse + self.lambda_sparse * (P_A + P_V)
                     n_pairs += 1
 
             if n_pairs > 0:
@@ -169,7 +179,7 @@ class PairwiseTournamentLoss(BaseLoss):
             self.weight_pairwise * loss_pairwise +
             self.aux_loss_weight * (loss_v + loss_a) +
             self.lambda_balance * loss_balance +
-            self.lambda_sparse * loss_sparse
+            loss_sparse
         )
 
         return total_loss
