@@ -1,6 +1,6 @@
 {
   "system": {
-    "seed": 2026,
+    "seed": 0,
     "cache_mode": "ram",
     "dataloader_workers": 8,
     "prefetch_factor": 2,
