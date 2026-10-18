@@ -150,7 +150,10 @@ class MultimodalTrainer:
         self._init_logging_and_checkpoints()
 
     def _init_logging_and_checkpoints(self) -> None:
-        model_name = getattr(self.config.model, "backbone", getattr(self.model, "model_name", self.model.__class__.__name__))
+        if getattr(self.config.model, "backbone", "") == "AudioSOTANet" and hasattr(self.config, "audio_mlp_ablation"):
+            model_name = f"AudioMLP_{self.config.audio_mlp_ablation.active_config}"
+        else:
+            model_name = getattr(self.config.model, "backbone", getattr(self.model, "model_name", self.model.__class__.__name__))
         self.run_dir = os.path.join(self.config.ckpt_dir, model_name)
 
         if self.config.dataset_splitter.evaluation_mode == "cross_validation" and self.config.dataset_splitter.fold_index is not None:

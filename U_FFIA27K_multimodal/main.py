@@ -19,7 +19,7 @@ import torch
 from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
 from features.audio_frontend import AudioFrontend
-from models import MultimodalSOTANet
+from models import MultimodalSOTANet, AudioSOTANet
 from tasks import MultimodalTrainer
 from utils import (
     count_parameters,
@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY = {
     "MultimodalSOTANet": MultimodalSOTANet,
+    "AudioSOTANet": AudioSOTANet,
 }
 
 
@@ -60,6 +61,27 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
     seed_everything(active_seed)
+
+    if config.model.backbone == "AudioSOTANet":
+        hidden_dims = None
+        if hasattr(config, "audio_mlp_ablation") and config.audio_mlp_ablation is not None:
+            hidden_dims = config.audio_mlp_ablation.get_active_hidden_dims()
+            active_cfg = getattr(config.audio_mlp_ablation, "active_config", "custom")
+        else:
+            active_cfg = "custom"
+
+        logger.info(
+            f"Building AudioSOTANet unimodal network: "
+            f"Active Config=[{active_cfg}], "
+            f"Hidden Dims={hidden_dims}, Embed Dim={config.model.embed_dim}"
+        )
+        return model_cls(
+            audio_frontend=frontend,
+            hidden_dims=hidden_dims,
+            embed_dim=config.model.embed_dim,
+            classes_num=config.model.classes_num,
+            dropout=getattr(config.model, "dropout", 0.1),
+        )
 
     in_chans = getattr(config, "in_chans", getattr(config.video_features, "num_channels", 7))
 
@@ -126,11 +148,19 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     try:
         # 1. Parameter audit
         stats = count_parameters(model)
-        logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
-        logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
-        logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+        if isinstance(model, AudioSOTANet):
+            frontend_params = sum(p.numel() for p in model.audio_frontend.parameters() if p.requires_grad)
+            clf_params = sum(p.numel() for p in model.classifier.parameters() if p.requires_grad) if hasattr(model, "classifier") else 0
+            logger.info(f"  - Audio Frontend (TKEO-STFT 256k)           : {frontend_params:,} ({frontend_params/1e6:.3f} M)")
+            logger.info(f"  - Audio Backbone (Modular MLP)              : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+            logger.info(f"  - Audio Classifier Head                     : {clf_params:,} ({clf_params/1e6:.3f} M)")
+            logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+        else:
+            logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+            logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+            logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+            logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
+            logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
 
         try:
             gflops = measure_flops(model, device=device.type, num_frames=getattr(config, "num_frames", 2))
@@ -437,6 +467,8 @@ def run_training_session(
 
     eval_mode = config.dataset_splitter.evaluation_mode
     model_name = config.model.backbone
+    if config.model.backbone == "AudioSOTANet" and hasattr(config, "audio_mlp_ablation"):
+        model_name = f"AudioMLP_{config.audio_mlp_ablation.active_config}"
 
     # =========================================================================
     # FAST PRE-FLIGHT DRY-RUN (Verify full network before preloading RAM)

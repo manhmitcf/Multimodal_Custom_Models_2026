@@ -229,10 +229,40 @@ class LossConfig(BaseModel):
     aux_loss_weight: float = Field(default=0.3, ge=0.0, description="Weight for auxiliary unimodal backbone heads.")
 
 
+class AudioMLPAblationConfig(BaseModel):
+    """
+    Configuration for Audio MLP Backbone Hidden Layer and Dimension Ablations.
+    """
+    active_config: str = Field(default="W_768_balanced", description="Active ablation preset key.")
+    embed_dim: int = Field(default=384, description="Target latent audio embedding dimension.")
+    dropout: float = Field(default=0.1, description="Dropout rate for hidden MLP layers.")
+    presets: dict = Field(
+        default_factory=lambda: {
+            "L0_linear": [],
+            "W_256_bottleneck": [256],
+            "W_512_moderate": [512],
+            "W_768_balanced": [768],
+            "W_1024_wide": [1024],
+            "W_2048_expansion": [2048],
+            "L2_pyramidal_1024_512": [1024, 512],
+            "L2_compact_768_512": [768, 512],
+            "L2_wide_1024_768": [1024, 768],
+            "L3_deep_1024_768_512": [1024, 768, 512],
+        },
+        description="Dictionary mapping preset names to their hidden layer dimension lists."
+    )
+
+    def get_active_hidden_dims(self) -> list:
+        if self.active_config in self.presets:
+            return list(self.presets[self.active_config])
+        logger.warning(f"Active config '{self.active_config}' not found in presets. Falling back to [768].")
+        return [768]
+
+
 class TrainConfig(BaseModel):
     """
     Master configuration schema for multimodal model training, organized into logical clusters:
-    system, training, evaluation, loss, model, video_features, audio_features, dataset_splitter.
+    system, training, evaluation, loss, model, video_features, audio_features, dataset_splitter, audio_mlp_ablation.
     """
     system: SystemConfig = Field(default_factory=SystemConfig, description="System runtime, device, and caching settings.")
     training: TrainingConfig = Field(default_factory=TrainingConfig, description="Optimization and training hyperparameters.")
@@ -242,6 +272,7 @@ class TrainConfig(BaseModel):
     video_features: VideoFeaturesConfig = Field(default_factory=VideoFeaturesConfig, description="Video preprocessing configuration.")
     audio_features: AudioFeaturesConfig = Field(default_factory=AudioFeaturesConfig, description="Audio preprocessing configuration.")
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
+    audio_mlp_ablation: Optional[AudioMLPAblationConfig] = Field(default=None, description="Audio MLP ablation presets and active configuration.")
 
     @model_validator(mode="before")
     @classmethod

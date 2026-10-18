@@ -87,6 +87,7 @@ class AudioSOTANet(nn.Module):
         return {
             "clipwise_output": logits,
             "logits": logits,
+            "logits_audio": logits,
             "f_audio": f_audio,
             "spec_vector": spec_vector
         }

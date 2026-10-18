@@ -21,27 +21,29 @@
     "min_delta": 0.0
   },
   "loss": {
-    "loss_type": "pairwise_tournament",
-    "weight_act": 0.5,
-    "weight_pairwise": 0.5,
-    "weight_ce": 1.0,
-    "aux_loss_weight": 0.3
+    "loss_type": "ce"
   },
   "model": {
-    "backbone": "MultimodalSOTANet",
+    "backbone": "AudioSOTANet",
     "classes_num": 4,
-    "embed_dim": 224,
-    "video_drop_path": 0.1,
-    "tie_breakers": {
-      "enable_b12": false,
-      "enable_b23": true,
-      "enable_b13": false
-    }
+    "embed_dim": 384
   },
-  "video_features": {
-    "image_size": 224,
-    "num_frames": 2,
-    "num_channels": 7
+  "audio_mlp_ablation": {
+    "active_config": "W_768_balanced",
+    "embed_dim": 384,
+    "dropout": 0.1,
+    "presets": {
+      "L0_linear": [],
+      "W_256_bottleneck": [256],
+      "W_512_moderate": [512],
+      "W_768_balanced": [768],
+      "W_1024_wide": [1024],
+      "W_2048_expansion": [2048],
+      "L2_pyramidal_1024_512": [1024, 512],
+      "L2_compact_768_512": [768, 512],
+      "L2_wide_1024_768": [1024, 768],
+      "L3_deep_1024_768_512": [1024, 768, 512]
+    }
   },
   "audio_features": {
     "sample_rate": 256000,
@@ -60,11 +62,11 @@
     "seed": 42,
     "test_sample_per_class": 700,
     "save_results": true,
-    "include_video": true,
+    "include_video": false,
     "split_strategy": "random_sample",
     "evaluation_mode": "cross_validation",
     "num_folds": 5,
-    "fold_index": null,
+    "fold_index": 0,
     "cv_val_ratio": 0.2
   }
 }
