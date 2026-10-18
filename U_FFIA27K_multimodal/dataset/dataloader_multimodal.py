@@ -150,7 +150,7 @@ class FishMultimodalDataLoader:
                 self.dataloader_workers = (max_cpu // 2) + 1
 
         self.splitter_config = splitter_config if splitter_config is not None else SplitterConfig(include_video=True)
-        self.splitter_config.include_video = True
+        self.include_video = getattr(self.splitter_config, "include_video", True)
 
         try:
             self.splitter = FishDataSplitter(config=self.splitter_config)
@@ -269,7 +269,11 @@ class FishMultimodalDataLoader:
                     except Exception:
                         tgt_onehot = np.zeros(4, dtype=np.float32)
 
-                video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
+                if self.parent.include_video:
+                    video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
+                else:
+                    video_raw = np.zeros((self.parent.num_frames, 1, 1, 3), dtype=np.uint8)
+
                 audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
                 clip_name = os.path.basename(video_p or audio_p or f"sample_{idx}")
 
@@ -318,10 +322,17 @@ class FishMultimodalDataLoader:
         def __getitem__(self, idx: int) -> Dict[str, Any]:
             if self.ram_cache is not None and self.ram_cache[idx] is not None:
                 video_raw, audio_raw, target_onehot, clip_name = self.ram_cache[idx]
-                video_tensor = self.transform(video_raw)
-                if video_tensor.ndim == 3:
-                    video_tensor = video_tensor.unsqueeze(0)
-                video_tensor = video_tensor[:self.parent.num_frames]
+                if self.parent.include_video:
+                    video_tensor = self.transform(video_raw)
+                    if video_tensor.ndim == 3:
+                        video_tensor = video_tensor.unsqueeze(0)
+                    video_tensor = video_tensor[:self.parent.num_frames]
+                else:
+                    video_tensor = torch.zeros(
+                        (self.parent.num_frames, 3, self.parent.image_size, self.parent.image_size),
+                        dtype=torch.float32
+                    )
+
                 audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)  # [512000] (2.0s @ 256 kHz)
                 return {
                     'clip_name': clip_name,
@@ -357,14 +368,20 @@ class FishMultimodalDataLoader:
             else:
                 tgt_onehot = np.zeros(4, dtype=np.float32)
 
-            video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
+            if self.parent.include_video:
+                video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
+                video_tensor = self.transform(video_raw)
+                if video_tensor.ndim == 3:
+                    video_tensor = video_tensor.unsqueeze(0)
+                video_tensor = video_tensor[:self.parent.num_frames]
+            else:
+                video_tensor = torch.zeros(
+                    (self.parent.num_frames, 3, self.parent.image_size, self.parent.image_size),
+                    dtype=torch.float32
+                )
+
             audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
             clip_name = os.path.basename(video_p or audio_p or f"sample_{idx}")
-
-            video_tensor = self.transform(video_raw)
-            if video_tensor.ndim == 3:
-                video_tensor = video_tensor.unsqueeze(0)
-            video_tensor = video_tensor[:self.parent.num_frames]
             audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
 
             return {
