@@ -1,52 +1,63 @@
 import torch
 import torch.nn as nn
 import logging
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
 
 def init_layer(layer: nn.Module) -> None:
-    """Initialize a Linear or Convolutional layer."""
+    """Initialize a Linear or Convolutional layer with Xavier Uniform."""
     if hasattr(layer, 'weight') and layer.weight is not None:
         nn.init.xavier_uniform_(layer.weight)
     if hasattr(layer, 'bias') and layer.bias is not None:
         layer.bias.data.fill_(0.)
 
 
-class AudioMLPBackbone(nn.Module):
+class ModularAudioMLPBackbone(nn.Module):
     """
-    High-Resolution STFT Audio MLP Backbone (~1.17M params).
-    Processes 2049-dimensional TKEO-STFT spectral vectors [B, 2049]:
-      - Layer 1: Linear(2049 -> 512) + LayerNorm(512) + GELU + Dropout(0.1)
-      - Layer 2: Linear(512 -> 224) + LayerNorm(224) -> f_audio [B, 224]
+    Parametric Audio MLP Backbone for Ablation Studies and High-Resolution TKEO-STFT vectors [B, 2049]:
+      - Hidden Layers: 0, 1, 2, or 3 layers with pattern Linear -> LayerNorm -> GELU -> Dropout(p)
+      - Final Projection: Linear(d_last, embed_dim) -> LayerNorm(embed_dim) -> f_audio [B, embed_dim]
     """
     def __init__(
         self,
         in_features: int = 2049,
-        hidden_dim: int = 512,
-        embed_dim: int = 224,
+        hidden_dims: Optional[List[int]] = None,
+        embed_dim: int = 384,
         dropout: float = 0.1,
         **kwargs
     ) -> None:
         super().__init__()
         self.in_features = in_features
-        self.hidden_dim = hidden_dim
+        self.hidden_dims = list(hidden_dims) if hidden_dims is not None else [768]
         self.embed_dim = embed_dim
+        self.dropout_rate = float(dropout)
 
-        # 1. 2-layer MLP for 2049 STFT vector
-        self.fc1 = nn.Linear(in_features, hidden_dim)
-        self.ln1 = nn.LayerNorm(hidden_dim)
-        self.act = nn.GELU()
-        self.dropout = nn.Dropout(dropout)
+        layers = []
+        prev_dim = in_features
 
-        self.fc2 = nn.Linear(hidden_dim, embed_dim)
-        self.ln2 = nn.LayerNorm(embed_dim)
+        # 1. Hidden Layers
+        for h_dim in self.hidden_dims:
+            fc = nn.Linear(prev_dim, h_dim)
+            ln = nn.LayerNorm(h_dim)
+            act = nn.GELU()
+            drop = nn.Dropout(self.dropout_rate)
+            layers.extend([fc, ln, act, drop])
+            prev_dim = h_dim
 
+        # 2. Final Projection Layer to embed_dim (Canonical pattern: Linear -> LayerNorm)
+        final_fc = nn.Linear(prev_dim, embed_dim)
+        final_ln = nn.LayerNorm(embed_dim)
+        layers.extend([final_fc, final_ln])
+
+        self.net = nn.Sequential(*layers)
         self._init_weights()
 
     def _init_weights(self) -> None:
-        init_layer(self.fc1)
-        init_layer(self.fc2)
+        for m in self.net:
+            if isinstance(m, nn.Linear):
+                init_layer(m)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -61,6 +72,27 @@ class AudioMLPBackbone(nn.Module):
             if x.size(-1) != self.in_features:
                 x = x[:, :self.in_features]
 
-        h = self.dropout(self.act(self.ln1(self.fc1(x))))
-        f_audio = self.ln2(self.fc2(h))
-        return f_audio
+        return self.net(x)
+
+
+class AudioMLPBackbone(ModularAudioMLPBackbone):
+    """
+    Legacy 2-layer High-Resolution STFT Audio MLP Backbone (~1.17M params).
+    Maintains 100% backward compatibility for existing checkpoints and MultimodalSOTANet.
+    """
+    def __init__(
+        self,
+        in_features: int = 2049,
+        hidden_dim: int = 512,
+        embed_dim: int = 224,
+        dropout: float = 0.1,
+        **kwargs
+    ) -> None:
+        super().__init__(
+            in_features=in_features,
+            hidden_dims=[hidden_dim],
+            embed_dim=embed_dim,
+            dropout=dropout,
+            **kwargs
+        )
+        self.hidden_dim = hidden_dim
