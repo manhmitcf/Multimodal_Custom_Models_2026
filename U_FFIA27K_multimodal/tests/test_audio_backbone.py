@@ -59,9 +59,29 @@ def test_audio_mlp_backbone_backward_compatibility():
     print("PASS: test_audio_mlp_backbone_backward_compatibility")
 
 
+def test_legacy_checkpoint_key_loading():
+    """Test that legacy state_dict with fc1, ln1, fc2, ln2 keys loads cleanly into AudioMLPBackbone."""
+    legacy_state_dict = {
+        "fc1.weight": torch.randn(512, 2049),
+        "fc1.bias": torch.randn(512),
+        "ln1.weight": torch.ones(512),
+        "ln1.bias": torch.zeros(512),
+        "fc2.weight": torch.randn(224, 512),
+        "fc2.bias": torch.randn(224),
+        "ln2.weight": torch.ones(224),
+        "ln2.bias": torch.zeros(224),
+    }
+    expected_w = legacy_state_dict["fc1.weight"].clone()
+    model = AudioMLPBackbone(in_features=2049, hidden_dim=512, embed_dim=224)
+    model.load_state_dict(legacy_state_dict, strict=True)
+    assert torch.equal(model.net[0].weight, expected_w)
+    print("PASS: test_legacy_checkpoint_key_loading")
+
+
 if __name__ == "__main__":
     test_modular_audio_mlp_backbone_zero_hidden()
     test_modular_audio_mlp_backbone_one_hidden()
     test_modular_audio_mlp_backbone_two_hidden()
     test_audio_mlp_backbone_backward_compatibility()
+    test_legacy_checkpoint_key_loading()
     print("ALL TESTS IN test_audio_backbone.py PASSED!")

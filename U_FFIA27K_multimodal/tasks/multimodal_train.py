@@ -150,8 +150,9 @@ class MultimodalTrainer:
         self._init_logging_and_checkpoints()
 
     def _init_logging_and_checkpoints(self) -> None:
-        if getattr(self.config.model, "backbone", "") == "AudioSOTANet" and hasattr(self.config, "audio_mlp_ablation"):
-            model_name = f"AudioMLP_{self.config.audio_mlp_ablation.active_config}"
+        ablation_cfg = getattr(self.config, "audio_mlp_ablation", None)
+        if getattr(self.config.model, "backbone", "") == "AudioSOTANet" and ablation_cfg is not None:
+            model_name = f"AudioMLP_{ablation_cfg.active_config}"
         else:
             model_name = getattr(self.config.model, "backbone", getattr(self.model, "model_name", self.model.__class__.__name__))
         self.run_dir = os.path.join(self.config.ckpt_dir, model_name)
@@ -354,9 +355,11 @@ class MultimodalTrainer:
                         _safe_torch_save(a_dict, self.best_audio_path_qwk)
 
                     logger.info(f"[*] [DUAL-TRACK: QWK] New peak QWK performance! Saved checkpoints:")
-                    logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path_qwk}' (Val QWK = {val_qwk:.4f}, Val Acc = {val_acc:.4f})")
-                    logger.info(f"    - Peak Video Backbone:     '{self.best_video_path_qwk}'")
-                    logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path_qwk}'")
+                    logger.info(f"    - Full Model:              '{self.best_checkpoint_path_qwk}' (Val QWK = {val_qwk:.4f}, Val Acc = {val_acc:.4f})")
+                    if v_dict:
+                        logger.info(f"    - Peak Video Backbone:     '{self.best_video_path_qwk}'")
+                    if a_dict:
+                        logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path_qwk}'")
 
                 if val_acc > best_val_acc:
                     best_val_acc = val_acc
@@ -371,9 +374,11 @@ class MultimodalTrainer:
                         _safe_torch_save(a_dict, self.best_audio_path_acc)
 
                     logger.info(f"[*] [DUAL-TRACK: ACC] New peak Accuracy performance! Saved checkpoints:")
-                    logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path_acc}' (Val Acc = {val_acc:.4f}, Val QWK = {val_qwk:.4f})")
-                    logger.info(f"    - Peak Video Backbone:     '{self.best_video_path_acc}'")
-                    logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path_acc}'")
+                    logger.info(f"    - Full Model:              '{self.best_checkpoint_path_acc}' (Val Acc = {val_acc:.4f}, Val QWK = {val_qwk:.4f})")
+                    if v_dict:
+                        logger.info(f"    - Peak Video Backbone:     '{self.best_video_path_acc}'")
+                    if a_dict:
+                        logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path_acc}'")
 
                 best_acc = max(best_acc, val_acc)
                 best_qwk = max(best_qwk, val_qwk)
@@ -434,9 +439,11 @@ class MultimodalTrainer:
                     _safe_torch_save(a_dict, self.best_audio_path)
 
                 logger.info(f"[*] New best validation performance! Saved checkpoints:")
-                logger.info(f"    - Full Multimodal Model:   '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f}, Val QWK = {best_qwk:.4f})")
-                logger.info(f"    - Peak Video Backbone:     '{self.best_video_path}'")
-                logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path}'")
+                logger.info(f"    - Full Model:              '{self.best_checkpoint_path}' (Val Acc = {best_acc:.4f}, Val QWK = {best_qwk:.4f})")
+                if v_dict:
+                    logger.info(f"    - Peak Video Backbone:     '{self.best_video_path}'")
+                if a_dict:
+                    logger.info(f"    - Peak Audio Backbone:     '{self.best_audio_path}'")
 
             if is_dual:
                 logger.info(

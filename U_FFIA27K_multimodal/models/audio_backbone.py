@@ -96,3 +96,19 @@ class AudioMLPBackbone(ModularAudioMLPBackbone):
             **kwargs
         )
         self.hidden_dim = hidden_dim
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        key_map = {
+            f"{prefix}fc1.weight": f"{prefix}net.0.weight",
+            f"{prefix}fc1.bias": f"{prefix}net.0.bias",
+            f"{prefix}ln1.weight": f"{prefix}net.1.weight",
+            f"{prefix}ln1.bias": f"{prefix}net.1.bias",
+            f"{prefix}fc2.weight": f"{prefix}net.4.weight",
+            f"{prefix}fc2.bias": f"{prefix}net.4.bias",
+            f"{prefix}ln2.weight": f"{prefix}net.5.weight",
+            f"{prefix}ln2.bias": f"{prefix}net.5.bias",
+        }
+        for old_k, new_k in key_map.items():
+            if old_k in state_dict and new_k not in state_dict:
+                state_dict[new_k] = state_dict.pop(old_k)
+        super()._load_from_state_dict(state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs)

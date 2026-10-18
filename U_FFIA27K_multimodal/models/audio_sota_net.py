@@ -62,13 +62,13 @@ class AudioSOTANet(nn.Module):
           - Two arguments: model(dummy_video, audio_input) (used by FLOPs profiling, latency measurement, verify_dry_run)
           - Keyword arguments: model(audio_input=audio)
         """
-        if len(args) == 1:
-            a_in = args[0]
+        if audio_input is not None:
+            a_in = audio_input
         elif len(args) >= 2:
             # First is dummy_video, second is audio_input
             a_in = args[1]
-        elif audio_input is not None:
-            a_in = audio_input
+        elif len(args) == 1:
+            a_in = args[0]
         elif video_input is not None and video_input.ndim == 2 and video_input.size(-1) > 224:
             # Fallback if audio was passed as video_input
             a_in = video_input

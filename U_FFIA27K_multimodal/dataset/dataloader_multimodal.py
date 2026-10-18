@@ -328,10 +328,7 @@ class FishMultimodalDataLoader:
                         video_tensor = video_tensor.unsqueeze(0)
                     video_tensor = video_tensor[:self.parent.num_frames]
                 else:
-                    video_tensor = torch.zeros(
-                        (self.parent.num_frames, 3, self.parent.image_size, self.parent.image_size),
-                        dtype=torch.float32
-                    )
+                    video_tensor = torch.zeros(1, dtype=torch.float32)
 
                 audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)  # [512000] (2.0s @ 256 kHz)
                 return {
@@ -375,10 +372,7 @@ class FishMultimodalDataLoader:
                     video_tensor = video_tensor.unsqueeze(0)
                 video_tensor = video_tensor[:self.parent.num_frames]
             else:
-                video_tensor = torch.zeros(
-                    (self.parent.num_frames, 3, self.parent.image_size, self.parent.image_size),
-                    dtype=torch.float32
-                )
+                video_tensor = torch.zeros(1, dtype=torch.float32)
 
             audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
             clip_name = os.path.basename(video_p or audio_p or f"sample_{idx}")

@@ -64,23 +64,26 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     if config.model.backbone == "AudioSOTANet":
         hidden_dims = None
-        if hasattr(config, "audio_mlp_ablation") and config.audio_mlp_ablation is not None:
-            hidden_dims = config.audio_mlp_ablation.get_active_hidden_dims()
-            active_cfg = getattr(config.audio_mlp_ablation, "active_config", "custom")
+        ablation_cfg = getattr(config, "audio_mlp_ablation", None)
+        if ablation_cfg is not None:
+            hidden_dims = ablation_cfg.get_active_hidden_dims()
+            active_cfg = getattr(ablation_cfg, "active_config", "custom")
+            dropout = getattr(ablation_cfg, "dropout", getattr(config.model, "dropout", 0.1))
         else:
             active_cfg = "custom"
+            dropout = getattr(config.model, "dropout", 0.1)
 
         logger.info(
             f"Building AudioSOTANet unimodal network: "
             f"Active Config=[{active_cfg}], "
-            f"Hidden Dims={hidden_dims}, Embed Dim={config.model.embed_dim}"
+            f"Hidden Dims={hidden_dims}, Embed Dim={config.model.embed_dim}, Dropout={dropout}"
         )
         return model_cls(
             audio_frontend=frontend,
             hidden_dims=hidden_dims,
             embed_dim=config.model.embed_dim,
             classes_num=config.model.classes_num,
-            dropout=getattr(config.model, "dropout", 0.1),
+            dropout=dropout,
         )
 
     in_chans = getattr(config, "in_chans", getattr(config.video_features, "num_channels", 7))
@@ -292,7 +295,7 @@ def generate_cv_summary_report(model_dir: Path, num_folds: int) -> Path:
 
 def build_artifact_filename(config: TrainConfig, timestamp: str, suffix: str = ".zip") -> str:
     model_name = config.model.backbone
-    if config.model.backbone == "AudioSOTANet" and hasattr(config, "audio_mlp_ablation"):
+    if config.model.backbone == "AudioSOTANet" and getattr(config, "audio_mlp_ablation", None) is not None:
         model_name = f"AudioMLP_{config.audio_mlp_ablation.active_config}"
     dataset_name = Path(config.dataset_splitter.dataset_path).name or "dataset"
     split_strategy = config.dataset_splitter.split_strategy
@@ -450,7 +453,10 @@ def run_training_session(
         artifact_upload_config_path = str(pkg_dir / "config" / "artifact_upload_config.json")
 
     config = TrainConfig.from_json(train_config_path)
-    if preset is not None and hasattr(config, "audio_mlp_ablation"):
+    if preset is not None:
+        if getattr(config, "audio_mlp_ablation", None) is None:
+            from config.train_config import AudioMLPAblationConfig
+            config.audio_mlp_ablation = AudioMLPAblationConfig()
         if preset not in config.audio_mlp_ablation.presets:
             available = ", ".join(config.audio_mlp_ablation.presets.keys())
             raise ValueError(f"Unknown preset '{preset}'. Available: {available}")
@@ -476,7 +482,7 @@ def run_training_session(
 
     eval_mode = config.dataset_splitter.evaluation_mode
     model_name = config.model.backbone
-    if config.model.backbone == "AudioSOTANet" and hasattr(config, "audio_mlp_ablation"):
+    if config.model.backbone == "AudioSOTANet" and getattr(config, "audio_mlp_ablation", None) is not None:
         model_name = f"AudioMLP_{config.audio_mlp_ablation.active_config}"
 
     # =========================================================================
