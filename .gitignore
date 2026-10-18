@@ -35,3 +35,4 @@ hf_results/
 token.txt
 *.token
 local_cli/
+docs/
