@@ -292,6 +292,8 @@ def generate_cv_summary_report(model_dir: Path, num_folds: int) -> Path:
 
 def build_artifact_filename(config: TrainConfig, timestamp: str, suffix: str = ".zip") -> str:
     model_name = config.model.backbone
+    if config.model.backbone == "AudioSOTANet" and hasattr(config, "audio_mlp_ablation"):
+        model_name = f"AudioMLP_{config.audio_mlp_ablation.active_config}"
     dataset_name = Path(config.dataset_splitter.dataset_path).name or "dataset"
     split_strategy = config.dataset_splitter.split_strategy
     eval_mode = config.dataset_splitter.evaluation_mode
@@ -439,6 +441,7 @@ def run_training_session(
     seed: Optional[int] = None,
     evaluation_mode: Optional[str] = None,
     fold_index: Optional[int] = None,
+    preset: Optional[str] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -447,6 +450,12 @@ def run_training_session(
         artifact_upload_config_path = str(pkg_dir / "config" / "artifact_upload_config.json")
 
     config = TrainConfig.from_json(train_config_path)
+    if preset is not None and hasattr(config, "audio_mlp_ablation"):
+        if preset not in config.audio_mlp_ablation.presets:
+            available = ", ".join(config.audio_mlp_ablation.presets.keys())
+            raise ValueError(f"Unknown preset '{preset}'. Available: {available}")
+        config.audio_mlp_ablation.active_config = preset
+
     if seed is not None:
         config.seed = seed
         config.dataset_splitter.seed = seed
@@ -572,6 +581,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, help="Master random seed for reproducibility (default: 42 from config)")
     parser.add_argument("--evaluation-mode", type=str, choices=["holdout", "cross_validation"], default=None, help="Override evaluation mode (holdout or cross_validation)")
     parser.add_argument("--fold-index", type=int, default=None, help="Specific CV fold index to run (0 to num_folds - 1)")
+    parser.add_argument("--preset", type=str, default=None, help="Override active Audio MLP ablation preset (e.g. W_512_moderate)")
     args = parser.parse_args()
 
     run_training_session(
@@ -582,6 +592,7 @@ def main() -> None:
         seed=args.seed,
         evaluation_mode=args.evaluation_mode,
         fold_index=args.fold_index,
+        preset=args.preset,
     )
 
 
