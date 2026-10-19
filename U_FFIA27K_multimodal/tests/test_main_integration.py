@@ -36,6 +36,13 @@ class TestMainIntegration(unittest.TestCase):
         filename = build_artifact_filename(cfg, timestamp="20261019_120000")
         self.assertTrue(filename.startswith("Video_C4_rgb_mag_composite_ln_"))
 
+    def test_run_training_session_cli_overrides_dry_run(self):
+        from main import run_training_session
+        try:
+            run_training_session(preset="C4_rgb_vorticity", temporal_mode="abs_diff", dry_run=True, device_str="cpu")
+        except Exception as e:
+            self.fail(f"run_training_session with CLI overrides failed with: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()

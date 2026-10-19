@@ -199,6 +199,8 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
 
         # 3. Test backward pass & gradient flow
         loss_type = getattr(config, "loss_type", "pairwise_tournament")
+        if isinstance(model, VideoSOTANet) or getattr(config.model, "backbone", "") == "VideoSOTANet":
+            loss_type = "ce"
         if loss_type == "pairwise_tournament":
             loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(config, "weight_act", 0.5),
@@ -470,6 +472,7 @@ def run_training_session(
             available = ", ".join(config.video_ablation.presets.keys())
             raise ValueError(f"Unknown preset '{preset}'. Available: {available}")
         config.video_ablation.active_config = preset
+        config.model.backbone = "VideoSOTANet"
 
     if temporal_mode is not None:
         if getattr(config, "video_ablation", None) is None:
@@ -478,6 +481,7 @@ def run_training_session(
         if temporal_mode not in ("sum", "abs_diff", "composite_ln"):
             raise ValueError(f"Unknown temporal_mode '{temporal_mode}'. Must be one of: sum, abs_diff, composite_ln")
         config.video_ablation.temporal_mode = temporal_mode
+        config.model.backbone = "VideoSOTANet"
 
     if seed is not None:
         config.seed = seed

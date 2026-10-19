@@ -90,7 +90,9 @@ class VideoSOTANet(nn.Module):
 
         return {
             "clipwise_output": logits,
+            "logits": logits,
             "logits_video": logits,
+            "probabilities": torch.softmax(logits, dim=-1),
             "f_video": f_video,
             "video_features": f_video,
         }

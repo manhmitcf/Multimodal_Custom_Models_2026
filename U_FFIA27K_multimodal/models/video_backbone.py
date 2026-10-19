@@ -186,7 +186,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         flat_tokens = self.forward_features(flat_frames)  # [B * T, embed_dim]
 
         # Reshape to temporal sequence of frame tokens: [B, T, embed_dim]
-        tokens_video = flat_tokens.view(B, T, self.embed_dim)
+        tokens_video = flat_tokens.view(B, T, -1)
 
         if self.temporal_mode == "sum":
             if T >= 2:

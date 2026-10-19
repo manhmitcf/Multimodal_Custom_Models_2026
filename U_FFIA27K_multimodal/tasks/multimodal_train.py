@@ -91,6 +91,10 @@ class MultimodalTrainer:
 
         # Setup Loss
         loss_type = getattr(self.config, "loss_type", "pairwise_tournament")
+        from models.video_sota_net import VideoSOTANet
+        if isinstance(self.model, VideoSOTANet) or getattr(self.config.model, "backbone", "") == "VideoSOTANet":
+            loss_type = "ce"
+
         if loss_type == "pairwise_tournament":
             self.loss_fn = PairwiseTournamentLoss(
                 weight_act=getattr(self.config, "weight_act", 0.5),
