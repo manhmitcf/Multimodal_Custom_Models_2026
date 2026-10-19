@@ -37,11 +37,30 @@ class TestMainIntegration(unittest.TestCase):
         self.assertTrue(filename.startswith("Video_C4_rgb_mag_composite_ln_"))
 
     def test_run_training_session_cli_overrides_dry_run(self):
+        import shutil
+        import tempfile
         from main import run_training_session
+
+        orig_json = Path(project_root) / "config" / "train_config.json"
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            tmp_path = tmp.name
         try:
-            run_training_session(preset="C4_rgb_vorticity", temporal_mode="abs_diff", dry_run=True, device_str="cpu")
+            shutil.copyfile(orig_json, tmp_path)
+            run_training_session(
+                train_config_path=tmp_path,
+                preset="C4_rgb_vorticity",
+                temporal_mode="abs_diff",
+                dry_run=True,
+                device_str="cpu"
+            )
+            reloaded = TrainConfig.from_json(tmp_path)
+            self.assertEqual(reloaded.video_ablation.active_config, "C4_rgb_vorticity")
+            self.assertEqual(reloaded.video_ablation.temporal_mode, "abs_diff")
         except Exception as e:
             self.fail(f"run_training_session with CLI overrides failed with: {e}")
+        finally:
+            if Path(tmp_path).exists():
+                Path(tmp_path).unlink()
 
 
 if __name__ == "__main__":
