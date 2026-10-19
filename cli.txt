@@ -71,18 +71,18 @@ python test_tournament_architecture.py
 python main.py --dry-run
 
 # ==============================================================================
-# 5. GIAI ĐOẠN 1: HUẤN LUYỆN 8 CẤU HÌNH KÊNH (TEMPORAL MODE = "sum")
+# 5. GIAI ĐOẠN 1: HUẤN LUYỆN 8 CẤU HÌNH KÊNH (TEMPORAL MODE = "abs_diff")
 # ==============================================================================
 # Bạn có 2 cách chọn cấu hình:
 # Cách A (Chỉnh file JSON bằng tay): Mở config/train_config.json:
 #   "video_ablation": {
 #       "active_config": "C5_rgb_scalars",
-#       "temporal_mode": "sum"
+#       "temporal_mode": "abs_diff"
 #   }
 #   Rồi chạy: python main.py
 #
 # Cách B (Dùng cờ CLI ghi đè trực tiếp mà không cần sửa file JSON):
-#   python main.py --preset <TÊN_PRESET> --temporal-mode sum
+#   python main.py --preset <TÊN_PRESET> --temporal-mode abs_diff
 #
 # Danh sách 8 cấu hình kênh:
 # 1. C3_rgb              : RGB [0, 1, 2] (~2.613M params)
@@ -99,7 +99,7 @@ python main.py --dry-run
 pkill -f "python main.py" || true
 
 # Chạy preset mong muốn (ví dụ C5_rgb_scalars):
-nohup python main.py --preset C5_rgb_scalars --temporal-mode sum > main_C5_rgb_scalars.log 2>&1 &
+nohup python main.py --preset C5_rgb_scalars --temporal-mode abs_diff > main_C5_rgb_scalars.log 2>&1 &
 tail -n +1 -f main_C5_rgb_scalars.log
 
 # Hoặc chạy theo cách chỉnh file JSON bằng tay (Cách A):

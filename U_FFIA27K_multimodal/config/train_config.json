@@ -70,7 +70,7 @@
   },
   "video_ablation": {
     "active_config": "C7_full",
-    "temporal_mode": "sum",
+    "temporal_mode": "abs_diff",
     "embed_dim": 384,
     "drop_path_rate": 0.1,
     "presets": {

@@ -1,9 +1,9 @@
 # ==============================================================================
 # MARIMO GPU SERVER: TOÀN BỘ QUY TRÌNH CHẠY TỪ ĐẦU (ALL-IN-ONE ONE-SHOT SCRIPT)
 # CẤU HÌNH: PRESET 4/8 - C5_rgb_flow (RGB + Vector dòng quang học (u, v) [0, 1, 2, 3, 4])
-# Mode thời gian: sum (v0 + v1)
+# Mode thời gian: abs_diff (|v1 - v0|)
 # Tham số: 2,614,180 (~2.614M params) | FLOPs: ~1.6861 GFLOPs
-# Thư mục lưu Checkpoint: checkpoint/Video_C5_rgb_flow_sum/
+# Thư mục lưu Checkpoint: checkpoint/Video_C5_rgb_flow_abs_diff/
 # Log file: main_C5_rgb_flow.log
 # ==============================================================================
 
@@ -66,12 +66,12 @@ pip install -r requirements.txt
 # ------------------------------------------------------------------------------
 # 4. KIỂM TOÁN TIỀN BAY VÀ CHẠY HUẤN LUYỆN PRESET C5_rgb_flow
 # ------------------------------------------------------------------------------
-python main.py --dry-run --preset C5_rgb_flow --temporal-mode sum
+python main.py --dry-run --preset C5_rgb_flow --temporal-mode abs_diff
 
 pkill -f "python main.py" || true
 sleep 1
 
-nohup python main.py --preset C5_rgb_flow --temporal-mode sum > main_C5_rgb_flow.log 2>&1 &
+nohup python main.py --preset C5_rgb_flow --temporal-mode abs_diff > main_C5_rgb_flow.log 2>&1 &
 echo ">>> Đã khởi chạy tiến trình huấn luyện C5_rgb_flow nền!"
 echo ">>> Đang mở log theo dõi trực tiếp (nhấn Ctrl+C để thoát xem log, training vẫn tiếp tục chạy)..."
 sleep 2

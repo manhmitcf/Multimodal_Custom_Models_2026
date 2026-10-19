@@ -1,9 +1,9 @@
 # ==============================================================================
 # MARIMO GPU SERVER: TOÀN BỘ QUY TRÌNH CHẠY TỪ ĐẦU (ALL-IN-ONE ONE-SHOT SCRIPT)
 # CẤU HÌNH: PRESET 3/8 - C4_rgb_vorticity (RGB + Độ xoáy omega [0, 1, 2, 6])
-# Mode thời gian: sum (v0 + v1)
+# Mode thời gian: abs_diff (|v1 - v0|)
 # Tham số: 2,613,412 (~2.613M params) | FLOPs: ~1.6765 GFLOPs
-# Thư mục lưu Checkpoint: checkpoint/Video_C4_rgb_vorticity_sum/
+# Thư mục lưu Checkpoint: checkpoint/Video_C4_rgb_vorticity_abs_diff/
 # Log file: main_C4_rgb_vorticity.log
 # ==============================================================================
 
@@ -66,12 +66,12 @@ pip install -r requirements.txt
 # ------------------------------------------------------------------------------
 # 4. KIỂM TOÁN TIỀN BAY VÀ CHẠY HUẤN LUYỆN PRESET C4_rgb_vorticity
 # ------------------------------------------------------------------------------
-python main.py --dry-run --preset C4_rgb_vorticity --temporal-mode sum
+python main.py --dry-run --preset C4_rgb_vorticity --temporal-mode abs_diff
 
 pkill -f "python main.py" || true
 sleep 1
 
-nohup python main.py --preset C4_rgb_vorticity --temporal-mode sum > main_C4_rgb_vorticity.log 2>&1 &
+nohup python main.py --preset C4_rgb_vorticity --temporal-mode abs_diff > main_C4_rgb_vorticity.log 2>&1 &
 echo ">>> Đã khởi chạy tiến trình huấn luyện C4_rgb_vorticity nền!"
 echo ">>> Đang mở log theo dõi trực tiếp (nhấn Ctrl+C để thoát xem log, training vẫn tiếp tục chạy)..."
 sleep 2
