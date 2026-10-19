@@ -150,7 +150,11 @@ class MultimodalTrainer:
         self._init_logging_and_checkpoints()
 
     def _init_logging_and_checkpoints(self) -> None:
-        model_name = getattr(self.config.model, "backbone", getattr(self.model, "model_name", self.model.__class__.__name__))
+        ablation_cfg = getattr(self.config, "video_ablation", None)
+        if getattr(self.config.model, "backbone", "") == "VideoSOTANet" and ablation_cfg is not None:
+            model_name = f"Video_{ablation_cfg.active_config}_{ablation_cfg.temporal_mode}"
+        else:
+            model_name = getattr(self.config.model, "backbone", getattr(self.model, "model_name", self.model.__class__.__name__))
         self.run_dir = os.path.join(self.config.ckpt_dir, model_name)
 
         if self.config.dataset_splitter.evaluation_mode == "cross_validation" and self.config.dataset_splitter.fold_index is not None:

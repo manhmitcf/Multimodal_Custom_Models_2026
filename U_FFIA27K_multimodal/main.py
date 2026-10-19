@@ -19,7 +19,7 @@ import torch
 from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
 from features.audio_frontend import AudioFrontend
-from models import MultimodalSOTANet
+from models import MultimodalSOTANet, VideoSOTANet
 from tasks import MultimodalTrainer
 from utils import (
     count_parameters,
@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY = {
     "MultimodalSOTANet": MultimodalSOTANet,
+    "VideoSOTANet": VideoSOTANet,
 }
 
 
@@ -60,6 +61,36 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
 
     active_seed = seed if seed is not None else int(getattr(config, "seed", getattr(config.dataset_splitter, "seed", 42)))
     seed_everything(active_seed)
+
+    if config.model.backbone == "VideoSOTANet":
+        ablation_cfg = getattr(config, "video_ablation", None)
+        if ablation_cfg is not None:
+            channel_indices = ablation_cfg.get_active_channel_indices()
+            active_cfg = ablation_cfg.active_config
+            temporal_mode = ablation_cfg.temporal_mode
+            embed_dim = ablation_cfg.embed_dim
+            drop_path = ablation_cfg.drop_path_rate
+        else:
+            channel_indices = [0, 1, 2, 3, 4, 5, 6]
+            active_cfg = "C7_full"
+            temporal_mode = "sum"
+            embed_dim = getattr(config.model, "embed_dim", 384)
+            drop_path = getattr(config.model, "video_drop_path", 0.1)
+
+        logger.info(
+            f"Building VideoSOTANet unimodal network: "
+            f"Active Config=[{active_cfg}], Channels={channel_indices}, "
+            f"Temporal Mode=[{temporal_mode}], Embed Dim={embed_dim}, DropPath={drop_path}"
+        )
+        return model_cls(
+            channel_indices=channel_indices,
+            temporal_mode=temporal_mode,
+            embed_dim=embed_dim,
+            classes_num=config.model.classes_num,
+            drop_path_rate=drop_path,
+            image_size=config.image_size,
+            num_frames=config.num_frames,
+        )
 
     in_chans = getattr(config, "in_chans", getattr(config.video_features, "num_channels", 7))
 
@@ -126,11 +157,20 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     try:
         # 1. Parameter audit
         stats = count_parameters(model)
-        logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
-        logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
-        logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+        if isinstance(model, VideoSOTANet):
+            in_ch = len(model.channel_indices)
+            v_params = sum(p.numel() for p in model.video_backbone.parameters() if p.requires_grad)
+            clf_params = sum(p.numel() for p in model.classifier.parameters() if p.requires_grad)
+            logger.info(f"  - Video Backbone (ConvNeXt-Nano, in_ch={in_ch}, 384-dim) : {v_params:,} ({v_params/1e6:.3f} M)")
+            logger.info(f"  - Classification Head (Linear 384 -> 4)                    : {clf_params:,} ({clf_params/1e6:.3f} M)")
+            logger.info(f"  * Total Architecture Parameters:       {stats['total']:,} ({stats['total_million']:.3f} M)")
+            logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+        else:
+            logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+            logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+            logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+            logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
+            logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
 
         try:
             gflops = measure_flops(model, device=device.type, num_frames=getattr(config, "num_frames", 2))
@@ -262,6 +302,8 @@ def generate_cv_summary_report(model_dir: Path, num_folds: int) -> Path:
 
 def build_artifact_filename(config: TrainConfig, timestamp: str, suffix: str = ".zip") -> str:
     model_name = config.model.backbone
+    if config.model.backbone == "VideoSOTANet" and getattr(config, "video_ablation", None) is not None:
+        model_name = f"Video_{config.video_ablation.active_config}_{config.video_ablation.temporal_mode}"
     dataset_name = Path(config.dataset_splitter.dataset_path).name or "dataset"
     split_strategy = config.dataset_splitter.split_strategy
     eval_mode = config.dataset_splitter.evaluation_mode
@@ -409,6 +451,8 @@ def run_training_session(
     seed: Optional[int] = None,
     evaluation_mode: Optional[str] = None,
     fold_index: Optional[int] = None,
+    preset: Optional[str] = None,
+    temporal_mode: Optional[str] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -417,6 +461,24 @@ def run_training_session(
         artifact_upload_config_path = str(pkg_dir / "config" / "artifact_upload_config.json")
 
     config = TrainConfig.from_json(train_config_path)
+
+    if preset is not None:
+        if getattr(config, "video_ablation", None) is None:
+            from config.train_config import VideoChannelAblationConfig
+            config.video_ablation = VideoChannelAblationConfig()
+        if preset not in config.video_ablation.presets:
+            available = ", ".join(config.video_ablation.presets.keys())
+            raise ValueError(f"Unknown preset '{preset}'. Available: {available}")
+        config.video_ablation.active_config = preset
+
+    if temporal_mode is not None:
+        if getattr(config, "video_ablation", None) is None:
+            from config.train_config import VideoChannelAblationConfig
+            config.video_ablation = VideoChannelAblationConfig()
+        if temporal_mode not in ("sum", "abs_diff", "composite_ln"):
+            raise ValueError(f"Unknown temporal_mode '{temporal_mode}'. Must be one of: sum, abs_diff, composite_ln")
+        config.video_ablation.temporal_mode = temporal_mode
+
     if seed is not None:
         config.seed = seed
         config.dataset_splitter.seed = seed
@@ -437,6 +499,8 @@ def run_training_session(
 
     eval_mode = config.dataset_splitter.evaluation_mode
     model_name = config.model.backbone
+    if config.model.backbone == "VideoSOTANet" and getattr(config, "video_ablation", None) is not None:
+        model_name = f"Video_{config.video_ablation.active_config}_{config.video_ablation.temporal_mode}"
 
     # =========================================================================
     # FAST PRE-FLIGHT DRY-RUN (Verify full network before preloading RAM)
@@ -540,6 +604,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, help="Master random seed for reproducibility (default: 42 from config)")
     parser.add_argument("--evaluation-mode", type=str, choices=["holdout", "cross_validation"], default=None, help="Override evaluation mode (holdout or cross_validation)")
     parser.add_argument("--fold-index", type=int, default=None, help="Specific CV fold index to run (0 to num_folds - 1)")
+    parser.add_argument("--preset", type=str, default=None, help="Override active Video channel ablation preset (e.g. C5_rgb_scalars)")
+    parser.add_argument("--temporal-mode", type=str, choices=["sum", "abs_diff", "composite_ln"], default=None, help="Override temporal aggregation mode (sum, abs_diff, composite_ln)")
     args = parser.parse_args()
 
     run_training_session(
@@ -550,6 +616,8 @@ def main() -> None:
         seed=args.seed,
         evaluation_mode=args.evaluation_mode,
         fold_index=args.fold_index,
+        preset=args.preset,
+        temporal_mode=args.temporal_mode,
     )
 
 
