@@ -1,0 +1,23 @@
+# ==============================================================================
+# RUN PRESET 8/8: C7_full
+# Kênh đầu vào: Full 7 Kênh Động Học [0, 1, 2, 3, 4, 5, 6] (7 kênh)
+# Temporal mode: sum (v0 + v1)
+# Mô tả: RGB + Optical Flow (u, v) + Độ lớn vận tốc |V| + Độ xoáy omega
+# Tham số: 2,615,716 (~2.616M params) | FLOPs: ~1.7054 GFLOPs
+# Thư mục checkpoint lưu: checkpoint/Video_C7_full_sum/
+# Log file: main_C7_full.log
+# ==============================================================================
+
+# 1. Chuyển vào thư mục dự án
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+
+# 2. Dừng tiến trình huấn luyện cũ (nếu có)
+pkill -f "python main.py" || true
+sleep 1
+
+# 3. Chạy nền với preset C7_full và theo dõi log
+nohup python main.py --preset C7_full --temporal-mode sum > main_C7_full.log 2>&1 &
+echo ">>> Đã khởi chạy tiến trình huấn luyện cho preset C7_full!"
+echo ">>> Đang mở log theo dõi trực tiếp (nhấn Ctrl+C để thoát xem log, tiến trình vẫn chạy nền)..."
+sleep 2
+tail -n +1 -f main_C7_full.log

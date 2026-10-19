@@ -27,6 +27,8 @@ teachers/
 *.log
 run_marimo.txt
 run_*.txt
+!run_presets/
+!run_presets/**
 cli_*.txt
 *.secret
 *.zip

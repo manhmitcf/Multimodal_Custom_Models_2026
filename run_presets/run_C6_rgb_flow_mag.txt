@@ -1,0 +1,23 @@
+# ==============================================================================
+# RUN PRESET 6/8: C6_rgb_flow_mag
+# Kênh đầu vào: RGB + Optical Flow (u, v) + Độ lớn vận tốc |V| [0, 1, 2, 3, 4, 5] (6 kênh)
+# Temporal mode: sum (v0 + v1)
+# Mô tả: RGB kết hợp toàn bộ thông tin vận tốc (hướng và độ lớn), loại trừ độ xoáy
+# Tham số: 2,614,948 (~2.615M params) | FLOPs: ~1.6958 GFLOPs
+# Thư mục checkpoint lưu: checkpoint/Video_C6_rgb_flow_mag_sum/
+# Log file: main_C6_rgb_flow_mag.log
+# ==============================================================================
+
+# 1. Chuyển vào thư mục dự án
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+
+# 2. Dừng tiến trình huấn luyện cũ (nếu có)
+pkill -f "python main.py" || true
+sleep 1
+
+# 3. Chạy nền với preset C6_rgb_flow_mag và theo dõi log
+nohup python main.py --preset C6_rgb_flow_mag --temporal-mode sum > main_C6_rgb_flow_mag.log 2>&1 &
+echo ">>> Đã khởi chạy tiến trình huấn luyện cho preset C6_rgb_flow_mag!"
+echo ">>> Đang mở log theo dõi trực tiếp (nhấn Ctrl+C để thoát xem log, tiến trình vẫn chạy nền)..."
+sleep 2
+tail -n +1 -f main_C6_rgb_flow_mag.log
