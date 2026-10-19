@@ -165,6 +165,10 @@ class MultimodalTrainer:
             self.run_dir = os.path.join(self.run_dir, f"fold_{self.config.dataset_splitter.fold_index}")
 
         os.makedirs(self.run_dir, exist_ok=True)
+        try:
+            self.config.to_json(os.path.join(self.run_dir, "resolved_config.json"))
+        except Exception:
+            pass
         self.logger = HistoryLogger(log_dir=self.run_dir)
         self.best_checkpoint_path = os.path.join(self.run_dir, 'best_model.pth')
         self.best_video_path = os.path.join(self.run_dir, 'best_video_backbone.pth')

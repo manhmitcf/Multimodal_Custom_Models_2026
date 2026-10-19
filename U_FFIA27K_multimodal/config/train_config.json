@@ -21,27 +21,21 @@
     "min_delta": 0.0
   },
   "loss": {
-    "loss_type": "ce"
+    "loss_type": "ce",
+    "weight_act": 0.5,
+    "weight_pairwise": 0.5,
+    "weight_ce": 1.0,
+    "aux_loss_weight": 0.3
   },
   "model": {
     "backbone": "VideoSOTANet",
+    "embed_dim": 384,
     "classes_num": 4,
-    "embed_dim": 384,
-    "video_drop_path": 0.1
-  },
-  "video_ablation": {
-    "active_config": "C7_full",
-    "temporal_mode": "sum",
-    "embed_dim": 384,
-    "presets": {
-      "C3_rgb": [0, 1, 2],
-      "C4_rgb_mag": [0, 1, 2, 5],
-      "C4_rgb_vorticity": [0, 1, 2, 6],
-      "C5_rgb_flow": [0, 1, 2, 3, 4],
-      "C5_rgb_scalars": [0, 1, 2, 5, 6],
-      "C6_rgb_flow_mag": [0, 1, 2, 3, 4, 5],
-      "C6_rgb_flow_vorticity": [0, 1, 2, 3, 4, 6],
-      "C7_full": [0, 1, 2, 3, 4, 5, 6]
+    "video_drop_path": 0.1,
+    "tie_breakers": {
+      "enable_b12": true,
+      "enable_b23": true,
+      "enable_b13": true
     }
   },
   "video_features": {
@@ -73,5 +67,69 @@
     "num_folds": 5,
     "fold_index": null,
     "cv_val_ratio": 0.2
+  },
+  "video_ablation": {
+    "active_config": "C7_full",
+    "temporal_mode": "sum",
+    "embed_dim": 384,
+    "drop_path_rate": 0.1,
+    "presets": {
+      "C3_rgb": [
+        0,
+        1,
+        2
+      ],
+      "C4_rgb_mag": [
+        0,
+        1,
+        2,
+        5
+      ],
+      "C4_rgb_vorticity": [
+        0,
+        1,
+        2,
+        6
+      ],
+      "C5_rgb_flow": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "C5_rgb_scalars": [
+        0,
+        1,
+        2,
+        5,
+        6
+      ],
+      "C6_rgb_flow_mag": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "C6_rgb_flow_vorticity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        6
+      ],
+      "C7_full": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    }
   }
 }

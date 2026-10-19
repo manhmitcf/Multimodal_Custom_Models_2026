@@ -494,3 +494,12 @@ class TrainConfig(BaseModel):
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls(**data)
+
+    def to_json(self, path: str) -> str:
+        """Serialize current training configuration to JSON on disk."""
+        data = self.model_dump()
+        target_path = Path(path).resolve()
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return str(target_path)

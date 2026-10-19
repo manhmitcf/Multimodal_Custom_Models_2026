@@ -483,6 +483,13 @@ def run_training_session(
         config.video_ablation.temporal_mode = temporal_mode
         config.model.backbone = "VideoSOTANet"
 
+    if preset is not None or temporal_mode is not None:
+        try:
+            config.to_json(train_config_path)
+            logger.info(f"Updated configuration on disk: active_config='{config.video_ablation.active_config}', temporal_mode='{config.video_ablation.temporal_mode}' saved to '{train_config_path}'.")
+        except Exception as err:
+            logger.warning(f"Could not persist active config to '{train_config_path}': {err}")
+
     if seed is not None:
         config.seed = seed
         config.dataset_splitter.seed = seed
