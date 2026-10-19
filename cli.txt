@@ -1,4 +1,11 @@
 # ==============================================================================
+# HƯỚNG DẪN VẬN HÀNH: ABLATION STUDY KÊNH ĐẦU VÀO & CƠ CHẾ THỜI GIAN VIDEO BACKBONE
+# Nhánh Git: ablations_final/video_input_channels
+# Kiến trúc: Unimodal VideoSOTANet (ConvNeXt-Nano 384-dim native, ~2.61M params, ~1.7 GFLOPs)
+# HF Repo kết quả: manhmitcf/Results_final_video_input_channels
+# ==============================================================================
+
+# ==============================================================================
 # 1. CẤU HÌNH TOKEN VÀ TẢI DATASET TRÊN MÁY CHỦ (MARIMO / GPU SERVER)
 # ==============================================================================
 # Đọc token từ file token.txt (tự động loại bỏ BOM, khoảng trắng thừa)
@@ -27,7 +34,7 @@ cd /marimo && nohup git clone https://huggingface.co/datasets/manhmitcf/Fish_Fee
 tail -n +1 -f /marimo/clone.log
 
 # ==============================================================================
-# 2. SẮP XẾP LẠI THƯ MỤC DATASET
+# 2. SẮP XẾP LẠI THƯ MỤC DATASET (Chỉ làm 1 lần nếu mới clone)
 # ==============================================================================
 mv /marimo/Fish_Feeding_Intensity_Dataset/audio/audio/* /marimo/Fish_Feeding_Intensity_Dataset/audio/
 mv /marimo/Fish_Feeding_Intensity_Dataset/video/video/* /marimo/Fish_Feeding_Intensity_Dataset/video/
@@ -37,34 +44,96 @@ find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
 find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
 
 # ==============================================================================
-# 3. HUẤN LUYỆN: Nhánh Hoàn Thiện Video Tie-Breakers (final/video_tie_breakers) (400 EPOCHS)
-#    (7-ch ConvNeXt-Nano + TKEO-STFT-MLP 2049 + 3 Configurable Video Tie-Breakers B12/B23/B13: ~4.09M params)
-#    Artifact Upload Repo: manhmitcf/Results_final_video_tie_breakers
+# 3. CẬP NHẬT MÃ NGUỒN NHÁNH ABLATION VIDEO
 # ==============================================================================
 if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
     git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
 fi
 cd /marimo/Capstone_2026_Fish_Feeding_Intensity
 git fetch origin
-git checkout final/video_tie_breakers
-git pull origin final/video_tie_breakers
+git checkout ablations_final/video_input_channels
+git pull origin ablations_final/video_input_channels
 
 cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# --- BƯỚC 3.1: CHẾ ĐỘ TEST & KIỂM TOÁN TIỀN BAY (< 5 giây) ---
+# ==============================================================================
+# 4. KIỂM TOÁN TIỀN BAY & XÁC THỰC TOÀN DIỆN (< 15 giây)
+# ==============================================================================
+# Kiểm tra toàn bộ 8 preset kênh, 3 temporal modes, gradient 100%, FLOPs
+python test_video_channel_ablation.py
+
+# Kiểm tra tương thích ngược mô hình tournament cũ
 python test_tournament_architecture.py
+
+# Kiểm tra dry-run mô hình hiện hành trong config
 python main.py --dry-run
 
-# --- BƯỚC 3.2: CHẠY HUẤN LUYỆN CHÍNH THỨC TRÊN GPU (BACKGROUND) ---
+# ==============================================================================
+# 5. GIAI ĐOẠN 1: HUẤN LUYỆN 8 CẤU HÌNH KÊNH (TEMPORAL MODE = "sum")
+# ==============================================================================
+# Bạn có 2 cách chọn cấu hình:
+# Cách A (Chỉnh file JSON bằng tay): Mở config/train_config.json:
+#   "video_ablation": {
+#       "active_config": "C5_rgb_scalars",
+#       "temporal_mode": "sum"
+#   }
+#   Rồi chạy: python main.py
+#
+# Cách B (Dùng cờ CLI ghi đè trực tiếp mà không cần sửa file JSON):
+#   python main.py --preset <TÊN_PRESET> --temporal-mode sum
+#
+# Danh sách 8 cấu hình kênh:
+# 1. C3_rgb              : RGB [0, 1, 2] (~2.613M params)
+# 2. C4_rgb_mag          : RGB + |V| [0, 1, 2, 5] (~2.613M params)
+# 3. C4_rgb_vorticity    : RGB + omega [0, 1, 2, 6] (~2.613M params)
+# 4. C5_rgb_flow         : RGB + u + v [0, 1, 2, 3, 4] (~2.614M params)
+# 5. C5_rgb_scalars      : RGB + |V| + omega [0, 1, 2, 5, 6] (~2.614M params)
+# 6. C6_rgb_flow_mag     : RGB + u + v + |V| [0, 1, 2, 3, 4, 5] (~2.615M params)
+# 7. C6_rgb_flow_vorticity: RGB + u + v + omega [0, 1, 2, 3, 4, 6] (~2.615M params)
+# 8. C7_full             : RGB + u + v + |V| + omega [0..6] (~2.616M params)
+
+# --- Ví dụ chạy nền nohup cho từng preset (Cách B - CLI) ---
+# Dừng tiến trình cũ nếu có:
 pkill -f "python main.py" || true
 
-nohup python main.py > main.log 2>&1 &
-tail -n +1 -f main.log
+# Chạy preset mong muốn (ví dụ C5_rgb_scalars):
+nohup python main.py --preset C5_rgb_scalars --temporal-mode sum > main_C5_rgb_scalars.log 2>&1 &
+tail -n +1 -f main_C5_rgb_scalars.log
+
+# Hoặc chạy theo cách chỉnh file JSON bằng tay (Cách A):
+# nohup python main.py > main.log 2>&1 &
+# tail -n +1 -f main.log
 
 # ==============================================================================
-# 4. THEO DÕI TIẾN ĐỘ TRAINING BẤT CỨ LÚC NÀO
+# 6. GIAI ĐOẠN 2: HUẤN LUYỆN 3 CHẾ ĐỘ THỜI GIAN TRÊN CẤU HÌNH TỐT NHẤT (C*)
 # ==============================================================================
-# cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal && tail -n +1 -f main.log
+# Giả sử sau Giai đoạn 1, C* là "C5_rgb_scalars":
+# Chế độ 1 (sum): Đã chạy ở GĐ 1, giữ nguyên kết quả!
+# Chế độ 2 (abs_diff):
+nohup python main.py --preset C5_rgb_scalars --temporal-mode abs_diff > main_diff.log 2>&1 &
+tail -n +1 -f main_diff.log
+
+# Chế độ 3 (composite_ln):
+nohup python main.py --preset C5_rgb_scalars --temporal-mode composite_ln > main_comp.log 2>&1 &
+tail -n +1 -f main_comp.log
+
+# ==============================================================================
+# 7. THEO DÕI TIẾN ĐỘ & QUẢN LÝ CHECKPOINT CÔ LẬP
+# ==============================================================================
+# Kết quả mỗi lượt chạy được lưu hoàn toàn tách biệt:
+# checkpoint/Video_{active_config}_{temporal_mode}/
+#   ├── best_model.pth           (Toàn bộ trọng số VideoSOTANet đạt peak)
+#   ├── best_video_backbone.pth  (Trọng số ConvNeXt-Nano 384-dim)
+#   ├── last_model.pth           (Trạng thái resume đầy đủ)
+#   ├── history.csv              (Chi tiết 38 metrics qua các epoch)
+#   ├── summary.csv              (Bảng tóm tắt kết quả, params, GFLOPs)
+#   ├── evaluation_detailed_report.txt / .json
+#   └── learning_curves.png, confusion_matrix_heatmaps.png
+#
+# Khi hoàn tất mỗi lượt, hệ thống tự động nén và tải lên Hugging Face Repo:
+# manhmitcf/Results_final_video_input_channels
+#
+# Kiểm tra GPU & tiến trình:
 # nvidia-smi
