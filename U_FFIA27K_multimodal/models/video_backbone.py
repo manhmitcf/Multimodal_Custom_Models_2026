@@ -102,6 +102,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         depths: Tuple[int, ...] = (1, 1, 3, 1),
         num_frames: int = 2,
         drop_path_rate: float = 0.1,
+        temporal_mode: str = "multimodal",
         **kwargs
     ) -> None:
         super().__init__()
@@ -109,6 +110,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         self.in_chans = in_chans
         self.num_frames = num_frames
         self.drop_path_rate = drop_path_rate
+        self.temporal_mode = temporal_mode
 
         # 1. Stem: Patchify 4x4
         self.stem = nn.Sequential(
@@ -142,13 +144,15 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
 
         # 4. Final normalization & projection
         self.norm_final = nn.LayerNorm(dims[-1], eps=1e-6)
-        self.proj = nn.Sequential(
-            nn.Linear(dims[-1], embed_dim),
-            nn.LayerNorm(embed_dim)
-        )
 
-        # Residual normalization
-        self.norm_video = nn.LayerNorm(embed_dim)
+        if self.temporal_mode == "multimodal":
+            self.proj = nn.Sequential(
+                nn.Linear(dims[-1], embed_dim),
+                nn.LayerNorm(embed_dim)
+            )
+            self.norm_video = nn.LayerNorm(embed_dim)
+        elif self.temporal_mode == "composite_ln":
+            self.norm_composite = nn.LayerNorm(embed_dim)
 
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -163,26 +167,45 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         # Global Average Pooling: [B * T, 384, H', W'] -> [B * T, 384]
         x = x.mean(dim=[-2, -1])
         x = self.norm_final(x)
-        x = self.proj(x)  # [B * T, embed_dim]
+        if self.temporal_mode == "multimodal":
+            x = self.proj(x)  # [B * T, embed_dim]
         return x
 
-    def forward(self, frames_7ch: torch.Tensor) -> torch.Tensor:
+    def forward(self, frames: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            frames_7ch: [B, T, 7, H, W] tensor (T=2)
+            frames: [B, T, C, H, W] tensor (T=2)
 
         Returns:
             f_video: Joint spatiotemporal video embedding [B, embed_dim]
         """
-        B, T, C, H, W = frames_7ch.shape
+        B, T, C, H, W = frames.shape
 
-        # Process all T frames: [B * T, 7, H, W] -> [B * T, embed_dim]
-        flat_frames = frames_7ch.reshape(B * T, C, H, W)
+        # Process all T frames: [B * T, C, H, W] -> [B * T, embed_dim]
+        flat_frames = frames.reshape(B * T, C, H, W)
         flat_tokens = self.forward_features(flat_frames)  # [B * T, embed_dim]
 
         # Reshape to temporal sequence of frame tokens: [B, T, embed_dim]
         tokens_video = flat_tokens.view(B, T, self.embed_dim)
 
+        if self.temporal_mode == "sum":
+            if T >= 2:
+                return tokens_video[:, 0] + tokens_video[:, 1]
+            return tokens_video[:, 0]
+
+        elif self.temporal_mode == "abs_diff":
+            if T >= 2:
+                return torch.abs(tokens_video[:, 1] - tokens_video[:, 0])
+            return tokens_video[:, 0]
+
+        elif self.temporal_mode == "composite_ln":
+            if T >= 2:
+                v_sum = tokens_video[:, 0] + tokens_video[:, 1]
+                v_diff = torch.abs(tokens_video[:, 1] - tokens_video[:, 0])
+                return self.norm_composite(v_sum + v_diff)
+            return self.norm_composite(tokens_video[:, 0])
+
+        # Default multimodal mode (T=2 or more)
         # 1. Pure Spatial feature from the final frame (appearance of fish & water surface)
         f_spatial = tokens_video[:, -1]  # [B, embed_dim]
 
@@ -201,3 +224,4 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         f_video = self.norm_video(f_spatial + f_motion + f_burst_v)  # [B, embed_dim]
 
         return f_video
+
