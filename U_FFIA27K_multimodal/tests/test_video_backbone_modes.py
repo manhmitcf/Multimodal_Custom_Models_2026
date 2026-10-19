@@ -71,6 +71,18 @@ class TestVideoBackboneModes(unittest.TestCase):
         out = model(x)
         self.assertEqual(out.shape, (B, 224))
 
+    def test_standalone_defaults_composite_ln(self):
+        # Even without passing embed_dim=384, composite_ln must self-synchronize to 384
+        model = ConvNeXtNanoVideoBackbone(in_chans=7, temporal_mode="composite_ln")
+        self.assertEqual(model.embed_dim, 384)
+        x = torch.randn(2, 2, 7, 224, 224)
+        out = model(x)
+        self.assertEqual(out.shape, (2, 384))
+
+    def test_invalid_temporal_mode_raises(self):
+        with self.assertRaises(ValueError):
+            ConvNeXtNanoVideoBackbone(temporal_mode="invalid_mode")
+
 
 if __name__ == "__main__":
     unittest.main()

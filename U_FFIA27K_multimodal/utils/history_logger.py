@@ -350,11 +350,17 @@ class HistoryLogger:
         Exports both SEPARATE standalone files for each branch (Fusion, Video, Audio)
         and a consolidated evaluation report file (.txt and .json).
         """
+        model_title = "Multimodal Tournament Fusion"
+        if hasattr(self, "model_name") and "Video" in str(self.model_name):
+            model_title = f"Video Backbone ({self.model_name})"
+        elif hasattr(self, "model_name") and "Audio" in str(self.model_name):
+            model_title = f"Audio Backbone ({self.model_name})"
+
         # 1. Separate standalone files for Validation split
         self._write_single_branch_report(
             output_txt_path=os.path.join(self.log_dir, 'report_val_fusion.txt'),
             output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_val_fusion.csv'),
-            branch_name="Multimodal Tournament Fusion",
+            branch_name=model_title,
             split_name="Validation",
             acc=float(np.mean(val_statistics.get('accuracy', 0.0))),
             mAP=float(np.mean(val_statistics.get('average_precision', 0.0))),
@@ -364,37 +370,39 @@ class HistoryLogger:
             report_str=val_statistics.get('message', '')
         )
 
-        self._write_single_branch_report(
-            output_txt_path=os.path.join(self.log_dir, 'report_val_video.txt'),
-            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_val_video.csv'),
-            branch_name="Video Auxiliary Head (ConvNeXt-Nano 7-ch)",
-            split_name="Validation",
-            acc=float(val_statistics.get('acc_video', 0.0)),
-            mAP=None,
-            f1_macro=float(val_statistics.get('f1_macro_video', 0.0)),
-            f1_weighted=float(val_statistics.get('f1_weighted_video', 0.0)),
-            cm=val_statistics.get('confu_matrix_video'),
-            report_str=val_statistics.get('message_video', '')
-        )
+        if val_statistics.get('confu_matrix_video') is not None:
+            self._write_single_branch_report(
+                output_txt_path=os.path.join(self.log_dir, 'report_val_video.txt'),
+                output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_val_video.csv'),
+                branch_name="Video Auxiliary Head (ConvNeXt-Nano 7-ch)",
+                split_name="Validation",
+                acc=float(val_statistics.get('acc_video', 0.0)),
+                mAP=None,
+                f1_macro=float(val_statistics.get('f1_macro_video', 0.0)),
+                f1_weighted=float(val_statistics.get('f1_weighted_video', 0.0)),
+                cm=val_statistics.get('confu_matrix_video'),
+                report_str=val_statistics.get('message_video', '')
+            )
 
-        self._write_single_branch_report(
-            output_txt_path=os.path.join(self.log_dir, 'report_val_audio.txt'),
-            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_val_audio.csv'),
-            branch_name="Audio Auxiliary Head (TKEO-STFT-MLP 256k)",
-            split_name="Validation",
-            acc=float(val_statistics.get('acc_audio', 0.0)),
-            mAP=None,
-            f1_macro=float(val_statistics.get('f1_macro_audio', 0.0)),
-            f1_weighted=float(val_statistics.get('f1_weighted_audio', 0.0)),
-            cm=val_statistics.get('confu_matrix_audio'),
-            report_str=val_statistics.get('message_audio', '')
-        )
+        if val_statistics.get('confu_matrix_audio') is not None:
+            self._write_single_branch_report(
+                output_txt_path=os.path.join(self.log_dir, 'report_val_audio.txt'),
+                output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_val_audio.csv'),
+                branch_name="Audio Auxiliary Head (TKEO-STFT-MLP 256k)",
+                split_name="Validation",
+                acc=float(val_statistics.get('acc_audio', 0.0)),
+                mAP=None,
+                f1_macro=float(val_statistics.get('f1_macro_audio', 0.0)),
+                f1_weighted=float(val_statistics.get('f1_weighted_audio', 0.0)),
+                cm=val_statistics.get('confu_matrix_audio'),
+                report_str=val_statistics.get('message_audio', '')
+            )
 
         # 2. Separate standalone files for Test split
         self._write_single_branch_report(
             output_txt_path=os.path.join(self.log_dir, 'report_test_fusion.txt'),
             output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_test_fusion.csv'),
-            branch_name="Multimodal Tournament Fusion",
+            branch_name=model_title,
             split_name="Test",
             acc=float(np.mean(test_statistics.get('accuracy', 0.0))),
             mAP=float(np.mean(test_statistics.get('average_precision', 0.0))),
@@ -404,31 +412,33 @@ class HistoryLogger:
             report_str=test_statistics.get('message', '')
         )
 
-        self._write_single_branch_report(
-            output_txt_path=os.path.join(self.log_dir, 'report_test_video.txt'),
-            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_test_video.csv'),
-            branch_name="Video Auxiliary Head (ConvNeXt-Nano 7-ch)",
-            split_name="Test",
-            acc=float(test_statistics.get('acc_video', 0.0)),
-            mAP=None,
-            f1_macro=float(test_statistics.get('f1_macro_video', 0.0)),
-            f1_weighted=float(test_statistics.get('f1_weighted_video', 0.0)),
-            cm=test_statistics.get('confu_matrix_video'),
-            report_str=test_statistics.get('message_video', '')
-        )
+        if test_statistics.get('confu_matrix_video') is not None:
+            self._write_single_branch_report(
+                output_txt_path=os.path.join(self.log_dir, 'report_test_video.txt'),
+                output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_test_video.csv'),
+                branch_name="Video Auxiliary Head (ConvNeXt-Nano 7-ch)",
+                split_name="Test",
+                acc=float(test_statistics.get('acc_video', 0.0)),
+                mAP=None,
+                f1_macro=float(test_statistics.get('f1_macro_video', 0.0)),
+                f1_weighted=float(test_statistics.get('f1_weighted_video', 0.0)),
+                cm=test_statistics.get('confu_matrix_video'),
+                report_str=test_statistics.get('message_video', '')
+            )
 
-        self._write_single_branch_report(
-            output_txt_path=os.path.join(self.log_dir, 'report_test_audio.txt'),
-            output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_test_audio.csv'),
-            branch_name="Audio Auxiliary Head (TKEO-STFT-MLP 256k)",
-            split_name="Test",
-            acc=float(test_statistics.get('acc_audio', 0.0)),
-            mAP=None,
-            f1_macro=float(test_statistics.get('f1_macro_audio', 0.0)),
-            f1_weighted=float(test_statistics.get('f1_weighted_audio', 0.0)),
-            cm=test_statistics.get('confu_matrix_audio'),
-            report_str=test_statistics.get('message_audio', '')
-        )
+        if test_statistics.get('confu_matrix_audio') is not None:
+            self._write_single_branch_report(
+                output_txt_path=os.path.join(self.log_dir, 'report_test_audio.txt'),
+                output_csv_path=os.path.join(self.log_dir, 'confusion_matrix_test_audio.csv'),
+                branch_name="Audio Auxiliary Head (TKEO-STFT-MLP 256k)",
+                split_name="Test",
+                acc=float(test_statistics.get('acc_audio', 0.0)),
+                mAP=None,
+                f1_macro=float(test_statistics.get('f1_macro_audio', 0.0)),
+                f1_weighted=float(test_statistics.get('f1_weighted_audio', 0.0)),
+                cm=test_statistics.get('confu_matrix_audio'),
+                report_str=test_statistics.get('message_audio', '')
+            )
 
         # 3. Consolidated report file
         report_txt_path = os.path.join(self.log_dir, 'evaluation_detailed_report.txt')

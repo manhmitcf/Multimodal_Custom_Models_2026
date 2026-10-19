@@ -106,6 +106,13 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         **kwargs
     ) -> None:
         super().__init__()
+        valid_modes = {"multimodal", "sum", "abs_diff", "composite_ln"}
+        if temporal_mode not in valid_modes:
+            raise ValueError(f"Invalid temporal_mode='{temporal_mode}'. Must be one of {sorted(valid_modes)}")
+
+        if temporal_mode != "multimodal":
+            embed_dim = dims[-1]
+
         self.embed_dim = embed_dim
         self.in_chans = in_chans
         self.num_frames = num_frames
@@ -152,7 +159,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
             )
             self.norm_video = nn.LayerNorm(embed_dim)
         elif self.temporal_mode == "composite_ln":
-            self.norm_composite = nn.LayerNorm(embed_dim)
+            self.norm_composite = nn.LayerNorm(self.embed_dim)
 
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         """

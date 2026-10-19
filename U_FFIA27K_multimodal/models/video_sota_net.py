@@ -34,7 +34,7 @@ class VideoSOTANet(nn.Module):
         super().__init__()
         if channel_indices is None:
             channel_indices = [0, 1, 2, 3, 4, 5, 6]
-        self.channel_indices = list(channel_indices)
+        self.channel_indices = sorted(list(channel_indices))
         self.temporal_mode = temporal_mode
         self.embed_dim = embed_dim
         self.classes_num = classes_num
