@@ -149,8 +149,7 @@ class FishMultimodalDataLoader:
             else:
                 self.dataloader_workers = (max_cpu // 2) + 1
 
-        self.splitter_config = splitter_config if splitter_config is not None else SplitterConfig(include_video=True)
-        self.splitter_config.include_video = True
+        self.splitter_config = splitter_config if splitter_config is not None else SplitterConfig(include_video=True, include_audio=True)
 
         try:
             self.splitter = FishDataSplitter(config=self.splitter_config)
@@ -269,8 +268,19 @@ class FishMultimodalDataLoader:
                     except Exception:
                         tgt_onehot = np.zeros(4, dtype=np.float32)
 
-                video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
-                audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
+                include_vid = getattr(self.parent.splitter_config, "include_video", True)
+                include_aud = getattr(self.parent.splitter_config, "include_audio", True)
+
+                if include_vid:
+                    video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
+                else:
+                    video_raw = np.zeros((self.parent.num_frames, self.parent.image_size, self.parent.image_size, 3), dtype=np.uint8)
+
+                if include_aud:
+                    audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
+                else:
+                    audio_raw = np.zeros(1, dtype=np.float32)
+
                 clip_name = os.path.basename(video_p or audio_p or f"sample_{idx}")
 
                 return idx, (video_raw, audio_raw, tgt_onehot, clip_name)
@@ -318,11 +328,19 @@ class FishMultimodalDataLoader:
         def __getitem__(self, idx: int) -> Dict[str, Any]:
             if self.ram_cache is not None and self.ram_cache[idx] is not None:
                 video_raw, audio_raw, target_onehot, clip_name = self.ram_cache[idx]
-                video_tensor = self.transform(video_raw)
-                if video_tensor.ndim == 3:
-                    video_tensor = video_tensor.unsqueeze(0)
-                video_tensor = video_tensor[:self.parent.num_frames]
-                audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)  # [512000] (2.0s @ 256 kHz)
+                if getattr(self.parent.splitter_config, "include_video", True):
+                    video_tensor = self.transform(video_raw)
+                    if video_tensor.ndim == 3:
+                        video_tensor = video_tensor.unsqueeze(0)
+                    video_tensor = video_tensor[:self.parent.num_frames]
+                else:
+                    video_tensor = torch.zeros(self.parent.num_frames, 3, self.parent.image_size, self.parent.image_size, dtype=torch.float32)
+
+                if getattr(self.parent.splitter_config, "include_audio", True) and audio_raw.size > 1:
+                    audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
+                else:
+                    audio_tensor = torch.zeros(1, dtype=torch.float32)
+
                 return {
                     'clip_name': clip_name,
                     'video_form': video_tensor,
@@ -357,15 +375,25 @@ class FishMultimodalDataLoader:
             else:
                 tgt_onehot = np.zeros(4, dtype=np.float32)
 
-            video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
-            audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
-            clip_name = os.path.basename(video_p or audio_p or f"sample_{idx}")
+            include_vid = getattr(self.parent.splitter_config, "include_video", True)
+            include_aud = getattr(self.parent.splitter_config, "include_audio", True)
 
-            video_tensor = self.transform(video_raw)
-            if video_tensor.ndim == 3:
-                video_tensor = video_tensor.unsqueeze(0)
-            video_tensor = video_tensor[:self.parent.num_frames]
-            audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
+            if include_vid:
+                video_raw = _decode_video_frames_raw(video_p, self.parent.image_size, self.parent.num_frames)
+                video_tensor = self.transform(video_raw)
+                if video_tensor.ndim == 3:
+                    video_tensor = video_tensor.unsqueeze(0)
+                video_tensor = video_tensor[:self.parent.num_frames]
+            else:
+                video_tensor = torch.zeros(self.parent.num_frames, 3, self.parent.image_size, self.parent.image_size, dtype=torch.float32)
+
+            if include_aud:
+                audio_raw = _decode_audio_waveform_raw(audio_p, self.parent.sample_rate)
+                audio_tensor = torch.from_numpy(audio_raw).to(torch.float32)
+            else:
+                audio_tensor = torch.zeros(1, dtype=torch.float32)
+
+            clip_name = os.path.basename(video_p or audio_p or f"sample_{idx}")
 
             return {
                 'clip_name': clip_name,
