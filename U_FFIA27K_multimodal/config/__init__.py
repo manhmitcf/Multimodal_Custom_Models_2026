@@ -9,6 +9,7 @@ from .train_config import (
     LossConfig,
     ModelConfig,
     SplitterConfig,
+    VideoChannelAblationConfig,
     TrainConfig,
 )
 from .artifact_upload_config import ArtifactUploadConfig
@@ -24,6 +25,7 @@ __all__ = [
     "LossConfig",
     "ModelConfig",
     "SplitterConfig",
+    "VideoChannelAblationConfig",
     "TrainConfig",
     "ArtifactUploadConfig",
 ]

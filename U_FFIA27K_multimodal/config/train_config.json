@@ -21,21 +21,27 @@
     "min_delta": 0.0
   },
   "loss": {
-    "loss_type": "pairwise_tournament",
-    "weight_act": 0.5,
-    "weight_pairwise": 0.5,
-    "weight_ce": 1.0,
-    "aux_loss_weight": 0.3
+    "loss_type": "ce"
   },
   "model": {
-    "backbone": "MultimodalSOTANet",
+    "backbone": "VideoSOTANet",
     "classes_num": 4,
-    "embed_dim": 224,
-    "video_drop_path": 0.1,
-    "tie_breakers": {
-      "enable_b12": false,
-      "enable_b23": true,
-      "enable_b13": false
+    "embed_dim": 384,
+    "video_drop_path": 0.1
+  },
+  "video_ablation": {
+    "active_config": "C7_full",
+    "temporal_mode": "sum",
+    "embed_dim": 384,
+    "presets": {
+      "C3_rgb": [0, 1, 2],
+      "C4_rgb_mag": [0, 1, 2, 5],
+      "C4_rgb_vorticity": [0, 1, 2, 6],
+      "C5_rgb_flow": [0, 1, 2, 3, 4],
+      "C5_rgb_scalars": [0, 1, 2, 5, 6],
+      "C6_rgb_flow_mag": [0, 1, 2, 3, 4, 5],
+      "C6_rgb_flow_vorticity": [0, 1, 2, 3, 4, 6],
+      "C7_full": [0, 1, 2, 3, 4, 5, 6]
     }
   },
   "video_features": {
@@ -61,8 +67,9 @@
     "test_sample_per_class": 700,
     "save_results": true,
     "include_video": true,
+    "include_audio": false,
     "split_strategy": "random_sample",
-    "evaluation_mode": "cross_validation",
+    "evaluation_mode": "holdout",
     "num_folds": 5,
     "fold_index": null,
     "cv_val_ratio": 0.2

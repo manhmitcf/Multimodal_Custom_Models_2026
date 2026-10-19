@@ -2,7 +2,7 @@ import sys
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Literal, Any
+from typing import Optional, Literal, Any, Dict, List
 from pydantic import BaseModel, Field, model_validator
 
 # Ensure project root is in sys.path
@@ -134,6 +134,42 @@ class ModelConfig(BaseModel):
     )
 
 
+class VideoChannelAblationConfig(BaseModel):
+    """
+    Configuration for Video Backbone Ablation Study:
+    - 8 Input Channel Presets (C3_rgb to C7_full)
+    - 3 Temporal Aggregation Modes (sum, abs_diff, composite_ln)
+    - Target latent dimension 384
+    """
+    active_config: str = Field(default="C7_full", description="Active channel ablation preset name.")
+    temporal_mode: Literal["sum", "abs_diff", "composite_ln"] = Field(
+        default="sum",
+        description="Temporal aggregation mode: 'sum' (v0 + v1), 'abs_diff' (|v1 - v0|), or 'composite_ln' (LN((v0+v1)+|v1-v0|))."
+    )
+    embed_dim: int = Field(default=384, description="Target latent video embedding dimension.")
+    drop_path_rate: float = Field(default=0.1, ge=0.0, le=0.5, description="Stochastic Depth rate.")
+    presets: Dict[str, List[int]] = Field(
+        default_factory=lambda: {
+            "C3_rgb": [0, 1, 2],
+            "C4_rgb_mag": [0, 1, 2, 5],
+            "C4_rgb_vorticity": [0, 1, 2, 6],
+            "C5_rgb_flow": [0, 1, 2, 3, 4],
+            "C5_rgb_scalars": [0, 1, 2, 5, 6],
+            "C6_rgb_flow_mag": [0, 1, 2, 3, 4, 5],
+            "C6_rgb_flow_vorticity": [0, 1, 2, 3, 4, 6],
+            "C7_full": [0, 1, 2, 3, 4, 5, 6],
+        },
+        description="Predefined channel index combinations."
+    )
+
+    def get_active_channel_indices(self) -> List[int]:
+        if self.active_config not in self.presets:
+            raise ValueError(
+                f"Unknown preset '{self.active_config}'. Available presets: {list(self.presets.keys())}"
+            )
+        return self.presets[self.active_config]
+
+
 class SplitterConfig(BaseModel):
     """
     Configuration parameters for dataset splitting.
@@ -159,6 +195,10 @@ class SplitterConfig(BaseModel):
     include_video: bool = Field(
         default=True,
         description="Whether to scan video paths alongside audio paths."
+    )
+    include_audio: bool = Field(
+        default=True,
+        description="Whether to scan audio paths alongside video paths."
     )
     split_strategy: str = Field(
         default="random_sample",
@@ -242,6 +282,7 @@ class TrainConfig(BaseModel):
     video_features: VideoFeaturesConfig = Field(default_factory=VideoFeaturesConfig, description="Video preprocessing configuration.")
     audio_features: AudioFeaturesConfig = Field(default_factory=AudioFeaturesConfig, description="Audio preprocessing configuration.")
     dataset_splitter: SplitterConfig = Field(default_factory=SplitterConfig, description="Dataset splitting settings.")
+    video_ablation: Optional[VideoChannelAblationConfig] = Field(default=None, description="Video channel and temporal ablation settings.")
 
     @model_validator(mode="before")
     @classmethod
