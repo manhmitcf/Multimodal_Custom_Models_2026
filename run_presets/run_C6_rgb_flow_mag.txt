@@ -1,23 +1,78 @@
 # ==============================================================================
-# RUN PRESET 6/8: C6_rgb_flow_mag
-# Kênh đầu vào: RGB + Optical Flow (u, v) + Độ lớn vận tốc |V| [0, 1, 2, 3, 4, 5] (6 kênh)
-# Temporal mode: sum (v0 + v1)
-# Mô tả: RGB kết hợp toàn bộ thông tin vận tốc (hướng và độ lớn), loại trừ độ xoáy
+# MARIMO GPU SERVER: TOÀN BỘ QUY TRÌNH CHẠY TỪ ĐẦU (ALL-IN-ONE ONE-SHOT SCRIPT)
+# CẤU HÌNH: PRESET 6/8 - C6_rgb_flow_mag (RGB + (u, v) + |V| [0, 1, 2, 3, 4, 5])
+# Mode thời gian: sum (v0 + v1)
 # Tham số: 2,614,948 (~2.615M params) | FLOPs: ~1.6958 GFLOPs
-# Thư mục checkpoint lưu: checkpoint/Video_C6_rgb_flow_mag_sum/
+# Thư mục lưu Checkpoint: checkpoint/Video_C6_rgb_flow_mag_sum/
 # Log file: main_C6_rgb_flow_mag.log
 # ==============================================================================
 
-# 1. Chuyển vào thư mục dự án
-cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+# ------------------------------------------------------------------------------
+# 1. CẤU HÌNH TOKEN VÀ TẢI DATASET (NẾU LÀ MÁY CHỦ MỚI)
+# ------------------------------------------------------------------------------
+if [ -f "token.txt" ]; then
+    export HF_TOKEN=$(grep -o 'hf_[a-zA-Z0-9_]\+' token.txt | head -n 1)
+elif [ -f "../token.txt" ]; then
+    export HF_TOKEN=$(grep -o 'hf_[a-zA-Z0-9_]\+' ../token.txt | head -n 1)
+elif [ -f "/marimo/token.txt" ]; then
+    export HF_TOKEN=$(grep -o 'hf_[a-zA-Z0-9_]\+' /marimo/token.txt | head -n 1)
+fi
 
-# 2. Dừng tiến trình huấn luyện cũ (nếu có)
+git config --global credential.helper store
+if [ -n "$HF_TOKEN" ]; then
+    hf auth login --token "$HF_TOKEN" --add-to-git-credential || huggingface-cli login --token "$HF_TOKEN" || true
+fi
+
+sudo apt update && sudo apt install git-lfs -y
+git lfs install
+git config --global lfs.concurrenttransfers 64
+
+if [ ! -d "/marimo/Fish_Feeding_Intensity_Dataset" ]; then
+    echo ">>> Đang tải Dataset từ Hugging Face..."
+    cd /marimo && git clone https://huggingface.co/datasets/manhmitcf/Fish_Feeding_Intensity_Dataset
+fi
+
+# ------------------------------------------------------------------------------
+# 2. SẮP XẾP LẠI THƯ MỤC DATASET
+# ------------------------------------------------------------------------------
+if [ -d "/marimo/Fish_Feeding_Intensity_Dataset/audio/audio" ]; then
+    mv /marimo/Fish_Feeding_Intensity_Dataset/audio/audio/* /marimo/Fish_Feeding_Intensity_Dataset/audio/
+    rm -rf /marimo/Fish_Feeding_Intensity_Dataset/audio/audio
+fi
+
+if [ -d "/marimo/Fish_Feeding_Intensity_Dataset/video/video" ]; then
+    mv /marimo/Fish_Feeding_Intensity_Dataset/video/video/* /marimo/Fish_Feeding_Intensity_Dataset/video/
+    rm -rf /marimo/Fish_Feeding_Intensity_Dataset/video/video
+fi
+
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
+find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
+
+# ------------------------------------------------------------------------------
+# 3. CLONE HOẶC CẬP NHẬT MÃ NGUỒN NHÁNH ABLATION VIDEO
+# ------------------------------------------------------------------------------
+if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
+    git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
+fi
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity
+git fetch origin
+git checkout ablations_final/video_input_channels
+git pull origin ablations_final/video_input_channels
+
+cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# ------------------------------------------------------------------------------
+# 4. KIỂM TOÁN TIỀN BAY VÀ CHẠY HUẤN LUYỆN PRESET C6_rgb_flow_mag
+# ------------------------------------------------------------------------------
+python main.py --dry-run --preset C6_rgb_flow_mag --temporal-mode sum
+
 pkill -f "python main.py" || true
 sleep 1
 
-# 3. Chạy nền với preset C6_rgb_flow_mag và theo dõi log
 nohup python main.py --preset C6_rgb_flow_mag --temporal-mode sum > main_C6_rgb_flow_mag.log 2>&1 &
-echo ">>> Đã khởi chạy tiến trình huấn luyện cho preset C6_rgb_flow_mag!"
-echo ">>> Đang mở log theo dõi trực tiếp (nhấn Ctrl+C để thoát xem log, tiến trình vẫn chạy nền)..."
+echo ">>> Đã khởi chạy tiến trình huấn luyện C6_rgb_flow_mag nền!"
+echo ">>> Đang mở log theo dõi trực tiếp (nhấn Ctrl+C để thoát xem log, training vẫn tiếp tục chạy)..."
 sleep 2
 tail -n +1 -f main_C6_rgb_flow_mag.log
