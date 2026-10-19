@@ -62,6 +62,53 @@ class TestMainIntegration(unittest.TestCase):
             if Path(tmp_path).exists():
                 Path(tmp_path).unlink()
 
+    def test_zip_directory_excludes_sensitive_files(self):
+        import tempfile
+        import zipfile
+        from main import zip_directory
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            src_path = Path(tmp_dir) / "project"
+            src_path.mkdir()
+
+            # Normal files
+            (src_path / "main.py").write_text("print('hello')", encoding="utf-8")
+            (src_path / "config.json").write_text("{}", encoding="utf-8")
+
+            # Sensitive files that MUST be excluded
+            (src_path / "token.txt").write_text("hf_secret_token_123", encoding="utf-8")
+            (src_path / ".env").write_text("SECRET_KEY=abc", encoding="utf-8")
+            (src_path / "private.secret").write_text("my_secret", encoding="utf-8")
+            (src_path / "auth.token").write_text("bearer_token", encoding="utf-8")
+
+            # Ignored folders
+            docs_dir = src_path / "docs"
+            docs_dir.mkdir()
+            (docs_dir / "internal_notes.md").write_text("confidential", encoding="utf-8")
+
+            git_dir = src_path / ".git"
+            git_dir.mkdir()
+            (git_dir / "HEAD").write_text("ref: refs/heads/main", encoding="utf-8")
+
+            out_zip = Path(tmp_dir) / "output.zip"
+            zip_directory(str(src_path), str(out_zip))
+
+            self.assertTrue(out_zip.exists())
+            with zipfile.ZipFile(out_zip, "r") as zf:
+                namelist = zf.namelist()
+
+            # Verify included
+            self.assertIn("main.py", namelist)
+            self.assertIn("config.json", namelist)
+
+            # Verify strictly excluded
+            self.assertNotIn("token.txt", namelist)
+            self.assertNotIn(".env", namelist)
+            self.assertNotIn("private.secret", namelist)
+            self.assertNotIn("auth.token", namelist)
+            self.assertFalse(any("docs" in name for name in namelist))
+            self.assertFalse(any(".git" in name for name in namelist))
+
 
 if __name__ == "__main__":
     unittest.main()

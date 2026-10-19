@@ -321,13 +321,28 @@ def zip_directory(source_dir: str, output_path: str) -> str:
     if not source_path.exists():
         raise FileNotFoundError(f"Source directory to zip does not exist: '{source_path}'")
 
+    EXCLUDED_NAMES = {
+        "token.txt", ".env", ".secrets", "id_rsa", "id_ed25519"
+    }
+    EXCLUDED_SUFFIXES = {
+        ".token", ".secret", ".key", ".pem", ".zip"
+    }
+    EXCLUDED_PARTS = {
+        ".git", "__pycache__", ".pytest_cache", ".idea", ".vscode", "docs"
+    }
+
     logger.info(f"Creating artifact zip from '{source_path}' to '{target_path}'...")
     with zipfile.ZipFile(target_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for file_path in source_path.rglob("*"):
             if not file_path.is_file():
                 continue
             resolved_file = file_path.resolve()
-            if resolved_file == target_path or ".git" in resolved_file.parts or resolved_file.suffix == ".zip":
+            if (
+                resolved_file == target_path
+                or resolved_file.name in EXCLUDED_NAMES
+                or resolved_file.suffix.lower() in EXCLUDED_SUFFIXES
+                or any(part in EXCLUDED_PARTS for part in resolved_file.parts)
+            ):
                 continue
             zip_file.write(resolved_file, arcname=resolved_file.relative_to(source_path))
 
@@ -571,6 +586,10 @@ def run_training_session(
                 train_config_path=train_config_path
             )
             trainer.train()
+
+            del trainer, model, data_loader
+            if device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         if len(target_folds) == num_folds:
             generate_cv_summary_report(base_dir, num_folds)
