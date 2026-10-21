@@ -38,7 +38,8 @@ def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames:
         vr = VideoReader(video_path, width=image_size, height=image_size, ctx=cpu(0))
         total = len(vr)
         if total > 0:
-            indices = np.linspace(0, total - 1, num_frames).astype(int).tolist()
+            start_idx = 1 if total > 1 else 0
+            indices = np.linspace(start_idx, total - 1, num_frames).astype(int).tolist()
             return vr.get_batch(indices).asnumpy()
     except Exception:
         pass
@@ -49,7 +50,8 @@ def _decode_video_frames_raw(video_path: str, image_size: int = 224, num_frames:
         cap = cv2.VideoCapture(video_path)
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if total > 0:
-            indices = np.linspace(0, total - 1, num_frames).astype(int).tolist()
+            start_idx = 1 if total > 1 else 0
+            indices = np.linspace(start_idx, total - 1, num_frames).astype(int).tolist()
             for idx in indices:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                 ret, frame = cap.read()

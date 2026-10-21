@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import sys
 from pathlib import Path
 import numpy as np
@@ -10,7 +10,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from config.train_config import SplitterConfig
-from dataset.dataloader_multimodal import FishMultimodalDataLoader
+from dataset.dataloader_multimodal import FishMultimodalDataLoader, _decode_video_frames_raw
 
 
 class TestVideoDataLoaderRAM(unittest.TestCase):
@@ -54,6 +54,29 @@ class TestVideoDataLoaderRAM(unittest.TestCase):
                 self.assertEqual(batch["video_form"].shape, (1, 2, 3, 224, 224))
                 self.assertEqual(batch["audio_form"].shape, (1, 1))
                 self.assertEqual(batch["target"].shape, (1, 4))
+
+    def test_frame_index_starts_at_1_decord(self):
+        mock_vr = MagicMock()
+        mock_vr.__len__.return_value = 50
+        mock_vr.get_batch.return_value.asnumpy.return_value = np.zeros((2, 224, 224, 3), dtype=np.uint8)
+
+        with patch("decord.VideoReader", return_value=mock_vr):
+            res = _decode_video_frames_raw("dummy.mp4", image_size=224, num_frames=2)
+            indices = mock_vr.get_batch.call_args[0][0]
+            self.assertEqual(indices, [1, 49])
+            self.assertEqual(res.shape, (2, 224, 224, 3))
+
+    def test_frame_index_starts_at_1_cv2_fallback(self):
+        with patch("cv2.VideoCapture") as mock_cap_cls:
+            mock_cap = mock_cap_cls.return_value
+            mock_cap.get.return_value = 50.0
+            mock_cap.read.return_value = (True, np.zeros((224, 224, 3), dtype=np.uint8))
+            with patch("os.path.exists", return_value=True):
+                with patch.dict("sys.modules", {"decord": None}):
+                    res = _decode_video_frames_raw("dummy.mp4", image_size=224, num_frames=2)
+                    pos_calls = [call.args[1] for call in mock_cap.set.call_args_list]
+                    self.assertEqual(pos_calls, [1, 49])
+                    self.assertEqual(res.shape, (2, 224, 224, 3))
 
 
 if __name__ == "__main__":
