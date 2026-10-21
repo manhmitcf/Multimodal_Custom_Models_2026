@@ -98,13 +98,35 @@ python main.py --dry-run
 # Dừng tiến trình cũ nếu có:
 pkill -f "python main.py" || true
 
-# Chạy preset mong muốn (ví dụ C5_rgb_scalars):
+# Chạy preset mong muốn với OneCycleLR mặc định:
 nohup python main.py --preset C5_rgb_scalars --temporal-mode abs_diff > main_C5_rgb_scalars.log 2>&1 &
 tail -n +1 -f main_C5_rgb_scalars.log
+
+# Hoặc chạy với LR cố định không hiệu chỉnh qua các epoch (--lr-scheduler constant):
+# nohup python main.py --preset C5_rgb_scalars --temporal-mode abs_diff --lr-scheduler constant > main_const_lr.log 2>&1 &
+# tail -n +1 -f main_const_lr.log
 
 # Hoặc chạy theo cách chỉnh file JSON bằng tay (Cách A):
 # nohup python main.py > main.log 2>&1 &
 # tail -n +1 -f main.log
+
+# ==============================================================================
+# CẤU HÌNH HIỆU CHỈNH LEARNING RATE (LR SCHEDULER)
+# ==============================================================================
+# Hệ thống hỗ trợ 3 chính sách learning rate:
+# 1. "onecycle" (Mặc định): OneCycleLR cosine annealing theo từng batch (warmup 5% epochs).
+# 2. "cosine": CosineAnnealingLR giảm dần theo từng epoch (T_max = epochs, eta_min = 1e-6).
+# 3. "constant" (hoặc "none"): Cố định LR mặc định không hiệu chỉnh qua các epoch!
+#
+# Cách A: Chỉnh trong config/train_config.json:
+#   "training": {
+#       "learning_rate": 0.001,
+#       "lr_scheduler": "constant"
+#   }
+#
+# Cách B: Dùng cờ CLI:
+#   python main.py --lr-scheduler constant
+
 
 # ==============================================================================
 # 6. GIAI ĐOẠN 2: HUẤN LUYỆN 3 CHẾ ĐỘ THỜI GIAN TRÊN CẤU HÌNH TỐT NHẤT (C*)

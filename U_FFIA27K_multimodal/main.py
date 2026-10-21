@@ -470,6 +470,7 @@ def run_training_session(
     fold_index: Optional[int] = None,
     preset: Optional[str] = None,
     temporal_mode: Optional[str] = None,
+    lr_scheduler: Optional[str] = None,
 ) -> None:
     pkg_dir = Path(__file__).resolve().parent
     if train_config_path is None:
@@ -498,10 +499,19 @@ def run_training_session(
         config.video_ablation.temporal_mode = temporal_mode
         config.model.backbone = "VideoSOTANet"
 
-    if preset is not None or temporal_mode is not None:
+    if lr_scheduler is not None:
+        lr_scheduler = lr_scheduler.strip().lower()
+        if lr_scheduler not in ("onecycle", "cosine", "constant", "none"):
+            raise ValueError(f"Unknown lr_scheduler '{lr_scheduler}'. Must be one of: onecycle, cosine, constant, none")
+        config.lr_scheduler = lr_scheduler
+        config.use_onecycle = (lr_scheduler == "onecycle")
+
+    if preset is not None or temporal_mode is not None or lr_scheduler is not None:
         try:
             config.to_json(train_config_path)
-            logger.info(f"Updated configuration on disk: active_config='{config.video_ablation.active_config}', temporal_mode='{config.video_ablation.temporal_mode}' saved to '{train_config_path}'.")
+            active_cfg = getattr(getattr(config, "video_ablation", None), "active_config", None)
+            t_mode = getattr(getattr(config, "video_ablation", None), "temporal_mode", None)
+            logger.info(f"Updated configuration on disk: active_config='{active_cfg}', temporal_mode='{t_mode}', lr_scheduler='{config.lr_scheduler}' saved to '{train_config_path}'.")
         except Exception as err:
             logger.warning(f"Could not persist active config to '{train_config_path}': {err}")
 
@@ -636,6 +646,7 @@ def main() -> None:
     parser.add_argument("--fold-index", type=int, default=None, help="Specific CV fold index to run (0 to num_folds - 1)")
     parser.add_argument("--preset", type=str, default=None, help="Override active Video channel ablation preset (e.g. C5_rgb_scalars)")
     parser.add_argument("--temporal-mode", type=str, choices=["sum", "abs_diff", "composite_ln"], default=None, help="Override temporal aggregation mode (sum, abs_diff, composite_ln)")
+    parser.add_argument("--lr-scheduler", type=str, choices=["onecycle", "cosine", "constant", "none"], default=None, help="Override LR scheduler policy ('onecycle', 'cosine', 'constant', 'none')")
     args = parser.parse_args()
 
     run_training_session(
@@ -648,6 +659,7 @@ def main() -> None:
         fold_index=args.fold_index,
         preset=args.preset,
         temporal_mode=args.temporal_mode,
+        lr_scheduler=args.lr_scheduler,
     )
 
 

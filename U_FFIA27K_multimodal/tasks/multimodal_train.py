@@ -110,7 +110,14 @@ class MultimodalTrainer:
         # Training & Optimization settings
         self.weight_decay = getattr(self.config, "weight_decay", 0.05)
         self.steps_per_epoch = max(1, len(self.train_loader))
-        self.use_onecycle = getattr(self.config, "use_onecycle", True)
+        # LR Scheduler configuration with backward compatibility
+        raw_scheduler = str(getattr(self.config, "lr_scheduler", "")).strip().lower()
+        if not raw_scheduler:
+            self.use_onecycle = getattr(self.config, "use_onecycle", True)
+            self.lr_scheduler_type = "onecycle" if self.use_onecycle else "cosine"
+        else:
+            self.lr_scheduler_type = raw_scheduler
+            self.use_onecycle = (self.lr_scheduler_type == "onecycle")
 
         # Optimizer: Authentic AdamW across full model
         self.optimizer = optimizer if optimizer is not None else optim.AdamW(
@@ -119,8 +126,19 @@ class MultimodalTrainer:
             weight_decay=self.weight_decay
         )
 
-        # LR Scheduler: OneCycleLR with cosine annealing
-        if self.use_onecycle:
+        # LR Scheduler setup: onecycle, cosine, or constant (fixed LR)
+        if self.lr_scheduler_type in ("constant", "none", "fixed"):
+            self.scheduler = None
+            logger.info(f"Configured Constant LR: lr={self.config.learning_rate} (Fixed learning rate, no scheduler adjustment across epochs).")
+        elif self.lr_scheduler_type == "cosine":
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=self.config.epochs,
+                eta_min=1e-6
+            )
+            logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min=1e-6.")
+        else:
+            self.lr_scheduler_type = "onecycle"
             self.scheduler = optim.lr_scheduler.OneCycleLR(
                 self.optimizer,
                 max_lr=self.config.learning_rate,
@@ -132,13 +150,6 @@ class MultimodalTrainer:
                 final_div_factor=1000
             )
             logger.info(f"Configured OneCycleLR: max_lr={self.config.learning_rate}, epochs={self.config.epochs}, pct_start=0.05.")
-        else:
-            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=self.config.epochs,
-                eta_min=1e-6
-            )
-            logger.info(f"Configured CosineAnnealingLR: T_max={self.config.epochs}, eta_min=1e-6.")
 
         # Evaluator and Timer
         self.evaluator = MultimodalEvaluator(model=self.model, loss_fn=self.loss_fn)
@@ -224,7 +235,7 @@ class MultimodalTrainer:
             torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=5.0)
             self.optimizer.step()
 
-            if self.use_onecycle:
+            if self.scheduler is not None and self.lr_scheduler_type == "onecycle":
                 self.scheduler.step()
 
             loss_val = loss.item()
@@ -321,7 +332,7 @@ class MultimodalTrainer:
         for epoch in range(1, self.config.epochs + 1):
             epoch_start_time = time.perf_counter()
             train_loss, train_acc, train_acc_v, train_acc_a, train_mAP = self._train_epoch(epoch)
-            if not self.use_onecycle:
+            if self.scheduler is not None and self.lr_scheduler_type == "cosine":
                 self.scheduler.step()
 
             # Evaluate on validation split

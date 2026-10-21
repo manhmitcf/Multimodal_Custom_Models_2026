@@ -245,6 +245,21 @@ class TrainingConfig(BaseModel):
     learning_rate: float = Field(default=1e-3, gt=0, description="Initial learning rate.")
     weight_decay: float = Field(default=0.05, ge=0, description="Weight decay factor for AdamW.")
     use_onecycle: bool = Field(default=True, description="Enable OneCycleLR scheduler.")
+    lr_scheduler: Optional[str] = Field(default=None, description="LR scheduler policy: 'onecycle', 'cosine', or 'constant'/'none' (fixed LR across all epochs).")
+
+    @model_validator(mode="after")
+    def _sync_scheduler_and_onecycle(self) -> "TrainingConfig":
+        if self.lr_scheduler is None:
+            self.lr_scheduler = "onecycle" if self.use_onecycle else "cosine"
+        else:
+            sched = self.lr_scheduler.strip().lower()
+            if sched == "onecycle":
+                self.use_onecycle = True
+            elif sched in ("constant", "none", "fixed"):
+                self.use_onecycle = False
+            elif sched == "cosine":
+                self.use_onecycle = False
+        return self
 
 
 class EvaluationConfig(BaseModel):
@@ -305,7 +320,7 @@ class TrainConfig(BaseModel):
             d["system"] = sys_dict
 
         # 2. Training cluster
-        train_keys = ["epochs", "batch_size", "learning_rate", "weight_decay", "use_onecycle"]
+        train_keys = ["epochs", "batch_size", "learning_rate", "weight_decay", "use_onecycle", "lr_scheduler"]
         train_dict = dict(d.get("training", {})) if isinstance(d.get("training"), dict) else {}
         for k in train_keys:
             if k in d:
@@ -388,7 +403,22 @@ class TrainConfig(BaseModel):
     @property
     def use_onecycle(self) -> bool: return self.training.use_onecycle
     @use_onecycle.setter
-    def use_onecycle(self, val: bool) -> None: self.training.use_onecycle = val
+    def use_onecycle(self, val: bool) -> None:
+        self.training.use_onecycle = val
+        if val:
+            self.training.lr_scheduler = "onecycle"
+        elif self.training.lr_scheduler == "onecycle":
+            self.training.lr_scheduler = "cosine"
+
+    @property
+    def lr_scheduler(self) -> str: return self.training.lr_scheduler or ("onecycle" if self.training.use_onecycle else "cosine")
+    @lr_scheduler.setter
+    def lr_scheduler(self, val: str) -> None:
+        self.training.lr_scheduler = val
+        if val and val.strip().lower() == "onecycle":
+            self.training.use_onecycle = True
+        else:
+            self.training.use_onecycle = False
 
     @property
     def monitor(self) -> str: return self.evaluation.monitor
