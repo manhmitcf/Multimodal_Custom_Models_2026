@@ -7,7 +7,6 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 import torch
-import pytest
 from models.multimodal_sota_net import MultimodalSOTANet
 
 

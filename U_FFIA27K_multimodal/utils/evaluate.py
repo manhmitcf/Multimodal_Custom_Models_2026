@@ -153,7 +153,8 @@ class MultimodalEvaluator(BaseEvaluator):
             target_ranks = rank_map[target_acc]
             ordinal_mae = float(np.mean(np.abs(pred_ranks - target_ranks)))
             try:
-                qwk = float(metrics.cohen_kappa_score(target_ranks, pred_ranks, weights='quadratic'))
+                qwk_val = metrics.cohen_kappa_score(target_ranks, pred_ranks, weights='quadratic')
+                qwk = 0.0 if np.isnan(qwk_val) else float(qwk_val)
             except Exception:
                 qwk = 0.0
         else:
