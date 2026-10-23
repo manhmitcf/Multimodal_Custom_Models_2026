@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from typing import Tuple, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,38 +16,54 @@ def init_layer(layer: nn.Module) -> None:
 
 class AudioMLPBackbone(nn.Module):
     """
-    High-Resolution STFT Audio MLP Backbone (~1.17M params).
+    High-Resolution STFT Audio MLP Backbone (AudioMLP_L2_compact_768_512, ~2.168M params).
     Processes 2049-dimensional TKEO-STFT spectral vectors [B, 2049]:
-      - Layer 1: Linear(2049 -> 512) + LayerNorm(512) + GELU + Dropout(0.1)
-      - Layer 2: Linear(512 -> 224) + LayerNorm(224) -> f_audio [B, 224]
+      - Layer 1: Linear(2049 -> 768) + LayerNorm(768) + GELU + Dropout(0.1)
+      - Layer 2: Linear(768 -> 512) + LayerNorm(512) + GELU + Dropout(0.1)
+      - Layer 3: Linear(512 -> 384) + LayerNorm(384) -> f_audio [B, 384]
     """
     def __init__(
         self,
         in_features: int = 2049,
-        hidden_dim: int = 512,
-        embed_dim: int = 224,
+        hidden_dims: Tuple[int, ...] = (768, 512),
+        embed_dim: int = 384,
         dropout: float = 0.1,
+        hidden_dim: Optional[int] = None,
         **kwargs
     ) -> None:
         super().__init__()
         self.in_features = in_features
-        self.hidden_dim = hidden_dim
+
+        # Handle backward-compatible scalar hidden_dim if provided
+        if hidden_dim is not None and (hidden_dims == (768, 512) or not hidden_dims):
+            hidden_dims = (hidden_dim,)
+        self.hidden_dims = tuple(hidden_dims)
         self.embed_dim = embed_dim
 
-        # 1. 2-layer MLP for 2049 STFT vector
-        self.fc1 = nn.Linear(in_features, hidden_dim)
-        self.ln1 = nn.LayerNorm(hidden_dim)
-        self.act = nn.GELU()
-        self.dropout = nn.Dropout(dropout)
+        # Layer 1: in_features -> hidden_dims[0]
+        h1 = self.hidden_dims[0] if len(self.hidden_dims) > 0 else 768
+        self.fc1 = nn.Linear(in_features, h1)
+        self.ln1 = nn.LayerNorm(h1)
+        self.act1 = nn.GELU()
+        self.drop1 = nn.Dropout(dropout)
 
-        self.fc2 = nn.Linear(hidden_dim, embed_dim)
-        self.ln2 = nn.LayerNorm(embed_dim)
+        # Layer 2: hidden_dims[0] -> hidden_dims[1]
+        h2 = self.hidden_dims[1] if len(self.hidden_dims) > 1 else 512
+        self.fc2 = nn.Linear(h1, h2)
+        self.ln2 = nn.LayerNorm(h2)
+        self.act2 = nn.GELU()
+        self.drop2 = nn.Dropout(dropout)
+
+        # Layer 3: hidden_dims[-1] -> embed_dim
+        self.fc3 = nn.Linear(h2, embed_dim)
+        self.ln3 = nn.LayerNorm(embed_dim)
 
         self._init_weights()
 
     def _init_weights(self) -> None:
         init_layer(self.fc1)
         init_layer(self.fc2)
+        init_layer(self.fc3)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -61,6 +78,7 @@ class AudioMLPBackbone(nn.Module):
             if x.size(-1) != self.in_features:
                 x = x[:, :self.in_features]
 
-        h = self.dropout(self.act(self.ln1(self.fc1(x))))
-        f_audio = self.ln2(self.fc2(h))
+        h1 = self.drop1(self.act1(self.ln1(self.fc1(x))))
+        h2 = self.drop2(self.act2(self.ln2(self.fc2(h1))))
+        f_audio = self.ln3(self.fc3(h2))
         return f_audio
