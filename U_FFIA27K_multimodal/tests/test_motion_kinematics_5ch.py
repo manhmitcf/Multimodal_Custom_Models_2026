@@ -23,3 +23,12 @@ def test_motion_kinematics_5ch_zero_input():
     frames_5ch, _ = kinematics(zero_video)
     assert not torch.isnan(frames_5ch).any()
     assert not torch.isinf(frames_5ch).any()
+
+def test_motion_kinematics_5ch_single_frame():
+    kinematics = FishMotionKinematics5Ch(image_size=224)
+    single_frame = torch.randn(2, 1, 3, 224, 224)
+    frames_5ch, summary = kinematics(single_frame)
+    assert frames_5ch.shape == (2, 1, 5, 224, 224)
+    assert summary.shape == (2, 4)
+    # Optical flow should be zero for single frame
+    assert torch.equal(frames_5ch[:, :, 3:], torch.zeros_like(frames_5ch[:, :, 3:]))
