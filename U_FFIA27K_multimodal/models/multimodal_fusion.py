@@ -17,9 +17,9 @@ def _make_subspace_head(dim: int, hidden_dim: Optional[int] = None) -> nn.Sequen
 
 def _parse_tie_breakers(
     tie_breakers: Any,
-    enable_b12: bool = True,
+    enable_b12: bool = False,
     enable_b23: bool = True,
-    enable_b13: bool = True
+    enable_b13: bool = False
 ) -> Tuple[bool, bool, bool]:
     """
     Robustly parses tie_breakers configuration from Pydantic models (v1/v2),
@@ -111,9 +111,9 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self,
         dim: int = 384,
         temperature: float = 2.0,
-        enable_b12: bool = True,
+        enable_b12: bool = False,
         enable_b23: bool = True,
-        enable_b13: bool = True,
+        enable_b13: bool = False,
         tie_breakers: Optional[Any] = None,
         **kwargs
     ) -> None:
@@ -296,9 +296,9 @@ class MultimodalTournamentFusion(nn.Module):
         self,
         dim: int = 384,
         dropout: float = 0.1,
-        enable_b12: bool = True,
+        enable_b12: bool = False,
         enable_b23: bool = True,
-        enable_b13: bool = True,
+        enable_b13: bool = False,
         tie_breakers: Optional[Any] = None,
         **kwargs
     ) -> None:
