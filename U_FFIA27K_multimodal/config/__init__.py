@@ -10,6 +10,7 @@ from .train_config import (
     ModelConfig,
     SplitterConfig,
     TrainConfig,
+    load_train_config,
 )
 from .artifact_upload_config import ArtifactUploadConfig
 
@@ -25,5 +26,6 @@ __all__ = [
     "ModelConfig",
     "SplitterConfig",
     "TrainConfig",
+    "load_train_config",
     "ArtifactUploadConfig",
 ]

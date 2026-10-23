@@ -2,7 +2,7 @@ import sys
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Literal, Any
+from typing import Optional, Literal, Any, Tuple
 from pydantic import BaseModel, Field, model_validator
 
 # Ensure project root is in sys.path
@@ -26,7 +26,8 @@ class VideoFeaturesConfig(BaseModel):
     """
     image_size: int = Field(default=224, description="Target spatial resolution H=W.")
     num_frames: int = Field(default=2, description="Number of uniform frames sampled per video clip (T=2).")
-    num_channels: int = Field(default=7, description="7-channel representation (RGB + 4 Kinematics: u, v, |V| magnitude, vorticity omega).")
+    num_channels: int = Field(default=5, description="5-channel representation (RGB + 2 Farneback Flow: u, v).")
+    temporal_mode: str = Field(default="composite_ln", description="Temporal aggregation mode: 'composite_ln', 'sum', or 'abs_diff'.")
 
 
 class AudioFeaturesConfig(BaseModel):
@@ -109,18 +110,22 @@ class VideoTieBreakersConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     """
-    Configuration for Multimodal Tournament Model with 3 Video Kinematics Tie-Breakers (~4.09M parameters).
-    Video: ConvNeXt-Nano (7-ch Kinematics) ~2.701M
-    Audio: TKEO-STFT-MLP (2049 bins @ 256 kHz) ~1.166M
+    Configuration for Multimodal Tournament Model with Video Kinematics Tie-Breakers (~5.16M parameters).
+    Video: ConvNeXt-Nano (5-ch Kinematics, composite_ln) ~2.613M
+    Audio: TKEO-STFT-MLP (2049 -> 768 -> 512 -> 384) ~2.168M
     Audio Frontend: TKEO-STFT LayerNorm ~0.004M
-    Fusion: Pairwise Boundary Tournament Decision Head with 3 Video Referees ~0.219M
-    Auxiliary Heads: Video + Audio Aux Heads ~0.002M
+    Fusion: Direct Gated Tournament Decision Head with Video Referees ~0.374M (B23)
+    Auxiliary Heads: Video + Audio Aux Heads ~0.003M
     """
     backbone: str = Field(
         default="MultimodalSOTANet",
         description="Model architecture name exported by U_FFIA27K_multimodal.models."
     )
-    embed_dim: int = Field(default=224, description="Common multimodal embedding dimension.")
+    embed_dim: int = Field(default=384, description="Common multimodal embedding dimension.")
+    audio_hidden_dims: Tuple[int, ...] = Field(
+        default=(768, 512),
+        description="Hidden layer dimensions for AudioMLPBackbone."
+    )
     classes_num: int = Field(default=4, description="Number of output feeding intensity classes (None, Strong, Medium, Weak).")
     video_drop_path: float = Field(
         default=0.1,
@@ -437,6 +442,22 @@ class TrainConfig(BaseModel):
     def in_chans(self, val: int) -> None:
         self.video_features.num_channels = val
 
+    @property
+    def temporal_mode(self) -> str:
+        return self.video_features.temporal_mode
+
+    @temporal_mode.setter
+    def temporal_mode(self, val: str) -> None:
+        self.video_features.temporal_mode = val
+
+    @property
+    def audio_hidden_dims(self) -> Tuple[int, ...]:
+        return self.model.audio_hidden_dims
+
+    @audio_hidden_dims.setter
+    def audio_hidden_dims(self, val: Tuple[int, ...]) -> None:
+        self.model.audio_hidden_dims = val
+
 
     @classmethod
     def from_json(cls, path: str = "config/train_config.json") -> "TrainConfig":
@@ -453,3 +474,8 @@ class TrainConfig(BaseModel):
         with open(config_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return cls(**data)
+
+
+def load_train_config(path: str = "config/train_config.json") -> TrainConfig:
+    """Convenience helper to load and validate a TrainConfig from JSON."""
+    return TrainConfig.from_json(path)

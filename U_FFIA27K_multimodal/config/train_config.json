@@ -30,7 +30,7 @@
   "model": {
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
-    "embed_dim": 224,
+    "embed_dim": 384,
     "video_drop_path": 0.1,
     "tie_breakers": {
       "enable_b12": false,
@@ -41,7 +41,8 @@
   "video_features": {
     "image_size": 224,
     "num_frames": 2,
-    "num_channels": 7
+    "num_channels": 5,
+    "temporal_mode": "composite_ln"
   },
   "audio_features": {
     "sample_rate": 256000,
