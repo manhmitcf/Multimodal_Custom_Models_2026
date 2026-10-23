@@ -79,29 +79,31 @@ class ConvNeXtBlock(nn.Module):
 
 class ConvNeXtNanoVideoBackbone(nn.Module):
     """
-    Streamlined ConvNeXt-Nano Video Backbone tailored for 7-channel kinematic inputs across T=2 frames.
+    Streamlined ConvNeXt-Nano Video Backbone tailored for 5-channel kinematic inputs across T=2 frames (C5_rgb_flow).
     Channels:
       - 0, 1, 2: Spatial RGB appearance
       - 3, 4:    Optical Flow (u, v) swimming velocity
-      - 5:       Velocity Magnitude |V| = sqrt(u^2 + v^2)
-      - 6:       Fluid Vorticity omega = dv/dx - du/dy
+      (Omits magnitude |V| and fluid vorticity omega for computational efficiency).
 
     Architecture:
-      - Stem: Conv 4x4 (7 -> 48) + LayerNorm
+      - Stem: Conv 4x4 (5 -> 48) + GroupNorm (3,984 params)
       - Stage 1: 48ch  x 1 block  (DropPath linear schedule)
       - Stage 2: 96ch  x 1 block  (DropPath linear schedule)
       - Stage 3: 192ch x 3 blocks (DropPath linear schedule)
       - Stage 4: 384ch x 1 block  (DropPath linear schedule)
-      - Total parameters: ~2.701M params.
+      - Temporal Aggregation (composite_ln default): LN((v0 + v1) + |v1 - v0|)
+      - Native 384-dim: Bypasses legacy projection (384 -> 224)
+      - Total parameters: 2,613,408 params (~2.613M).
     """
     def __init__(
         self,
-        embed_dim: int = 224,
-        in_chans: int = 7,
+        embed_dim: int = 384,
+        in_chans: int = 5,
         dims: Tuple[int, ...] = (48, 96, 192, 384),
         depths: Tuple[int, ...] = (1, 1, 3, 1),
         num_frames: int = 2,
         drop_path_rate: float = 0.1,
+        temporal_mode: str = "composite_ln",
         **kwargs
     ) -> None:
         super().__init__()
@@ -109,6 +111,7 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         self.in_chans = in_chans
         self.num_frames = num_frames
         self.drop_path_rate = drop_path_rate
+        self.temporal_mode = temporal_mode
 
         # 1. Stem: Patchify 4x4
         self.stem = nn.Sequential(
@@ -140,19 +143,16 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
             cur += depths[i]
             self.stages.append(stage)
 
-        # 4. Final normalization & projection
+        # 4. Final normalization (native 384-dim)
         self.norm_final = nn.LayerNorm(dims[-1], eps=1e-6)
-        self.proj = nn.Sequential(
-            nn.Linear(dims[-1], embed_dim),
-            nn.LayerNorm(embed_dim)
-        )
 
-        # Residual normalization
-        self.norm_video = nn.LayerNorm(embed_dim)
+        # 5. Temporal composite LayerNorm
+        self.norm_composite = nn.LayerNorm(embed_dim, eps=1e-6)
+        self.norm_video = self.norm_composite  # Backwards-compatible alias
 
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Extract spatial feature vector from [B * T, C, H, W].
+        Extract spatial feature vector from [B * T, C, H, W] -> [B * T, 384].
         """
         x = self.stem(x)
         for i in range(4):
@@ -163,41 +163,37 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         # Global Average Pooling: [B * T, 384, H', W'] -> [B * T, 384]
         x = x.mean(dim=[-2, -1])
         x = self.norm_final(x)
-        x = self.proj(x)  # [B * T, embed_dim]
         return x
 
-    def forward(self, frames_7ch: torch.Tensor) -> torch.Tensor:
+    def forward(self, frames: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            frames_7ch: [B, T, 7, H, W] tensor (T=2)
+            frames: [B, T, C, H, W] tensor (C=5, T=2)
 
         Returns:
             f_video: Joint spatiotemporal video embedding [B, embed_dim]
         """
-        B, T, C, H, W = frames_7ch.shape
+        B, T, C, H, W = frames.shape
 
-        # Process all T frames: [B * T, 7, H, W] -> [B * T, embed_dim]
-        flat_frames = frames_7ch.reshape(B * T, C, H, W)
+        # Process all T frames: [B * T, C, H, W] -> [B * T, embed_dim]
+        flat_frames = frames.reshape(B * T, C, H, W)
         flat_tokens = self.forward_features(flat_frames)  # [B * T, embed_dim]
 
         # Reshape to temporal sequence of frame tokens: [B, T, embed_dim]
         tokens_video = flat_tokens.view(B, T, self.embed_dim)
 
-        # 1. Pure Spatial feature from the final frame (appearance of fish & water surface)
-        f_spatial = tokens_video[:, -1]  # [B, embed_dim]
+        if T < 2:
+            return self.norm_composite(tokens_video[:, 0])
 
-        # 2. Inter-frame motion dynamics
-        if T >= 2:
-            f_motion = torch.abs(tokens_video[:, 1] - tokens_video[:, 0])  # [B, embed_dim]
+        if self.temporal_mode == "composite_ln":
+            v_sum = tokens_video[:, 0] + tokens_video[:, 1]
+            v_diff = torch.abs(tokens_video[:, 1] - tokens_video[:, 0])
+            f_video = self.norm_composite(v_sum + v_diff)
+        elif self.temporal_mode == "sum":
+            f_video = tokens_video[:, 0] + tokens_video[:, 1]
+        elif self.temporal_mode == "abs_diff":
+            f_video = torch.abs(tokens_video[:, 1] - tokens_video[:, 0])
         else:
-            f_motion = tokens_video[:, 0]
-
-        # 3. Peak-to-Average Dynamic Contrast (Burst feeding strike intensity)
-        f_mean_v = tokens_video.mean(dim=1)
-        f_peak_v, _ = torch.max(tokens_video, dim=1)
-        f_burst_v = f_peak_v - f_mean_v  # [B, embed_dim]
-
-        # 4. Joint Spatiotemporal Video Embedding
-        f_video = self.norm_video(f_spatial + f_motion + f_burst_v)  # [B, embed_dim]
+            raise ValueError(f"Unknown temporal_mode: {self.temporal_mode}. Available: 'composite_ln', 'sum', 'abs_diff'.")
 
         return f_video
