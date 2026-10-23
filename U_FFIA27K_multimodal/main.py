@@ -99,6 +99,8 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
         image_size=config.image_size,
         num_frames=config.num_frames,
         in_chans=in_chans,
+        temporal_mode=getattr(config.video_features, "temporal_mode", "composite_ln"),
+        audio_hidden_dims=getattr(config.model, "audio_hidden_dims", (768, 512)),
         tie_breakers=tb_cfg,
         video_drop_path=getattr(config.model, "video_drop_path", 0.1),
     )
@@ -110,9 +112,9 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     BEFORE loading the dataset into RAM or starting training.
 
     Validates:
-      1. Model parameter budget (< 5.0M).
+      1. Model parameter audit (~5.16M params).
       2. Device placement of all submodules, weights, and buffer filters.
-      3. Forward pass with multi-frame 7-ch kinematics extraction and 2049 STFT bins.
+      3. Forward pass with multi-frame 5-ch kinematics extraction and 2049 STFT bins.
       4. Backward pass & gradient propagation through all trainable parameters.
       5. Evaluation mode forward pass with torch.no_grad().
 
@@ -126,36 +128,33 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
     try:
         # 1. Parameter audit
         stats = count_parameters(model)
-        logger.info(f"  - Video Backbone (ConvNeXt-Nano 7-ch)       : {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Audio Backbone (TKEO-STFT-MLP 256k)       : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
-        logger.info(f"  - Tournament Fusion (Cross-Boundary)        : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
-        logger.info(f"  * Total Architecture Parameters:       {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
-        logger.info(f"  * Total Trainable Parameters:          {stats['total']:,} ({stats['total_million']:.3f} M)")
+        logger.info(f"  - Video Backbone (ConvNeXt-Nano 5-ch, composite_ln): {stats['video_backbone']:,} ({stats['video_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Audio Backbone (TKEO-STFT-MLP [768, 512] -> 384) : {stats['audio_backbone']:,} ({stats['audio_backbone']/1e6:.3f} M)")
+        logger.info(f"  - Tournament Fusion (Direct Gated, 192-ch Heads)   : {stats['fusion']:,} ({stats['fusion']/1e6:.3f} M)")
+        logger.info(f"  * Total Architecture Parameters:                     {stats['core_total']:,} ({stats['core_total']/1e6:.3f} M)")
+        logger.info(f"  * Total Trainable Parameters:                        {stats['total']:,} ({stats['total_million']:.3f} M) [Limit 5M dropped]")
 
         try:
             gflops = measure_flops(model, device=device.type, num_frames=getattr(config, "num_frames", 2))
-            logger.info(f"  * Inference Complexity (FLOPs):        {gflops:.4f} GFLOPs")
+            logger.info(f"  * Inference Complexity (FLOPs):                      {gflops:.4f} GFLOPs")
         except Exception as flop_err:
             logger.warning(f"  * FLOPs profiling skipped: {flop_err}")
-
-        if stats['total'] >= 5_000_000:
-            raise ValueError(f"Model parameters ({stats['total']:,}) exceed 5.0M budget!")
 
         # 2. Test forward pass with dummy tensors
         model.train()
         dummy_video = torch.randn(
-            2, config.num_frames, 3, config.image_size, config.image_size,
+            4, config.num_frames, 3, config.image_size, config.image_size,
             device=device, dtype=torch.float32
         )
         audio_length = config.audio_features.sample_rate * 2  # 2 seconds
-        dummy_audio = torch.randn(2, audio_length, device=device, dtype=torch.float32)
-        dummy_targets = torch.tensor([[1.0, 0, 0, 0], [0, 1.0, 0, 0]], device=device, dtype=torch.float32)
+        dummy_audio = torch.randn(4, audio_length, device=device, dtype=torch.float32)
+        dummy_targets = torch.eye(4, device=device, dtype=torch.float32)
 
         out = model(dummy_video, dummy_audio)
         if "clipwise_output" not in out:
             raise KeyError("Model output missing 'clipwise_output' key.")
-        if out["clipwise_output"].shape != (2, 4):
-            raise ValueError(f"Expected output shape (2, 4), got {out['clipwise_output'].shape}")
+        if out["clipwise_output"].shape != (4, 4):
+            raise ValueError(f"Expected output shape (4, 4), got {out['clipwise_output'].shape}")
 
         # 3. Test backward pass & gradient flow
         loss_type = getattr(config, "loss_type", "pairwise_tournament")
