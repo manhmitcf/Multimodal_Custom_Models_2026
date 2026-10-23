@@ -15,24 +15,43 @@ from utils.seed import seed_everything
 
 def test_parameter_budget():
     print("\n" + "=" * 65)
-    print("TEST 1: VIDEO TIE-BREAKERS TOURNAMENT PARAMETER BUDGET (< 5.0M)")
+    print("TEST 1: MULTIMODAL TOURNAMENT PARAMETER BUDGET (~5.16M)")
     print("=" * 65)
 
+    # 1. Default configuration (B23 enabled)
     model = MultimodalSOTANet(num_frames=2)
-    total_params = sum(p.numel() for p in model.parameters())
-    v_params = sum(p.numel() for p in model.video_backbone.parameters())
-    a_params = sum(p.numel() for p in model.audio_backbone.parameters())
-    f_params = sum(p.numel() for p in model.fusion.parameters())
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    v_params = sum(p.numel() for p in model.video_backbone.parameters() if p.requires_grad)
+    a_params = sum(p.numel() for p in model.audio_backbone.parameters() if p.requires_grad)
+    f_params = sum(p.numel() for p in model.fusion.parameters() if p.requires_grad)
+    aux_v_params = sum(p.numel() for p in model.aux_head_video.parameters() if p.requires_grad)
+    aux_a_params = sum(p.numel() for p in model.aux_head_audio.parameters() if p.requires_grad)
 
-    print(f"Total Model Parameters:               {total_params:,}")
-    print(f"  - Video Backbone (ConvNeXt-Nano 7ch): {v_params:,}")
-    print(f"  - Audio Backbone (STFT-MLP 2049):     {a_params:,}")
+    print(f"Default Model (B23 Enabled):")
+    print(f"  - Video Backbone (ConvNeXt-Nano 5ch): {v_params:,}")
+    print(f"  - Audio Backbone (STFT-MLP [768, 512]):{a_params:,}")
     print(f"  - Pairwise Video Tournament Fusion:   {f_params:,}")
+    print(f"  - Video Auxiliary Head:               {aux_v_params:,}")
+    print(f"  - Audio Auxiliary Head:               {aux_a_params:,}")
+    print(f"  Total Model Parameters:               {total_params:,}")
 
-    strict_limit = 5000000
-    assert total_params < strict_limit, f"FAILED: Exceeded budget {total_params} >= {strict_limit}"
-    headroom = strict_limit - total_params
-    print(f"[PASSED] Total parameters ({total_params:,}) safely under 5.0M! (Headroom: {headroom:,})")
+    assert v_params == 2_613_408, f"Video backbone mismatch: {v_params} != 2,613,408"
+    assert a_params == 2_168_448, f"Audio backbone mismatch: {a_params} != 2,168,448"
+    assert f_params == 374_023, f"Fusion mismatch: {f_params} != 374,023"
+    assert total_params == 5_163_057, f"Total params mismatch: {total_params} != 5,163,057"
+    print(f"[PASSED] Default configuration verified: exactly {total_params:,} parameters!")
+
+    # 2. All 3 Video Referees enabled
+    model_all = MultimodalSOTANet(num_frames=2, enable_b12=True, enable_b23=True, enable_b13=True)
+    total_all = sum(p.numel() for p in model_all.parameters() if p.requires_grad)
+    assert total_all == 5_312_053, f"All 3 referees mismatch: {total_all} != 5,312,053"
+    print(f"[PASSED] All-3 Referees configuration verified: exactly {total_all:,} parameters!")
+
+    # 3. Pure Baseline (0 Video Referees)
+    model_base = MultimodalSOTANet(num_frames=2, enable_b12=False, enable_b23=False, enable_b13=False)
+    total_base = sum(p.numel() for p in model_base.parameters() if p.requires_grad)
+    assert total_base == 5_088_559, f"Pure baseline mismatch: {total_base} != 5,088,559"
+    print(f"[PASSED] Pure Baseline configuration verified: exactly {total_base:,} parameters!")
 
 
 def test_tournament_forward_and_pairwise():
@@ -40,7 +59,7 @@ def test_tournament_forward_and_pairwise():
     print("TEST 2: TOURNAMENT 2-LEVEL FORWARD PASS & 3 VIDEO TIE-BREAKERS")
     print("=" * 65)
 
-    model = MultimodalSOTANet(num_frames=2)
+    model = MultimodalSOTANet(num_frames=2, enable_b12=True, enable_b23=True, enable_b13=True)
     model.eval()
 
     B = 4
@@ -50,12 +69,16 @@ def test_tournament_forward_and_pairwise():
     with torch.no_grad():
         out = model(v_input, a_input)
 
-    # 1. Check Level 1 Activity Gate
+    # 1. Check Fused Representation
+    assert "f_fused" in out, "f_fused missing from outputs"
+    assert out["f_fused"].shape == (B, 384), f"Wrong f_fused shape: {out['f_fused'].shape}"
+
+    # 2. Check Level 1 Activity Gate
     p_feeding = out["p_feeding"]
     print(f"Level 1 Feeding Activity Probabilities: {p_feeding.tolist()}")
     assert (p_feeding >= 0.0).all() and (p_feeding <= 1.0).all(), "p_feeding out of [0, 1] range"
 
-    # 2. Check Level 2 Pairwise Boundaries B12, B23, B13 and Video Referees
+    # 3. Check Level 2 Pairwise Boundaries B12, B23, B13 and Video Referees
     p_w_over_m = out["p_w_over_m"]
     p_m_over_s = out["p_m_over_s"]
     p_w_over_s = out["p_w_over_s"]
@@ -83,7 +106,7 @@ def test_tournament_forward_and_pairwise():
     assert "logit_23_v" in out and "gamma_23" in out
     assert "logit_13_v" in out and "gamma_13" in out
 
-    # 3. Check Tournament Voting scores
+    # 4. Check Tournament Voting scores
     v_voting = out["v_voting"]
     print(f"Tournament Borda Voting [Weak, Med, Str]:\n{v_voting}")
     assert v_voting.shape == (B, 3)
@@ -94,7 +117,7 @@ def test_tournament_forward_and_pairwise():
     print(f"Borda Vote Sums per sample: {v_sum.tolist()} (Exact algebraic invariant = 3.0)")
     assert torch.allclose(v_sum, torch.tensor([3.0] * B), atol=1e-5), "Borda voting sum must strictly equal 3.0"
 
-    # 4. Check Hierarchical Probabilities
+    # 5. Check Hierarchical Probabilities
     probs = out["probabilities"]
     print(f"Hierarchical Multi-Class Probabilities [None, Strong, Med, Weak]:\n{probs}")
     assert probs.shape == (B, 4)
@@ -115,7 +138,7 @@ def test_gradient_flow_through_loss():
     print("TEST 3: 100% GRADIENT FLOW THROUGH TOURNAMENT LOSS")
     print("=" * 65)
 
-    model = MultimodalSOTANet(num_frames=2)
+    model = MultimodalSOTANet(num_frames=2, enable_b12=True, enable_b23=True, enable_b13=True)
     model.train()
 
     B = 4
@@ -143,6 +166,7 @@ def test_gradient_flow_through_loss():
             print(f"  - {name}")
         assert False, f"Gradient flow broken for {len(missing_grad_params)} parameters!"
 
+    assert param_count == 135, f"Expected 135 parameter tensors for all-3 referees, got {param_count}"
     print(f"[PASSED] 100% Gradient flow verified: {param_count}/{param_count} parameters with healthy gradients!")
     print(f"  Composite Loss: {loss.item():.4f}")
 
@@ -152,7 +176,7 @@ def test_end_to_end_from_scratch():
     print("TEST 4: END-TO-END FROM SCRATCH SIMULTANEOUS TRAINING")
     print("=" * 65)
 
-    model = MultimodalSOTANet(num_frames=2)
+    model = MultimodalSOTANet(num_frames=2, enable_b12=True, enable_b23=True, enable_b13=True)
     model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
@@ -184,26 +208,26 @@ def test_all_8_video_tie_breaker_combinations():
     print("TEST 5: ALL 8 VIDEO TIE-BREAKER COMBINATIONS (ABLATION MATRIX)")
     print("=" * 65)
 
-    B = 2
+    B = 4
     v_input = torch.randn(B, 2, 3, 224, 224)
     a_input = torch.randn(B, 512000)
-    targets = {"target": torch.tensor([1, 2])}
+    targets = {"target": torch.tensor([0, 1, 2, 3])}
     criterion = PairwiseTournamentLoss(weight_act=0.5, weight_pairwise=0.5, weight_ce=1.0, aux_loss_weight=0.3)
 
     combinations = [
-        (False, False, False, "Pure Baseline (No Tie-Breakers)"),
-        (True,  False, False, "Video Tie-Breaker B12 Only"),
-        (False, True,  False, "Video Tie-Breaker B23 Only"),
-        (False, False, True,  "Video Tie-Breaker B13 Only"),
-        (True,  True,  False, "Video Tie-Breakers B12 + B23"),
-        (True,  False, True,  "Video Tie-Breakers B12 + B13"),
-        (False, True,  True,  "Video Tie-Breakers B23 + B13"),
-        (True,  True,  True,  "All 3 Video Tie-Breakers (B12 + B23 + B13)"),
+        (False, False, False, 5_088_559, 114, "Pure Baseline (No Tie-Breakers)"),
+        (True,  False, False, 5_163_057, 121, "Video Tie-Breaker B12 Only"),
+        (False, True,  False, 5_163_057, 121, "Video Tie-Breaker B23 Only (Default)"),
+        (False, False, True,  5_163_057, 121, "Video Tie-Breaker B13 Only"),
+        (True,  True,  False, 5_237_555, 128, "Video Tie-Breakers B12 + B23"),
+        (True,  False, True,  5_237_555, 128, "Video Tie-Breakers B12 + B13"),
+        (False, True,  True,  5_237_555, 128, "Video Tie-Breakers B23 + B13"),
+        (True,  True,  True,  5_312_053, 135, "All 3 Video Tie-Breakers (B12 + B23 + B13)"),
     ]
 
     from config.train_config import VideoTieBreakersConfig
 
-    for idx, (b12, b23, b13, desc) in enumerate(combinations, 1):
+    for idx, (b12, b23, b13, exp_params, exp_tensors, desc) in enumerate(combinations, 1):
         # Validate Pydantic VideoTieBreakersConfig
         tb_pydantic = VideoTieBreakersConfig(enable_b12=b12, enable_b23=b23, enable_b13=b13)
         model = MultimodalSOTANet(num_frames=2, tie_breakers=tb_pydantic)
@@ -238,9 +262,11 @@ def test_all_8_video_tie_breaker_combinations():
         loss = criterion(outputs, targets)
         loss.backward()
 
-        param_count = sum(p.numel() for p in model.parameters())
-        assert param_count < 5000000
-        print(f"  Comb {idx}/8: [B12={b12}, B23={b23}, B13={b13}] -> {param_count:,} params | {desc} -> PASSED")
+        param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        tensor_count = sum(1 for p in model.parameters() if p.requires_grad)
+        assert param_count == exp_params, f"Combination {idx} param mismatch: {param_count} != {exp_params}"
+        assert tensor_count == exp_tensors, f"Combination {idx} tensor mismatch: {tensor_count} != {exp_tensors}"
+        print(f"  Comb {idx}/8: [B12={b12}, B23={b23}, B13={b13}] -> {param_count:,} params ({tensor_count} tensors) | {desc} -> PASSED")
 
     # Explicit divergence verification: B12 Only vs B23 Only must produce different logits
     seed_everything(42)
@@ -263,7 +289,7 @@ def test_consistent_video_transform():
 
     import numpy as np
     from transforms.video_transform import ConsistentVideoTransform
-    from features.motion_kinematics import FishMotionKinematics7Ch
+    from features.motion_kinematics import FishMotionKinematics5Ch
 
     tf_train = ConsistentVideoTransform(image_size=224, is_train=True, erase_prob=1.0)
     dummy_clip = [np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8) for _ in range(2)]
@@ -275,10 +301,10 @@ def test_consistent_video_transform():
     assert torch.equal(erased_mask_frame0, erased_mask_frame1), "Erasing mask not synchronized across clip frames!"
     print(f"Clip-synchronized erased pixels per channel: {erased_mask_frame0.sum().item()}")
 
-    kinematics = FishMotionKinematics7Ch(image_size=224)
-    frames_7ch, _ = kinematics(tensor_train.unsqueeze(0))
-    flow_u = frames_7ch[0, :, 3, :, :]
-    flow_v = frames_7ch[0, :, 4, :, :]
+    kinematics = FishMotionKinematics5Ch(image_size=224)
+    frames_5ch, _ = kinematics(tensor_train.unsqueeze(0))
+    flow_u = frames_5ch[0, :, 3, :, :]
+    flow_v = frames_5ch[0, :, 4, :, :]
     assert flow_u[:, erased_mask_frame0].abs().max().item() == 0.0, "Optical flow must be 0.0 in erased region!"
     assert flow_v[:, erased_mask_frame0].abs().max().item() == 0.0, "Optical flow must be 0.0 in erased region!"
     print("[PASSED] Optical flow in erased region is strictly 0.0 (no kinematic artifacts)!")

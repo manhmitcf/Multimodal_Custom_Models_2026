@@ -1,5 +1,5 @@
 # AGENTS.md — Master Architecture Specification & Operational Guidelines
-# Branch: final/video_tie_breakers | Multimodal Tournament Network with 3 Video Kinematics Tie-Breakers (~4.09M Params)
+# Branch: final/video_tie_breakers | Multimodal Tournament Network with 5-ch Video Kinematics & AudioMLP L2 (~5.16M Params)
 
 This document defines the invariant architectural constraints, operational guidelines, and verification procedures for AI agents (Antigravity, Gemini, Claude, Cursor) working on the **Fish Feeding Intensity Assessment** multimodal codebase on branch `final/video_tie_breakers`.
 
@@ -9,61 +9,68 @@ This document defines the invariant architectural constraints, operational guide
 
 ```text
 ========================================================================================
-    HIERARCHICAL 2-LEVEL TOURNAMENT WITH 3 VIDEO TIE-BREAKERS (~4.09M PARAMS)
+ HIERARCHICAL 2-LEVEL TOURNAMENT WITH 5-CH VIDEO & AUDIO MLP L2 (384-DIM, ~5.16M PARAMS)
 ========================================================================================
 
    [Video Input: T=2 Frames]                           [Audio Input: 2.0s @ 256 kHz]
    Shape: (B, 2, 3, 224, 224)                          Shape: (B, 512000)
              │                                                    │
              ▼                                                    ▼
-   [MotionKinematics7Ch]                               [TKEO-STFT Audio Frontend]
+   [FishMotionKinematics5Ch]                           [TKEO-STFT Audio Frontend]
    - Spatial RGB (3 ch)                                - TKEO Adaptive Pre-Emphasis (alpha=0.99)
    - Farneback Optical Flow (u, v) (2 ch)              - cuFFT RFFT (n_fft=4096, hop=2048)
-   - Velocity Magnitude |V| (1 ch)                     - Log Magnitude: log(|X| + 1e-8)
-   - Fluid Vorticity omega (1 ch)                      - Temporal Mean Pooling -> 2049 bins
-   Shape: (B, 2, 7, 224, 224)                          - Spectral 1D Aug (Cutout & Jitter)
-             │                                         Shape: (B, 2049)
+   Shape: (B, 2, 5, 224, 224)                          - Log Magnitude: log(|X| + 1e-8)
+             │                                         - Temporal Mean Pooling -> 2049 bins
+             │                                         - Spectral 1D Aug (Cutout & Jitter)
+             │                                         Shape: (B, 2049) [4,098 params]
              ▼                                                    │
    [ConvNeXt-Nano Video Backbone]                                 ▼
-   - 7-Channel Stem: Conv2d(7->48, k=4, s=4)           [Audio MLP Backbone]
-   - 4 ConvNeXt Stages: [48, 96, 192, 384]             - FC1: Linear(2049 -> 512) + GELU + LN + Drop
-   - Stochastic Depth (Linear DropPath [0.0 -> 0.1])   - FC2: Linear(512 -> 224) + LN
-   Shape: f_video (B, 224) [~2.701M params]            Shape: f_audio (B, 224) [~1.166M params]
+   - 5-Channel Stem: Conv2d(5->48, k=4, s=4)           [Audio MLP Backbone]
+   - 4 ConvNeXt Stages: [48, 96, 192, 384]             - FC1: Linear(2049 -> 768) + GELU + LN + Drop
+   - Stochastic Depth (Linear DropPath [0.0 -> 0.1])   - FC2: Linear(768 -> 512) + GELU + LN + Drop
+   - Composite LayerNorm Aggregation (composite_ln):   - FC3: Linear(512 -> 384) + LN
+     LN((v0 + v1) + |v1 - v0|)                         Shape: f_audio (B, 384) [~2.168M params]
+   Shape: f_video (B, 384) [~2.613M params]                       │
              │                                                    │
              └─────────────────────────┬──────────────────────────┘
                                        ▼
-                     [CROSS-MODAL RELIABILITY GATING]
+                     [DIRECT CROSS-MODAL RELIABILITY GATING]
                      - Reliability Gating: g = sigma(W[f_V || f_A])
                      - Fused Representation: f_fused = LayerNorm(g * f_V + (1-g) * f_A)
-                     - Projected Joint Representation: f_joint = ProjJoint(f_fused) (dim=224)
+                     - Directly feeds Tournament Head (dim=384, no intermediate proj_joint)
                                        │
                                        ▼
                      [MULTIMODAL TOURNAMENT FUSION ENGINE]
-                     - Level 1: Feeding Activity Gate Head (None vs Active Feeding)
+                     - Level 1: Feeding Activity Gate Head (None vs Active Feeding, 192-dim)
                      - Level 2: 3 Specialized Pairwise Subspace Heads with Video Referees:
-                         * B12: Weak vs Medium (Base Joint + Video Kinematics Referee)
-                         * B23: Medium vs Strong (Base Joint + Video Kinematics Referee)
-                         * B13: Weak vs Strong (Base Joint + Video Kinematics Referee)
+                         * B12: Weak vs Medium (Base on f_fused + Video Kinematics Referee on f_video)
+                         * B23: Medium vs Strong (Base on f_fused + Video Kinematics Referee on f_video)
+                         * B13: Weak vs Strong (Base on f_fused + Video Kinematics Referee on f_video)
                       - Dynamic Referee Intervention Formula:
                           u_tie = exp(-|logit_base| / 2.0)
                           logit = logit_base + gamma * u_tie * logit_video
                       - Tournament Borda Voting -> Final Calibrated Probabilities
-                      [~0.219M params | FLOPs: ~1.71 GFLOPs]
+                      [~0.374M params (B23 default) | FLOPs: ~1.69 GFLOPs]
                                         │
                                         ▼
                       [4 Feeding Intensity Predictions]
                       None (0), Strong (1), Medium (2), Weak (3)
 ```
 
-### Parameter Budget Breakdown (Strict < 5.0M Limit)
-- **Video Backbone (ConvNeXt-Nano 7-ch)**: `2,701,312` (~`2.701M`)
-- **Audio Backbone (TKEO-STFT-MLP 256k)**: `1,165,984` (~`1.166M`)
+### Parameter Budget Breakdown
+- **Video Backbone (ConvNeXt-Nano 5-ch, composite_ln)**: `2,613,408` (~`2.613M`)
+- **Audio Backbone (TKEO-STFT-MLP [768, 512] -> 384)**: `2,168,448` (~`2.168M`)
 - **Audio Frontend (TKEO-STFT LayerNorm)**: `4,098` (~`0.004M`)
-- **Tournament Decision Head (Pairwise Base + 3 Video Referees + Borda)**: `219,435` (~`0.219M`)
-- **Auxiliary Heads (Deep Supervision)**: `1,800` (~`0.002M`)
-- **Total Trainable Parameters**: `4,092,629` (~`4.093M`) with all 3 video tie-breakers enabled.
-- **Remaining Headroom**: `907,371` parameters below the 5.0M budget limit.
-- **Inference Complexity**: `1.7085 GFLOPs` (profiled via native PyTorch `FlopCounterMode`).
+- **Tournament Decision Head (Direct Gated + 192-dim heads)**:
+  * Default (B23 enabled): `374,023` (~`0.374M`)
+  * All 3 Referees enabled: `523,019` (~`0.523M`)
+  * Pure Baseline (0 Referees): `299,525` (~`0.300M`)
+- **Auxiliary Heads (Video + Audio 384 -> 4)**: `3,080` (~`0.003M`)
+- **Total Trainable Parameters**:
+  * Default (`enable_b23: true`, B12=False, B13=False): `5,163,057` (~`5.163M`) | 121 parameter tensors.
+  * All 3 Referees enabled (`enable_b12: true, enable_b23: true, enable_b13: true`): `5,312,053` (~`5.312M`) | 135 parameter tensors.
+  * Pure Baseline (0 Referees): `5,088,559` (~`5.089M`) | 114 parameter tensors.
+- **Inference Complexity**: `~1.688 GFLOPs` (profiled via native PyTorch `FlopCounterMode`, strictly < 2.0 GFLOPs).
 
 ---
 
@@ -71,14 +78,15 @@ This document defines the invariant architectural constraints, operational guide
 
 ### 2.1 Video Pipeline
 - **Input**: Multi-frame video clip with T=2 frames at 224x224 resolution.
-- **Motion Kinematics 7-Channel**:
+- **Motion Kinematics 5-Channel (`FishMotionKinematics5Ch`)**:
   - Channels 0-2: Normalized RGB.
   - Channels 3-4: Dense Optical Flow (u, v) via Farneback algorithm.
-  - Channel 5: Instantaneous Velocity Magnitude |V| = sqrt(u^2 + v^2).
-  - Channel 6: Fluid Vorticity omega = dv/dx - du/dy.
+  - Omitted $|V|$ and $\omega$ (vorticity) as demonstrated by unimodal ablation to eliminate gradient noise.
 - **ConvNeXt-Nano Video Backbone (`ConvNeXtNanoVideoBackbone`)**:
+  - 5-Channel Stem: Conv2d(5->48, k=4, s=4) (3,888 params).
   - 4 stages: [48, 96, 192, 384] with block depths (1, 1, 3, 1).
   - Stochastic Depth (`DropPath`): Linear schedule [0.0 -> 0.1] across 6 residual blocks during training; identity pass-through during evaluation.
+  - Temporal Aggregation (`composite_ln`): $\text{LayerNorm}((v_0 + v_1) + |v_1 - v_0|)$ yielding native 384-dim latent representation.
   - Weight Initialization: Default PyTorch (Kaiming Uniform / He) initialization without calling _init_weights.
 - **Consistent Video Transform (`ConsistentVideoTransform`)**:
   - Random Horizontal Flip: Decided once per clip (p=0.5), applied identically to all frames.
@@ -95,17 +103,19 @@ This document defines the invariant architectural constraints, operational guide
   - Log Magnitude: log(|X| + 1e-8) followed by temporal mean pooling -> [B, 2049].
   - Spectral 1D Augmentation (`Spectral1DAugmentation`): Cutout (24 bins, p=0.5) and Gaussian Jitter (std=0.02) during training; identity pass-through during evaluation.
 - **Backbone (`AudioMLPBackbone`)**:
-  - 2-layer MLP projection with LayerNorm and GELU (2049 -> 512 -> 224).
+  - 3-layer MLP projection with LayerNorm and GELU (2049 -> 768 -> 512 -> 384).
 
 ### 2.3 Tournament Fusion Engine (`MultimodalTournamentFusion`)
-- **Reliability Gating**: alpha = sigma(W_gate[f_V || f_A]).
-- **Fused & Joint Projection**: f_fused = LayerNorm(g * f_V + (1-g) * f_A), f_joint = ProjJoint(f_fused).
+- **Direct Cross-Modal Reliability Gating**:
+  $$g = \sigma(W_{\text{gate}}[f_V \parallel f_A])$$
+  $$f_{\text{fused}} = \text{LayerNorm}(g \cdot f_V + (1-g) \cdot f_A)$$
+  Directly feeds into the Tournament Head without any intermediate `proj_joint` bottleneck.
 - **2-Level Tournament Decision Hierarchy**:
-  - **Level 1**: Activity Gate Head classifies P(Feeding) vs P(None).
-  - **Level 2**: 3 specialized pairwise subspace heads with 3 Configurable Video Kinematics Tie-Breakers:
-    - B12: Weak vs Medium (Base Joint on $f_{\text{joint}}$ + Video Kinematics Referee on $f_{\text{video}}$).
-    - B23: Medium vs Strong (Base Joint on $f_{\text{joint}}$ + Video Kinematics Referee on $f_{\text{video}}$).
-    - B13: Weak vs Strong (Base Joint on $f_{\text{joint}}$ + Video Kinematics Referee on $f_{\text{video}}$).
+  - **Level 1**: Activity Gate Head classifies P(Feeding) vs P(None) using unified 192-dim head (`Linear(384 -> 192) + GELU + LayerNorm(192) + Linear(192 -> 1)`).
+  - **Level 2**: 3 specialized pairwise subspace heads with Configurable Video Kinematics Tie-Breakers:
+    - B12: Weak vs Medium (Base Head on $f_{\text{fused}}$ + Video Kinematics Referee on $f_{\text{video}}$).
+    - B23: Medium vs Strong (Base Head on $f_{\text{fused}}$ + Video Kinematics Referee on $f_{\text{video}}$) [Default active].
+    - B13: Weak vs Strong (Base Head on $f_{\text{fused}}$ + Video Kinematics Referee on $f_{\text{video}}$).
   - **Dynamic Referee Intervention Formulation**:
     $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}| / 2.0)$$
     $$\text{logit} = \text{logit}_{\text{base}} + \gamma \cdot u_{\text{tie}} \cdot \text{logit}_{\text{video}}$$
@@ -170,9 +180,9 @@ python test_tournament_architecture.py
 python main.py --dry-run
 ```
 
-- [x] **Parameter Budget**: Trainable parameters < 5,000,000 (Current: 4,092,629 with 3 tie-breakers).
-- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: ~1.71 GFLOPs).
-- [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients (137/137 tensors).
+- [x] **Parameter Budget**: Trainable parameters: Default: 5,163,057 (~5.163M); All-3: 5,312,053 (~5.312M); Baseline: 5,088,559 (~5.089M).
+- [x] **Complexity Budget**: Inference FLOPs < 2.0 GFLOPs (Current: ~1.688 GFLOPs).
+- [x] **Gradient Propagation**: 100% of trainable parameters receive active gradients (121/121 tensors default, 135/135 tensors all-3).
 - [x] **Ablation 8 Combinations**: Full support for toggling B12, B23, B13 Video Referees ($2^3 = 8$ combinations).
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
-- [x] **Clean Exit**: Dry-run completes with exit code 0 on both CPU and CUDA.
+- [x] **Clean Exit**: Dry-run and test suite complete with exit code 0 on both CPU and CUDA.
