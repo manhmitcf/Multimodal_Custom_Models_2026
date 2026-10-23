@@ -148,7 +148,6 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
 
         # 5. Temporal composite LayerNorm
         self.norm_composite = nn.LayerNorm(embed_dim, eps=1e-6)
-        self.norm_video = self.norm_composite  # Backwards-compatible alias
 
     def forward_features(self, x: torch.Tensor) -> torch.Tensor:
         """
