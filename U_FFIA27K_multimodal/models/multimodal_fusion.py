@@ -4,13 +4,14 @@ import torch.nn.functional as F
 from typing import Dict, Optional, Any, Tuple
 
 
-def _make_subspace_head(dim: int, hidden_dim: int = 112) -> nn.Sequential:
+def _make_subspace_head(dim: int, hidden_dim: Optional[int] = None) -> nn.Sequential:
     """Helper to build a 2-layer MLP head with LayerNorm using 100% native PyTorch initialization."""
+    h_dim = hidden_dim if hidden_dim is not None else dim // 2
     return nn.Sequential(
-        nn.Linear(dim, hidden_dim),
+        nn.Linear(dim, h_dim),
         nn.GELU(),
-        nn.LayerNorm(hidden_dim),
-        nn.Linear(hidden_dim, 1)
+        nn.LayerNorm(h_dim),
+        nn.Linear(h_dim, 1)
     )
 
 
@@ -83,17 +84,17 @@ def _parse_tie_breakers(
 
 class PairwiseBoundaryTournamentHead(nn.Module):
     """
-    Hierarchical Pairwise Cross-Boundary Tournament Head with 3 Configurable Video Kinematics Tie-Breakers (~168K params).
+    Hierarchical Pairwise Cross-Boundary Tournament Head with 3 Configurable Video Kinematics Tie-Breakers (Unified 384-dim).
 
     Level 1: Feeding Activity Gating
       - Distinguishes None (No feeding, quiet water) from Active Feeding (Weak, Medium, Strong).
-      - p_feeding = sigmoid(w_act^T * f) in (0, 1)
+      - p_feeding = sigmoid(w_act^T * f_fused) in (0, 1)
       - p_none = 1 - p_feeding
 
     Level 2: 3-Way Pairwise Cross-Boundary Tournament with 3 Video Kinematics Tie-Breakers
-      - B12: Weak <-> Medium    -> Base Head on f_joint + Video Kinematics Referee on f_video
-      - B23: Medium <-> Strong  -> Base Head on f_joint + Video Kinematics Referee on f_video
-      - B13: Weak <-> Strong    -> Base Head on f_joint + Video Kinematics Referee on f_video
+      - B12: Weak <-> Medium    -> Base Head on f_fused + Video Kinematics Referee on f_video
+      - B23: Medium <-> Strong  -> Base Head on f_fused + Video Kinematics Referee on f_video
+      - B13: Weak <-> Strong    -> Base Head on f_fused + Video Kinematics Referee on f_video
 
     Dynamic Tie-Breaker Intervention:
       logit = logit_base + gamma * u_tie * logit_video
@@ -108,7 +109,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
     """
     def __init__(
         self,
-        dim: int = 224,
+        dim: int = 384,
         temperature: float = 2.0,
         enable_b12: bool = True,
         enable_b23: bool = True,
@@ -119,42 +120,39 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         super().__init__()
         self.dim = dim
         self.temperature = temperature
+        hidden_dim = dim // 2  # 192 for dim=384
 
         # Parse tie_breakers configuration robustly
         self.enable_b12, self.enable_b23, self.enable_b13 = _parse_tie_breakers(
             tie_breakers, enable_b12, enable_b23, enable_b13
         )
 
-        # Level 1: Feeding Activity Gate (None vs Feeding)
-        self.activity_head = nn.Sequential(
-            nn.Linear(dim, 64),
-            nn.GELU(),
-            nn.Linear(64, 1)
-        )
+        # Level 1: Feeding Activity Gate (None vs Feeding) — Unified 192-dim head with LayerNorm
+        self.activity_head = _make_subspace_head(dim, hidden_dim)
 
         # Level 2: 3 Specialized Pairwise Subspace Heads + Video Tie-Breakers
         # B12: Weak vs Medium
-        self.head_b12 = _make_subspace_head(dim, 112)
+        self.head_b12 = _make_subspace_head(dim, hidden_dim)
         if self.enable_b12:
-            self.head_b12_v = _make_subspace_head(dim, 112)
+            self.head_b12_v = _make_subspace_head(dim, hidden_dim)
             self.gamma_12 = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b12_v = None
             self.gamma_12 = None
 
         # B23: Medium vs Strong
-        self.head_b23 = _make_subspace_head(dim, 112)
+        self.head_b23 = _make_subspace_head(dim, hidden_dim)
         if self.enable_b23:
-            self.head_b23_v = _make_subspace_head(dim, 112)
+            self.head_b23_v = _make_subspace_head(dim, hidden_dim)
             self.gamma_23 = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b23_v = None
             self.gamma_23 = None
 
         # B13: Weak vs Strong
-        self.head_b13 = _make_subspace_head(dim, 112)
+        self.head_b13 = _make_subspace_head(dim, hidden_dim)
         if self.enable_b13:
-            self.head_b13_v = _make_subspace_head(dim, 112)
+            self.head_b13_v = _make_subspace_head(dim, hidden_dim)
             self.gamma_13 = nn.Parameter(torch.tensor(1.0))
         else:
             self.head_b13_v = None
@@ -172,7 +170,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         p_none = torch.clamp(1.0 - p_feeding, min=1e-6)     # [B]
 
         # 2. Level 2: 3 Pairwise Cross-Boundary Logits & Probabilities
-        # B12 Base proposal on f_joint + Video Kinematics Tie-Breaker
+        # B12 Base proposal on f_fused + Video Kinematics Tie-Breaker
         logit_12_base = self.head_b12(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Medium)
         if self.enable_b12 and self.head_b12_v is not None and f_video is not None:
             logit_12_v = self.head_b12_v(f_video).squeeze(-1)
@@ -183,7 +181,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             logit_12_v = logit_12_base
             u_tie_12 = torch.zeros_like(logit_12_base)
 
-        # B23 Base proposal on f_joint + Video Kinematics Tie-Breaker
+        # B23 Base proposal on f_fused + Video Kinematics Tie-Breaker
         logit_23_base = self.head_b23(f).squeeze(-1)        # [B] (Positive -> Medium, Negative -> Strong)
         if self.enable_b23 and self.head_b23_v is not None and f_video is not None:
             logit_23_v = self.head_b23_v(f_video).squeeze(-1)
@@ -194,7 +192,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             logit_23_v = logit_23_base
             u_tie_23 = torch.zeros_like(logit_23_base)
 
-        # B13 Base proposal on f_joint + Video Kinematics Tie-Breaker
+        # B13 Base proposal on f_fused + Video Kinematics Tie-Breaker
         logit_13_base = self.head_b13(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Strong)
         if self.enable_b13 and self.head_b13_v is not None and f_video is not None:
             logit_13_v = self.head_b13_v(f_video).squeeze(-1)
@@ -288,14 +286,15 @@ class PairwiseBoundaryTournamentHead(nn.Module):
 
 class MultimodalTournamentFusion(nn.Module):
     """
-    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (~219K params).
-    1. Gated Cross-Modal Fusion: g = sigmoid(W[f_V || f_A]).
-    2. Pairwise Boundary Tournament Head: Level 1 Activity Gate + Level 2 3-Way Cross Tournament
-       with 3 Configurable Video Kinematics Tie-Breakers on B12, B23, B13.
+    Multimodal Fusion with Hierarchical Pairwise Cross-Boundary Tournament Engine (Direct Gated, 384-dim).
+    1. Direct Cross-Modal Reliability Gating: g = sigmoid(W[f_V || f_A]).
+       f_fused = LayerNorm(g * f_V + (1-g) * f_A) -> No intermediate proj_joint layer!
+    2. Pairwise Boundary Tournament Decision Head with Unified 192-dim Subspace Heads
+       and Configurable Video Kinematics Tie-Breakers on B12, B23, B13.
     """
     def __init__(
         self,
-        dim: int = 224,
+        dim: int = 384,
         dropout: float = 0.1,
         enable_b12: bool = True,
         enable_b23: bool = True,
@@ -309,22 +308,14 @@ class MultimodalTournamentFusion(nn.Module):
             tie_breakers, enable_b12, enable_b23, enable_b13
         )
 
-        # 1. Gated Reliability Fusion
+        # 1. Direct Gated Reliability Fusion
         self.gate = nn.Sequential(
             nn.Linear(dim * 2, 1),
             nn.Sigmoid()
         )
         self.norm_fused = nn.LayerNorm(dim)
 
-        # 2. Residual refinement
-        self.proj_joint = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.LayerNorm(dim)
-        )
-
-        # 3. Pairwise Boundary Tournament Decision Head with 3 Video Tie-Breakers
+        # 2. Pairwise Boundary Tournament Decision Head (Directly fed from f_fused)
         self.tournament_head = PairwiseBoundaryTournamentHead(
             dim=dim,
             temperature=2.0,
@@ -341,14 +332,13 @@ class MultimodalTournamentFusion(nn.Module):
         f_audio: torch.Tensor,
         **kwargs
     ) -> Dict[str, torch.Tensor]:
-        # Step 1: Cross-modal adaptive reliability gating
+        # Step 1: Direct Cross-modal adaptive reliability gating
         combined = torch.cat([f_video, f_audio], dim=-1)  # [B, dim * 2]
         g = self.gate(combined)                            # [B, 1]
-        f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)
-        f_joint = self.proj_joint(f_fused)
+        f_fused = self.norm_fused(g * f_video + (1.0 - g) * f_audio)  # [B, dim]
 
-        # Step 2: Pairwise Boundary Tournament with 3 Configurable Video Kinematics Tie-Breakers
-        out = self.tournament_head(f_joint, f_video=f_video)
+        # Step 2: Direct feed into Tournament Head (No proj_joint intermediate bottleneck)
+        out = self.tournament_head(f_fused, f_video=f_video)
 
         # Step 3: Package metrics
         out["f_fused"] = f_fused
