@@ -112,6 +112,9 @@ class ConvNeXtNanoVideoBackbone(nn.Module):
         self.num_frames = num_frames
         self.drop_path_rate = drop_path_rate
         self.temporal_mode = temporal_mode
+        assert embed_dim == dims[-1], (
+            f"embed_dim ({embed_dim}) must match backbone stage-4 dimension ({dims[-1]})"
+        )
 
         # 1. Stem: Patchify 4x4
         self.stem = nn.Sequential(

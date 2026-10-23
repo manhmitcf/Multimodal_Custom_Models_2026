@@ -19,7 +19,7 @@ class FishMotionKinematics5Ch(nn.Module):
     """
     def __init__(self, image_size: int = 224) -> None:
         super().__init__()
-        self.image_size = image_size
+        self.image_size = image_size  # Retained for API compatibility; Sobel filtering is resolution-agnostic
 
         # Fixed Sobel spatial gradient filters (channel=1)
         sobel_x = torch.tensor([[-1.0, 0.0, 1.0],

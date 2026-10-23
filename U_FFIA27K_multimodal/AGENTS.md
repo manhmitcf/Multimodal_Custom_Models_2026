@@ -18,7 +18,7 @@ This document defines the invariant architectural constraints, operational guide
              ▼                                                    ▼
    [FishMotionKinematics5Ch]                           [TKEO-STFT Audio Frontend]
    - Spatial RGB (3 ch)                                - TKEO Adaptive Pre-Emphasis (alpha=0.99)
-   - Farneback Optical Flow (u, v) (2 ch)              - cuFFT RFFT (n_fft=4096, hop=2048)
+   - Differentiable Optical Flow (u, v) (2 ch)         - cuFFT RFFT (n_fft=4096, hop=2048)
    Shape: (B, 2, 5, 224, 224)                          - Log Magnitude: log(|X| + 1e-8)
              │                                         - Temporal Mean Pooling -> 2049 bins
              │                                         - Spectral 1D Aug (Cutout & Jitter)
@@ -80,7 +80,7 @@ This document defines the invariant architectural constraints, operational guide
 - **Input**: Multi-frame video clip with T=2 frames at 224x224 resolution.
 - **Motion Kinematics 5-Channel (`FishMotionKinematics5Ch`)**:
   - Channels 0-2: Normalized RGB.
-  - Channels 3-4: Dense Optical Flow (u, v) via Farneback algorithm.
+  - Channels 3-4: Dense Optical Flow (u, v) via differentiable gradient formulation.
   - Omitted $|V|$ and $\omega$ (vorticity) as demonstrated by unimodal ablation to eliminate gradient noise.
 - **ConvNeXt-Nano Video Backbone (`ConvNeXtNanoVideoBackbone`)**:
   - 5-Channel Stem: Conv2d(5->48, k=4, s=4) (3,888 params).
