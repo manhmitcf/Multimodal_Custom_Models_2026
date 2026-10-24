@@ -135,3 +135,53 @@ class PairwiseTournamentLoss(BaseLoss):
         )
 
         return total_loss
+
+
+class FlatCELoss(BaseLoss):
+    """
+    Standard Flat 4-Class Cross-Entropy Loss with Unimodal Auxiliary Regularization.
+    Used for direct 4-class multimodal ablation (no hierarchical tournament engine).
+
+    Formula:
+      L_total = weight_ce * CE(logits, y) + aux_loss_weight * (CE(logits_video, y) + CE(logits_audio, y))
+    """
+    def __init__(
+        self,
+        weight_ce: float = 1.0,
+        aux_loss_weight: float = 0.3,
+        **kwargs
+    ) -> None:
+        super().__init__()
+        self.weight_ce = float(kwargs.get("weight_ce", weight_ce))
+        self.aux_loss_weight = float(kwargs.get("aux_loss_weight", aux_loss_weight))
+
+    def _get_raw_targets(self, targets: torch.Tensor) -> torch.Tensor:
+        if targets.ndim > 1 and targets.size(-1) > 1:
+            y_raw = targets.argmax(dim=-1)
+        else:
+            y_raw = targets.long().squeeze()
+            if y_raw.ndim == 0:
+                y_raw = y_raw.unsqueeze(0)
+        return y_raw
+
+    def forward(self, output_dict: dict, target_dict: dict, epoch: int = 1) -> torch.Tensor:
+        targets = target_dict['target']
+        y_raw = self._get_raw_targets(targets)
+
+        # 1. Primary Classification Loss on Flat 4-Class Logits
+        logits = output_dict.get("clipwise_output", output_dict.get("logits"))
+        if logits is None:
+            raise KeyError("output_dict must contain 'clipwise_output' or 'logits'.")
+        loss_ce = F.cross_entropy(logits, y_raw)
+
+        # 2. Auxiliary Unimodal Backbone Losses (Video & Audio)
+        logits_v = output_dict.get("logits_video", output_dict.get("logits_video_aux"))
+        logits_a = output_dict.get("logits_audio", output_dict.get("logits_audio_aux"))
+
+        loss_aux = torch.tensor(0.0, device=targets.device)
+        if logits_v is not None:
+            loss_aux = loss_aux + F.cross_entropy(logits_v, y_raw)
+        if logits_a is not None:
+            loss_aux = loss_aux + F.cross_entropy(logits_a, y_raw)
+
+        return self.weight_ce * loss_ce + self.aux_loss_weight * loss_aux
