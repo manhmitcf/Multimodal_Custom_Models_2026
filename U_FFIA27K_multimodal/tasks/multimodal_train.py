@@ -29,6 +29,7 @@ from utils import (
     InferenceTimer,
     ClipCELoss,
     PairwiseTournamentLoss,
+    FlatCELoss,
     count_parameters,
     measure_flops,
 )
@@ -90,15 +91,27 @@ class MultimodalTrainer:
         self.train_config_path = train_config_path
 
         # Setup Loss
-        loss_type = getattr(self.config, "loss_type", "pairwise_tournament")
+        loss_cfg = getattr(self.config, "loss", None)
+        loss_type = getattr(self.config, "loss_type", getattr(loss_cfg, "loss_type", "pairwise_tournament"))
+        w_act = getattr(self.config, "weight_act", getattr(loss_cfg, "weight_act", 0.5))
+        w_pw = getattr(self.config, "weight_pairwise", getattr(loss_cfg, "weight_pairwise", 0.5))
+        w_ce = getattr(self.config, "weight_ce", getattr(loss_cfg, "weight_ce", 1.0))
+        w_aux = getattr(self.config, "aux_loss_weight", getattr(loss_cfg, "aux_loss_weight", 0.3))
+
         if loss_type == "pairwise_tournament":
             self.loss_fn = PairwiseTournamentLoss(
-                weight_act=getattr(self.config, "weight_act", 0.5),
-                weight_pairwise=getattr(self.config, "weight_pairwise", 0.5),
-                weight_ce=getattr(self.config, "weight_ce", 1.0),
-                aux_loss_weight=getattr(self.config, "aux_loss_weight", 0.3),
+                weight_act=w_act,
+                weight_pairwise=w_pw,
+                weight_ce=w_ce,
+                aux_loss_weight=w_aux,
             ).to(self.device)
             logger.info("Configured PairwiseTournamentLoss (Activity Gate + 3 Boundaries).")
+        elif loss_type in ["flat_ce", "flat"]:
+            self.loss_fn = FlatCELoss(
+                weight_ce=w_ce,
+                aux_loss_weight=w_aux,
+            ).to(self.device)
+            logger.info("Configured FlatCELoss (Global CE + Unimodal Aux).")
         else:
             self.loss_fn = ClipCELoss()
             logger.info("Configured standard ClipCELoss.")

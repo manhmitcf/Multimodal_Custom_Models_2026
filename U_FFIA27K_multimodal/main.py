@@ -19,7 +19,7 @@ import torch
 from config import ArtifactUploadConfig, TrainConfig
 from dataset import FishMultimodalDataLoader
 from features.audio_frontend import AudioFrontend
-from models import MultimodalSOTANet
+from models import MultimodalSOTANet, MultimodalFlatNet
 from tasks import MultimodalTrainer
 from utils import (
     count_parameters,
@@ -27,6 +27,7 @@ from utils import (
     seed_everything,
     PairwiseTournamentLoss,
     ClipCELoss,
+    FlatCELoss,
 )
 
 # Ensure stdout/stderr UTF-8 encoding on Windows terminal
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_REGISTRY = {
     "MultimodalSOTANet": MultimodalSOTANet,
+    "MultimodalFlatNet": MultimodalFlatNet,
 }
 
 
@@ -84,6 +86,22 @@ def build_model(config: TrainConfig, seed: Optional[int] = None) -> torch.nn.Mod
             b12_str = b23_str = b13_str = "Default"
     else:
         b12_str = b23_str = b13_str = "All True"
+
+    if config.model.backbone == "MultimodalFlatNet":
+        fusion_mode = getattr(config.model, "fusion_mode", "sum")
+        logger.info(f"Building MultimodalFlatNet with fusion_mode='{fusion_mode}'")
+        return MultimodalFlatNet(
+            classes_num=config.model.classes_num,
+            embed_dim=config.model.embed_dim,
+            fusion_mode=fusion_mode,
+            audio_frontend=frontend,
+            image_size=config.image_size,
+            num_frames=config.num_frames,
+            num_channels=in_chans,
+            temporal_mode=getattr(config.video_features, "temporal_mode", "composite_ln"),
+            audio_hidden_dims=getattr(config.model, "audio_hidden_dims", (768, 512)),
+            video_drop_path=getattr(config.model, "video_drop_path", 0.1),
+        )
 
     logger.info(
         f"Video Tie-Breakers configuration: "
@@ -157,15 +175,27 @@ def verify_model_dry_run(model: torch.nn.Module, config: TrainConfig, device: to
             raise ValueError(f"Expected output shape (4, 4), got {out['clipwise_output'].shape}")
 
         # 3. Test backward pass & gradient flow
-        loss_type = getattr(config, "loss_type", "pairwise_tournament")
+        loss_cfg = getattr(config, "loss", None)
+        loss_type = getattr(config, "loss_type", getattr(loss_cfg, "loss_type", "pairwise_tournament"))
+        w_act = getattr(config, "weight_act", getattr(loss_cfg, "weight_act", 0.5))
+        w_pw = getattr(config, "weight_pairwise", getattr(loss_cfg, "weight_pairwise", 0.5))
+        w_ce = getattr(config, "weight_ce", getattr(loss_cfg, "weight_ce", 1.0))
+        w_aux = getattr(config, "aux_loss_weight", getattr(loss_cfg, "aux_loss_weight", 0.3))
+
         if loss_type == "pairwise_tournament":
             loss_fn = PairwiseTournamentLoss(
-                weight_act=getattr(config, "weight_act", 0.5),
-                weight_pairwise=getattr(config, "weight_pairwise", 0.5),
-                weight_ce=getattr(config, "weight_ce", 1.0),
-                aux_loss_weight=getattr(config, "aux_loss_weight", 0.3),
+                weight_act=w_act,
+                weight_pairwise=w_pw,
+                weight_ce=w_ce,
+                aux_loss_weight=w_aux,
             ).to(device)
             loss = loss_fn(out, {"target": dummy_targets}, epoch=1)
+        elif loss_type in ["flat_ce", "flat"]:
+            loss_fn = FlatCELoss(
+                weight_ce=w_ce,
+                aux_loss_weight=w_aux,
+            ).to(device)
+            loss = loss_fn(out, {"target": dummy_targets})
         else:
             loss_fn = ClipCELoss()
             loss = loss_fn(out, {"target": dummy_targets})

@@ -15,7 +15,16 @@ def count_parameters(model: nn.Module) -> Dict[str, Any]:
 
     video_params = sum(p.numel() for p in model.video_backbone.parameters() if p.requires_grad) if hasattr(model, "video_backbone") else 0
     audio_params = sum(p.numel() for p in model.audio_backbone.parameters() if p.requires_grad) if hasattr(model, "audio_backbone") else 0
-    fusion_params = sum(p.numel() for p in model.fusion.parameters() if p.requires_grad) if hasattr(model, "fusion") else 0
+    if hasattr(model, "fusion"):
+        fusion_params = sum(p.numel() for p in model.fusion.parameters() if p.requires_grad)
+    elif hasattr(model, "head"):
+        fusion_params = sum(p.numel() for p in model.head.parameters() if p.requires_grad)
+        if hasattr(model, "norm_fused") and model.norm_fused is not None:
+            fusion_params += sum(p.numel() for p in model.norm_fused.parameters() if p.requires_grad)
+        if hasattr(model, "gate") and model.gate is not None:
+            fusion_params += sum(p.numel() for p in model.gate.parameters() if p.requires_grad)
+    else:
+        fusion_params = 0
     kinematics_params = sum(p.numel() for p in model.motion_kinematics.parameters() if p.requires_grad) if hasattr(model, "motion_kinematics") else 0
 
     breakdown = {
