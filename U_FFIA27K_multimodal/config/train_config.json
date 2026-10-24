@@ -64,7 +64,7 @@
     "save_results": true,
     "include_video": true,
     "split_strategy": "random_sample",
-    "evaluation_mode": "cross_validation",
+    "evaluation_mode": "holdout",
     "num_folds": 5,
     "fold_index": null,
     "cv_val_ratio": 0.2
