@@ -21,14 +21,14 @@
     "min_delta": 0.0
   },
   "loss": {
-    "loss_type": "pairwise_tournament",
+    "loss_type": "flat_ce",
     "weight_act": 0.5,
     "weight_pairwise": 0.5,
     "weight_ce": 1.0,
     "aux_loss_weight": 0.3
   },
   "model": {
-    "backbone": "MultimodalSOTANet",
+    "backbone": "MultimodalFlatNet",
     "classes_num": 4,
     "embed_dim": 384,
     "audio_hidden_dims": [

@@ -37,27 +37,41 @@ find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.mp4" | wc -l
 find /marimo/Fish_Feeding_Intensity_Dataset -type f -iname "*.wav" | wc -l
 
 # ==============================================================================
-# 3. HUẤN LUYỆN: Nhánh Hoàn Thiện Video Tie-Breakers (final/video_tie_breakers) (400 EPOCHS)
-#    (5-ch ConvNeXt-Nano + TKEO-STFT-MLP L2 + Configurable Video Tie-Breakers B12/B23/B13: ~5.16M params)
-#    Artifact Upload Repo: manhmitcf/Results_final_video_tie_breakers
+# 3. HUẤN LUYỆN: Nhánh Ablation Flat 4-Class Fusion (Sum, Concat, Gated) (400 EPOCHS)
+#    Branch: ablation/flat_fusion_sum_concat_gated
+#    So sánh trực tiếp 3 cơ chế dung hợp phẳng (không qua Tournament Level 1 & Level 2):
+#      - Sum   : f_fused = LayerNorm(f_V + f_A) -> MLP(384 -> 192 -> 4) [4,864,878 params]
+#      - Concat: f_fused = LayerNorm([f_V || f_A]) -> MLP(768 -> 192 -> 4) [4,939,374 params]
+#      - Gated : f_fused = LayerNorm(g*f_V + (1-g)*f_A) -> MLP(384 -> 192 -> 4) [4,865,647 params]
+#    Artifact Upload Repo: manhmitcf/Results_ablation_flat_fusion_sum_concat_gated
 # ==============================================================================
 if [ ! -d "/marimo/Capstone_2026_Fish_Feeding_Intensity" ]; then
     git clone https://github.com/manhmitcf/Multimodal_Custom_Models_2026.git /marimo/Capstone_2026_Fish_Feeding_Intensity
 fi
 cd /marimo/Capstone_2026_Fish_Feeding_Intensity
 git fetch origin
-git checkout final/video_tie_breakers
-git pull origin final/video_tie_breakers
+git checkout ablation/flat_fusion_sum_concat_gated
+git pull origin ablation/flat_fusion_sum_concat_gated
 
 cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# --- BƯỚC 3.1: CHẾ ĐỘ TEST & KIỂM TOÁN TIỀN BAY (< 5 giây) ---
-python test_tournament_architecture.py
+# --- BƯỚC 3.1: CHỌN CƠ CHẾ DUNG HỢP TRƯỚC KHI CHẠY (Mặc định cấu hình sẵn là SUM) ---
+# [Tùy chọn A - Sum (Mặc định)]:
+# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['fusion_mode']='sum'; json.dump(d, open(p,'w'), indent=2); print('Set fusion_mode: SUM')"
+#
+# [Tùy chọn B - Concat]:
+# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['fusion_mode']='concat'; json.dump(d, open(p,'w'), indent=2); print('Set fusion_mode: CONCAT')"
+#
+# [Tùy chọn C - Gated]:
+# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['fusion_mode']='gated'; json.dump(d, open(p,'w'), indent=2); print('Set fusion_mode: GATED')"
+
+# --- BƯỚC 3.2: CHẾ ĐỘ TEST & KIỂM TOÁN TIỀN BAY (< 5 giây) ---
+python test_flat_fusion_architecture.py
 python main.py --dry-run
 
-# --- BƯỚC 3.2: CHẠY HUẤN LUYỆN CHÍNH THỨC TRÊN GPU (BACKGROUND) ---
+# --- BƯỚC 3.3: CHẠY HUẤN LUYỆN CHÍNH THỨC TRÊN GPU (BACKGROUND) ---
 pkill -f "python main.py" || true
 
 nohup python main.py > main.log 2>&1 &
@@ -68,35 +82,3 @@ tail -n +1 -f main.log
 # ==============================================================================
 # cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal && tail -n +1 -f main.log
 # nvidia-smi
-
-
-# ==============================================================================
-# 5. ABLATION HUẤN LUYỆN: Nhánh Flat 4-Class Fusion (Sum, Concat, Gated)
-#    Branch: ablation/flat_fusion_sum_concat_gated
-#    So sánh trực tiếp 3 cơ chế dung hợp phẳng (không qua Tournament Level 1 & Level 2):
-#      - Sum   : f_fused = LayerNorm(f_V + f_A) -> MLP(384 -> 192 -> 4) [4,864,878 params]
-#      - Concat: f_fused = LayerNorm([f_V || f_A]) -> MLP(768 -> 192 -> 4) [4,939,374 params]
-#      - Gated : f_fused = LayerNorm(g*f_V + (1-g)*f_A) -> MLP(384 -> 192 -> 4) [4,865,647 params]
-#    Loss: FlatCELoss (Global CE 4 lớp + 0.3 Unimodal Aux Supervision)
-# ==============================================================================
-# git checkout ablation/flat_fusion_sum_concat_gated
-# git pull origin ablation/flat_fusion_sum_concat_gated
-# cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
-#
-# --- Kiểm toán tiền bay cho flat fusion net ---
-# python test_flat_fusion_architecture.py
-#
-# --- LỰA CHỌN CHẾ ĐỘ DUNG HỢP TRƯỚC KHI CHẠY ---
-# [A] Chế độ Sum:
-# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['backbone']='MultimodalFlatNet'; d['model']['fusion_mode']='sum'; d['loss']['loss_type']='flat_ce'; json.dump(d, open(p,'w'), indent=2); print('Switched to MultimodalFlatNet (SUM)')"
-#
-# [B] Chế độ Concat:
-# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['backbone']='MultimodalFlatNet'; d['model']['fusion_mode']='concat'; d['loss']['loss_type']='flat_ce'; json.dump(d, open(p,'w'), indent=2); print('Switched to MultimodalFlatNet (CONCAT)')"
-#
-# [C] Chế độ Gated:
-# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['backbone']='MultimodalFlatNet'; d['model']['fusion_mode']='gated'; d['loss']['loss_type']='flat_ce'; json.dump(d, open(p,'w'), indent=2); print('Switched to MultimodalFlatNet (GATED)')"
-#
-# --- Chạy kiểm toán dry-run & khởi động training background ---
-# python main.py --dry-run
-# nohup python main.py > main.log 2>&1 &
-# tail -n +1 -f main.log
