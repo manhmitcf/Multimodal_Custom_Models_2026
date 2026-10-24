@@ -31,13 +31,17 @@
     "backbone": "MultimodalSOTANet",
     "classes_num": 4,
     "embed_dim": 384,
-    "audio_hidden_dims": [768, 512],
+    "audio_hidden_dims": [
+      768,
+      512
+    ],
     "video_drop_path": 0.1,
     "tie_breakers": {
       "enable_b12": false,
       "enable_b23": true,
       "enable_b13": false
-    }
+    },
+    "fusion_mode": "sum"
   },
   "video_features": {
     "image_size": 224,

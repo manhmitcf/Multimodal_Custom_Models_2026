@@ -133,6 +133,10 @@ class ModelConfig(BaseModel):
         le=0.5,
         description="Stochastic Depth / DropPath rate for ConvNeXt-Nano video backbone."
     )
+    fusion_mode: Literal["sum", "concat", "gated"] = Field(
+        default="sum",
+        description="Fusion mechanism for MultimodalFlatNet: 'sum', 'concat', or 'gated'."
+    )
     tie_breakers: VideoTieBreakersConfig = Field(
         default_factory=VideoTieBreakersConfig,
         description="Pairwise Video Kinematics Referee configurations for B12, B23, B13."
