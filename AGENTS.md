@@ -188,3 +188,37 @@ python main.py --dry-run
 - [x] **Ablation 8 Combinations**: Full support for toggling B12, B23, B13 Video Referees ($2^3 = 8$ combinations).
 - [x] **Temporal Kinematics**: Video transforms must be clip-synchronized.
 - [x] **Clean Exit**: Dry-run and test suite complete with exit code 0 on both CPU and CUDA.
+
+
+---
+
+## 6. Ablation Branch Specification: Flat 4-Class Fusion (`ablation/flat_fusion_sum_concat_gated`)
+
+### 6.1 Purpose
+Direct empirical comparison between hierarchical 2-level tournament decision mechanism and flat 4-class prediction architectures under 3 fundamental multimodal fusion strategies:
+1. **Sum Fusion (`sum`)**: $f_{\text{fused}} = \text{LayerNorm}(f_V + f_A) \in \mathbb{R}^{384}$.
+2. **Concatenation Fusion (`concat`)**: $f_{\text{fused}} = \text{LayerNorm}([f_V \parallel f_A]) \in \mathbb{R}^{768}$.
+3. **Reliability Gated Fusion (`gated`)**: $g = \sigma(W_{\text{gate}}[f_V \parallel f_A])$, $f_{\text{fused}} = \text{LayerNorm}(g \cdot f_V + (1-g) \cdot f_A) \in \mathbb{R}^{384}$.
+
+Followed directly by `Flat4ClassMLPHead(in_dim -> 192 -> 4)` without any Level 1 Activity Gate or Level 2 Pairwise Boundaries/Referees/Borda Voting.
+
+### 6.2 Flat Model Parameter Budgets
+- **Sum Mode (`sum`)**: `4,864,878` (~`4.865M`) params | 94 parameter tensors.
+- **Concat Mode (`concat`)**: `4,939,374` (~`4.939M`) params | 94 parameter tensors.
+- **Gated Mode (`gated`)**: `4,865,647` (~`4.866M`) params | 96 parameter tensors.
+- **Inference Complexity**: `~1.687 GFLOPs` (< 2.0 GFLOPs across all 3 modes).
+
+### 6.3 Loss Function (`FlatCELoss`)
+$$\mathcal{L} = 1.0 \cdot \mathcal{L}_{\text{CE}}(\text{logits}_{\text{flat}}, y) + 0.3 \cdot \frac{1}{2}\left(\mathcal{L}_{\text{CE}}(\text{logits}_{\text{video}}, y) + \mathcal{L}_{\text{CE}}(\text{logits}_{\text{audio}}, y)\right)$$
+
+### 6.4 Verification Checklist for Ablation Branch
+```bash
+cd U_FFIA27K_multimodal
+python test_flat_fusion_architecture.py
+pytest tests/ -v
+python main.py --dry-run
+```
+- [x] All 3 fusion modes (`sum`, `concat`, `gated`) verified against exact parameter budgets.
+- [x] 100% gradient propagation through all parameter tensors (94 for sum/concat, 96 for gated).
+- [x] Inference complexity strictly < 2.0 GFLOPs.
+- [x] Pre-flight dry-run executes cleanly with exit code 0.

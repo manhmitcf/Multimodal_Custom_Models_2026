@@ -68,3 +68,35 @@ tail -n +1 -f main.log
 # ==============================================================================
 # cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal && tail -n +1 -f main.log
 # nvidia-smi
+
+
+# ==============================================================================
+# 5. ABLATION HUẤN LUYỆN: Nhánh Flat 4-Class Fusion (Sum, Concat, Gated)
+#    Branch: ablation/flat_fusion_sum_concat_gated
+#    So sánh trực tiếp 3 cơ chế dung hợp phẳng (không qua Tournament Level 1 & Level 2):
+#      - Sum   : f_fused = LayerNorm(f_V + f_A) -> MLP(384 -> 192 -> 4) [4,864,878 params]
+#      - Concat: f_fused = LayerNorm([f_V || f_A]) -> MLP(768 -> 192 -> 4) [4,939,374 params]
+#      - Gated : f_fused = LayerNorm(g*f_V + (1-g)*f_A) -> MLP(384 -> 192 -> 4) [4,865,647 params]
+#    Loss: FlatCELoss (Global CE 4 lớp + 0.3 Unimodal Aux Supervision)
+# ==============================================================================
+# git checkout ablation/flat_fusion_sum_concat_gated
+# git pull origin ablation/flat_fusion_sum_concat_gated
+# cd /marimo/Capstone_2026_Fish_Feeding_Intensity/U_FFIA27K_multimodal
+#
+# --- Kiểm toán tiền bay cho flat fusion net ---
+# python test_flat_fusion_architecture.py
+#
+# --- LỰA CHỌN CHẾ ĐỘ DUNG HỢP TRƯỚC KHI CHẠY ---
+# [A] Chế độ Sum:
+# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['backbone']='MultimodalFlatNet'; d['model']['fusion_mode']='sum'; d['loss']['loss_type']='flat_ce'; json.dump(d, open(p,'w'), indent=2); print('Switched to MultimodalFlatNet (SUM)')"
+#
+# [B] Chế độ Concat:
+# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['backbone']='MultimodalFlatNet'; d['model']['fusion_mode']='concat'; d['loss']['loss_type']='flat_ce'; json.dump(d, open(p,'w'), indent=2); print('Switched to MultimodalFlatNet (CONCAT)')"
+#
+# [C] Chế độ Gated:
+# python -c "import json; p='config/train_config.json'; d=json.load(open(p)); d['model']['backbone']='MultimodalFlatNet'; d['model']['fusion_mode']='gated'; d['loss']['loss_type']='flat_ce'; json.dump(d, open(p,'w'), indent=2); print('Switched to MultimodalFlatNet (GATED)')"
+#
+# --- Chạy kiểm toán dry-run & khởi động training background ---
+# python main.py --dry-run
+# nohup python main.py > main.log 2>&1 &
+# tail -n +1 -f main.log
