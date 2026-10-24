@@ -46,9 +46,10 @@ This document defines the invariant architectural constraints, operational guide
                          * B12: Weak vs Medium (Base on f_fused + Video Kinematics Referee on f_video)
                          * B23: Medium vs Strong (Base on f_fused + Video Kinematics Referee on f_video)
                          * B13: Weak vs Strong (Base on f_fused + Video Kinematics Referee on f_video)
-                      - Dynamic Referee Intervention Formula:
+                      - Dynamic Referee Intervention Formula (Sigmoid Reparameterization):
                           u_tie = exp(-|logit_base| / 2.0)
-                          logit = logit_base + gamma * u_tie * logit_video
+                          gamma_eff = sigmoid(gamma_raw) in (0, 1) [init raw=0.0 -> eff=0.5]
+                          logit = logit_base + gamma_eff * u_tie * logit_video
                       - Tournament Borda Voting -> Final Calibrated Probabilities
                       [~0.374M params (B23 default) | FLOPs: ~1.69 GFLOPs]
                                         │
@@ -116,10 +117,11 @@ This document defines the invariant architectural constraints, operational guide
     - B12: Weak vs Medium (Base Head on $f_{\text{fused}}$ + Video Kinematics Referee on $f_{\text{video}}$).
     - B23: Medium vs Strong (Base Head on $f_{\text{fused}}$ + Video Kinematics Referee on $f_{\text{video}}$) [Default active].
     - B13: Weak vs Strong (Base Head on $f_{\text{fused}}$ + Video Kinematics Referee on $f_{\text{video}}$).
-  - **Dynamic Referee Intervention Formulation**:
+  - **Dynamic Referee Intervention Formulation (Sigmoid Reparameterization)**:
     $$u_{\text{tie}} = \exp(-|\text{logit}_{\text{base}}| / 2.0)$$
-    $$\text{logit} = \text{logit}_{\text{base}} + \gamma \cdot u_{\text{tie}} \cdot \text{logit}_{\text{video}}$$
-    where $\gamma$ is a learnable scalar initialized to $1.0$.
+    $$\gamma_{\text{eff}} = \sigma(\gamma_{\text{raw}}) = \frac{1}{1 + \exp(-\gamma_{\text{raw}})} \in (0, 1)$$
+    $$\text{logit} = \text{logit}_{\text{base}} + \gamma_{\text{eff}} \cdot u_{\text{tie}} \cdot \text{logit}_{\text{video}}$$
+    where $\gamma_{\text{raw}}$ is a learnable scalar initialized to $0.0$, yielding an initial neutral intervention weight $\gamma_{\text{eff}} = \sigma(0.0) = 0.5$ strictly bounded within $(0, 1)$.
   - **Borda Voting**: Derives calibrated multi-class distribution from tournament matchup scores:
     $$V_c = \sum_{k \neq c} P(c > k)$$
     with exact algebraic invariant $V_{\text{Weak}} + V_{\text{Medium}} + V_{\text{Strong}} = 3.0$.

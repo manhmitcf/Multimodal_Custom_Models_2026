@@ -96,10 +96,11 @@ class PairwiseBoundaryTournamentHead(nn.Module):
       - B23: Medium <-> Strong  -> Base Head on f_fused + Video Kinematics Referee on f_video
       - B13: Weak <-> Strong    -> Base Head on f_fused + Video Kinematics Referee on f_video
 
-    Dynamic Tie-Breaker Intervention:
-      logit = logit_base + gamma * u_tie * logit_video
-      where u_tie = exp(-|logit_base| / 2.0) represents referee indecisiveness,
-      and gamma is a learnable scalar initialized to 1.0.
+    Dynamic Tie-Breaker Intervention (Sigmoid Reparameterization):
+      u_tie = exp(-|logit_base| / 2.0)
+      gamma_eff = sigmoid(gamma_raw) in (0, 1)
+      logit = logit_base + gamma_eff * u_tie * logit_video
+      where gamma_raw is a learnable scalar initialized to 0.0 (initial gamma_eff = 0.5).
 
     Tournament Scoring (Borda count):
       - V_Weak   = P(W > M) + P(W > S)
@@ -135,7 +136,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b12 = _make_subspace_head(dim, hidden_dim)
         if self.enable_b12:
             self.head_b12_v = _make_subspace_head(dim, hidden_dim)
-            self.gamma_12 = nn.Parameter(torch.tensor(1.0))
+            self.gamma_12 = nn.Parameter(torch.tensor(0.0))  # Raw parameter, sigmoid(0.0) = 0.5
         else:
             self.head_b12_v = None
             self.gamma_12 = None
@@ -144,7 +145,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b23 = _make_subspace_head(dim, hidden_dim)
         if self.enable_b23:
             self.head_b23_v = _make_subspace_head(dim, hidden_dim)
-            self.gamma_23 = nn.Parameter(torch.tensor(1.0))
+            self.gamma_23 = nn.Parameter(torch.tensor(0.0))  # Raw parameter, sigmoid(0.0) = 0.5
         else:
             self.head_b23_v = None
             self.gamma_23 = None
@@ -153,7 +154,7 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         self.head_b13 = _make_subspace_head(dim, hidden_dim)
         if self.enable_b13:
             self.head_b13_v = _make_subspace_head(dim, hidden_dim)
-            self.gamma_13 = nn.Parameter(torch.tensor(1.0))
+            self.gamma_13 = nn.Parameter(torch.tensor(0.0))  # Raw parameter, sigmoid(0.0) = 0.5
         else:
             self.head_b13_v = None
             self.gamma_13 = None
@@ -175,33 +176,39 @@ class PairwiseBoundaryTournamentHead(nn.Module):
         if self.enable_b12 and self.head_b12_v is not None and f_video is not None:
             logit_12_v = self.head_b12_v(f_video).squeeze(-1)
             u_tie_12 = torch.exp(-torch.abs(logit_12_base) / 2.0)
-            logit_12 = logit_12_base + self.gamma_12 * u_tie_12 * logit_12_v
+            gamma_12_eff = torch.sigmoid(self.gamma_12)
+            logit_12 = logit_12_base + gamma_12_eff * u_tie_12 * logit_12_v
         else:
             logit_12 = logit_12_base
             logit_12_v = logit_12_base
             u_tie_12 = torch.zeros_like(logit_12_base)
+            gamma_12_eff = torch.sigmoid(self.gamma_12) if self.gamma_12 is not None else None
 
         # B23 Base proposal on f_fused + Video Kinematics Tie-Breaker
         logit_23_base = self.head_b23(f).squeeze(-1)        # [B] (Positive -> Medium, Negative -> Strong)
         if self.enable_b23 and self.head_b23_v is not None and f_video is not None:
             logit_23_v = self.head_b23_v(f_video).squeeze(-1)
             u_tie_23 = torch.exp(-torch.abs(logit_23_base) / 2.0)
-            logit_23 = logit_23_base + self.gamma_23 * u_tie_23 * logit_23_v
+            gamma_23_eff = torch.sigmoid(self.gamma_23)
+            logit_23 = logit_23_base + gamma_23_eff * u_tie_23 * logit_23_v
         else:
             logit_23 = logit_23_base
             logit_23_v = logit_23_base
             u_tie_23 = torch.zeros_like(logit_23_base)
+            gamma_23_eff = torch.sigmoid(self.gamma_23) if self.gamma_23 is not None else None
 
         # B13 Base proposal on f_fused + Video Kinematics Tie-Breaker
         logit_13_base = self.head_b13(f).squeeze(-1)        # [B] (Positive -> Weak, Negative -> Strong)
         if self.enable_b13 and self.head_b13_v is not None and f_video is not None:
             logit_13_v = self.head_b13_v(f_video).squeeze(-1)
             u_tie_13 = torch.exp(-torch.abs(logit_13_base) / 2.0)
-            logit_13 = logit_13_base + self.gamma_13 * u_tie_13 * logit_13_v
+            gamma_13_eff = torch.sigmoid(self.gamma_13)
+            logit_13 = logit_13_base + gamma_13_eff * u_tie_13 * logit_13_v
         else:
             logit_13 = logit_13_base
             logit_13_v = logit_13_base
             u_tie_13 = torch.zeros_like(logit_13_base)
+            gamma_13_eff = torch.sigmoid(self.gamma_13) if self.gamma_13 is not None else None
 
         # Head-to-head pairwise winning probabilities
         p_w_over_m = torch.sigmoid(logit_12)               # P(W > M)
@@ -262,20 +269,23 @@ class PairwiseBoundaryTournamentHead(nn.Module):
             "logit_12_base": logit_12_base,
             "logit_12_v": logit_12_v,
             "u_tie_12": u_tie_12,
-            "gamma_12": self.gamma_12,
-            "gamma_12_v": self.gamma_12,
+            "gamma_12": gamma_12_eff,
+            "gamma_12_raw": self.gamma_12,
+            "gamma_12_v": gamma_12_eff,
             "logit_23": logit_23,
             "logit_23_base": logit_23_base,
             "logit_23_v": logit_23_v,
             "u_tie_23": u_tie_23,
-            "gamma_23": self.gamma_23,
-            "gamma_23_v": self.gamma_23,
+            "gamma_23": gamma_23_eff,
+            "gamma_23_raw": self.gamma_23,
+            "gamma_23_v": gamma_23_eff,
             "logit_13": logit_13,
             "logit_13_base": logit_13_base,
             "logit_13_v": logit_13_v,
             "u_tie_13": u_tie_13,
-            "gamma_13": self.gamma_13,
-            "gamma_13_v": self.gamma_13,
+            "gamma_13": gamma_13_eff,
+            "gamma_13_raw": self.gamma_13,
+            "gamma_13_v": gamma_13_eff,
             # Pairwise matchup winning probabilities & Borda voting scores
             "p_w_over_m": p_w_over_m,
             "p_m_over_s": p_m_over_s,

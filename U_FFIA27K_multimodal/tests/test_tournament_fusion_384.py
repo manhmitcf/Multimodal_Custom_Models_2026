@@ -28,6 +28,12 @@ def test_tournament_fusion_direct_gated_384():
     v_sum = out["v_voting"].sum(dim=-1)
     assert torch.allclose(v_sum, torch.tensor([3.0] * 4), atol=1e-5)
 
+    # Kiểm tra Sigmoid Reparameterization cho gamma (khởi tạo raw=0.0 -> eff=0.5 trong (0, 1))
+    assert "gamma_23" in out and "gamma_23_raw" in out
+    assert torch.allclose(out["gamma_23"], torch.tensor(0.5))
+    assert 0.0 < float(out["gamma_23"]) < 1.0
+    assert torch.allclose(out["gamma_23_raw"], torch.tensor(0.0))
+
 def test_tournament_fusion_all_3_referees_params():
     fusion_all3 = MultimodalTournamentFusion(dim=384, enable_b12=True, enable_b23=True, enable_b13=True)
     params_all3 = sum(p.numel() for p in fusion_all3.parameters())

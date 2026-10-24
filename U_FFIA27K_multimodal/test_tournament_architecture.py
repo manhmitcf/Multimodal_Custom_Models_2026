@@ -101,10 +101,13 @@ def test_tournament_forward_and_pairwise():
     assert (u_tie_23 > 0.0).all() and (u_tie_23 <= 1.0).all()
     assert (u_tie_13 > 0.0).all() and (u_tie_13 <= 1.0).all()
 
-    # Check that video referee logits and gammas are present
-    assert "logit_12_v" in out and "gamma_12" in out
-    assert "logit_23_v" in out and "gamma_23" in out
-    assert "logit_13_v" in out and "gamma_13" in out
+    # Check that video referee logits and gammas are present and strictly bounded in (0, 1)
+    assert "logit_12_v" in out and "gamma_12" in out and "gamma_12_raw" in out
+    assert "logit_23_v" in out and "gamma_23" in out and "gamma_23_raw" in out
+    assert "logit_13_v" in out and "gamma_13" in out and "gamma_13_raw" in out
+    assert 0.0 < float(out["gamma_12"]) < 1.0 and torch.allclose(out["gamma_12"], torch.tensor(0.5))
+    assert 0.0 < float(out["gamma_23"]) < 1.0 and torch.allclose(out["gamma_23"], torch.tensor(0.5))
+    assert 0.0 < float(out["gamma_13"]) < 1.0 and torch.allclose(out["gamma_13"], torch.tensor(0.5))
 
     # 4. Check Tournament Voting scores
     v_voting = out["v_voting"]
