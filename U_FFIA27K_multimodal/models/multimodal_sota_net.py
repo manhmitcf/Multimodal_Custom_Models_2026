@@ -28,7 +28,7 @@ class MultimodalSOTANet(nn.Module):
          - Level 1: Feeding Activity Gating Head (None vs Active Feeding, unified 192-dim).
          - Level 2: 3 Specialized Pairwise Subspace Heads on f_fused
              with Configurable Video Kinematics Referees on f_video (B12, B23, B13).
-         - Dynamic Tie-Breaker Intervention: logit = logit_base + gamma * u_tie * logit_video.
+         - Dynamic Tie-Breaker Intervention (Sigmoid Reparameterization): logit = logit_base + gamma_eff * u_tie * logit_video.
          - Tournament Borda Voting to derive final calibrated multi-class probabilities.
       4. Auxiliary Unimodal Classifier Heads (3,080 params):
          - Video Aux Head: Linear(384, 4)
